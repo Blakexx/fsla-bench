@@ -39,10 +39,15 @@ def _gla(d_k_total, d_v_total, num_heads):
 
 
 def _lin(feature_map, d_k_total, d_v_total, num_heads):
+    # do_feature_map_norm=True restores the canonical NORMALIZED linear-attention readout
+    # (Katharopoulos 2020 / Hedgehog): o / (phi(q) . sum_j phi(k_j)). FLA's default is False
+    # (unnormalized + output RMSNorm) — a modern variant, not the published form. The denominator
+    # is recomputed from k (FLA's final_state stays [B,H,K,V]), so the matched-state formula is
+    # unchanged. output_norm='rmsnorm' (FLA default) still applies on top.
     return dict(name="fla.layers.LinearAttention",
                 kwargs=dict(hidden_size=DMODEL, expand_k=d_k_total / DMODEL,
                             expand_v=d_v_total / DMODEL, num_heads=num_heads,
-                            feature_map=feature_map))
+                            feature_map=feature_map, do_feature_map_norm=True))
 
 
 def _gdn(head_dim, num_heads, dv_head):
@@ -54,12 +59,14 @@ def _gdn(head_dim, num_heads, dv_head):
                             expand_v=dv_head / head_dim, use_short_conv=False))
 
 
-def _based(feature_dim, num_heads):
-    # num_key_value_heads must equal num_heads (else head_dim = d_model//kv_heads mismatches
-    # the value reshape); num_heads must divide d_model=128.
+def _based(feature_dim, num_heads=1, train_view="quadratic"):
+    # Canonical Based-paper MQAR config (arxiv24_based_figure2): single head
+    # (num_heads = num_key_value_heads = 1), taylor_exp feature map, quadratic train view.
+    # feature_dim is the sole state knob. num_key_value_heads must equal num_heads (head_dim =
+    # d_model//kv_heads drives the value reshape); num_heads must divide d_model=128.
     return dict(name="zoology.mixers.based.Based",
                 kwargs=dict(feature_dim=feature_dim, num_heads=num_heads,
-                            num_key_value_heads=num_heads,
+                            num_key_value_heads=num_heads, train_view=train_view,
                             feature_name="taylor_exp", use_short_conv=False))
 
 
@@ -99,17 +106,19 @@ def baseline_cell(method, shape, nc):
             if nc > 32: return None                       # head-scaling OOMs beyond H~140 at batch 128
             h = max(1, round(S / (DV * DV)));            return _gdn(DV, h, DV), S
     if method == "based":
-        # Based's only state axis is the Taylor feature_dim: taylor_exp feat = fd^2+fd+1,
-        # state ~= (d_model/H * H) * feat = d_model_v * feat. d_v is tied to d_model/H (~11 at
-        # H=11), close to the task d_v=12 but not independently settable. wide == feature-dim
-        # scaling; square/heads do not change Based's state, so they are not defined.
-        taylor = lambda d: d * d + d + 1
+        # Canonical Based (num_heads = num_key_value_heads = 1). Recurrent state (based.py:230):
+        #   S = num_kv_heads*head_dim*feat + num_kv_heads*feat = (d_model + H)*feat   [H=1 -> 129*feat]
+        # where feat = TaylorExp.expanded_size = fd*(fd+1)/2 + fd + 1 (taylor.py:41) and
+        # head_dim = d_model/H = d_model. feature_dim (fd) is the sole state knob; the value dim is
+        # head_dim=d_model (single head sees the full model — Based has no independent small d_v).
+        # square/heads don't change Based's state -> undefined.
+        HB = 1
+        feat = lambda fd: fd * (fd + 1) / 2 + fd + 1
+        state = lambda fd: (DMODEL + HB) * feat(fd)
         if shape == "wide":
-            HB = 4                                        # divides d_model=128; d_v=32 (=d_model/H)
-            dv_head = DMODEL // HB
-            tgt_feat = S / (HB * dv_head)
-            d = max(2, round(math.sqrt(tgt_feat)))
-            d = min((d - 1, d, d + 1), key=lambda x: abs(taylor(max(1, x)) - tgt_feat))
+            tgt_feat = S / (DMODEL + HB)                  # invert feat(fd): fd = (-3+sqrt(1+8*feat))/2
+            d0 = max(2, int(round((-3 + math.sqrt(max(1.0, 1 + 8 * tgt_feat))) / 2)))
+            d = min((d0 - 1, d0, d0 + 1), key=lambda x: abs(state(max(2, x)) - S))
             return _based(max(2, d), HB), S
         return None                                       # square/heads not defined for Based
     # GDN: delta-rule state = d_k*d_v with d_k bounded by d_model; at fixed d_model and held

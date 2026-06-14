@@ -9,8 +9,17 @@ TARGET="${1:-mqar}"
 PY="${ROLA_PY:-/mnt/c/Users/Blake/Documents/VSCode/CLA/.venv/bin/python}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-echo "== CI: per-family build+fwd+bwd on $($PY -c 'import torch;print("cuda" if torch.cuda.is_available() else "cpu")') =="
-GRID_TIERS="${GRID_TIERS:-12}" "$PY" -m rola_bench.${TARGET}.ci_cell_check
-echo "== CI passed -> building + pushing image =="
+DEV=$($PY -c 'import torch;print("cuda" if torch.cuda.is_available() else "cpu")')
+echo "== CI gate on $DEV =="
+# (1) fast per-family mixer build+fwd+bwd; (2) AUTHORITATIVE end-to-end per-family cell run through
+# the actual zoology.launch path (caught the sse/state_size/fla-tuple bugs the mixer-level check
+# missed). Both must pass before we build a deployable image.
+if [ "$TARGET" = mqar ]; then
+    GRID_TIERS="${GRID_TIERS:-12}" "$PY" -m rola_bench.mqar.ci_cell_check
+    GRID_TIERS="${GRID_TIERS:-12}" "$PY" -m rola_bench.mqar.ci_cell_run
+else
+    echo "  (no CI gate for '$TARGET' yet — lm is scaffold)"
+fi
+echo "== CI passed (construction + end-to-end) -> building + pushing image =="
 bash "$HERE/docker/build.sh" "$TARGET" --push --prune
 echo "== predeploy OK: image built, pushed, local copy pruned. Safe to launch.py $TARGET =="
