@@ -1,0 +1,39 @@
+# rola-bench MQAR image — FROM the project-agnostic fleet base.
+#
+# The base provides torch + the `fleet` package + box_server (the container entrypoint). Here we add
+# the research stack (rola, fla-rola, zoology) + the suite package (rola_bench), and tell box_server
+# how to run/verify a batch via FLEET_RUN_CMD / FLEET_VERIFY_CMD. Sources are staged clean by
+# build.sh — only runtime code, no .git/CLAUDE.md/data/results (publication-safe).
+FROM blakeresearch/fleet-base:v1
+
+ENV DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PYTHONUNBUFFERED=1 \
+    WANDB_MODE=offline WANDB_CONSOLE=off
+
+# Research stack: canonical FLA (fla.ops + fla.layers) + the libs the MQAR sweep imports.
+RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
+        transformers opt_einsum einops pydantic pandas numpy tqdm wandb rich pyyaml scipy datasets
+
+# Clean package sources (staged by build.sh; rola_bench/lm excluded for this image) — install no-deps.
+COPY rola       /opt/rola
+COPY fla-rola   /opt/fla-rola
+COPY zoology    /opt/zoology
+COPY rola-bench /opt/rola-bench
+RUN pip install --no-cache-dir --no-deps -e /opt/rola \
+ && pip install --no-cache-dir --no-deps -e /opt/fla-rola \
+ && pip install --no-cache-dir --no-deps -e /opt/zoology \
+ && pip install --no-cache-dir --no-deps -e /opt/rola-bench
+
+# Build-time gate: the whole dependency graph imports cleanly (no path hacks).
+RUN python -c "import torch, fla.ops.simple_gla, fla.layers, fla_rola, rola, zoology, fleet; \
+import rola_bench.mqar.job; from fla.layers import LinearAttention, GatedDeltaNet; \
+print('rola-bench mqar image OK; torch', torch.__version__)"
+
+# Tell the (inherited) box_server how to verify the GPU and run a batch of run_ids.
+# NB: \$FLEET_RESULTS stays LITERAL in the stored env (Docker would expand it to empty at build);
+# box_server sets FLEET_RESULTS at runtime and bash -lc expands it then.
+ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/mqar \
+    FLEET_VERIFY_CMD="python verify.py" \
+    FLEET_RUN_CMD="python run_rla_sweep.py --config canonical_mqar_grid --results \$FLEET_RESULTS"
+
+WORKDIR /opt/rola-bench/rola_bench/mqar
+# CMD inherited from fleet-base: python -u -m fleet.box_server

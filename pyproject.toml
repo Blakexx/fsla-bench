@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rola-bench"
+version = "0.1.0"
+description = "RoLA MQAR benchmark plug-in — the canonical-grid sweep, dispatched via `fleet`"
+requires-python = ">=3.10"
+# Proper dependency edges (the whole point of this repo): the MQAR benchmark depends on the model
+# + baselines libs and on `fleet` for orchestration. First-party packages are installed from their
+# own repos (editable locally; from source in the Docker image) — listed here so the edge is
+# explicit and `pip` verifies they're present rather than re-vendoring them.
+dependencies = [
+    "rola",          # model + kernels        (CLA repo)
+    "fla-rola",      # routed FLA fork         (/home/blake/flash-linear-attention-rola)
+    "zoology",       # baselines fork          (/home/blake/zoology)
+    "fleet",         # generic GPU orchestration (/home/blake/fleet)
+    "fla-core",      # canonical FLA kernels (baselines)
+    "torch",
+    "einops",
+    "pydantic",
+    "numpy",
+    "pandas",
+    "scipy",
+    "opt-einsum",
+    "wandb",
+    "tqdm",
+    "pyyaml",
+    "transformers",  # LM benchmark (rola_bench.lm): HF model + Trainer
+    "datasets",
+    "accelerate",
+]
+
+[tool.setuptools.packages.find]
+include = ["rola_bench*"]
+namespaces = false
