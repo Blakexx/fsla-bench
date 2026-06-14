@@ -1,7 +1,11 @@
 wandb/
 *.log
 *.pt
-fleet_results/
+# results dirs: track the dir (.gitkeep), ignore the generated contents (operational state)
+fleet_results/*
+!fleet_results/.gitkeep
+lm_results/*
+!lm_results/.gitkeep
 __pycache__/
 *.pyc
 *.egg-info/

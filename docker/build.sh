@@ -32,10 +32,9 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 RS=(rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' --exclude='build')
 
-echo "staging rola (model + kernels)…"
+echo "staging rola (model; kernels now live in fla-rola)…"
 mkdir -p "$STAGE/rola"
 cp "$CLA/rola.py" "$CLA/pyproject.toml" "$CLA/README.md" "$STAGE/rola/"
-"${RS[@]}" "$CLA/rola_kernels" "$STAGE/rola/"
 
 echo "staging fla-rola (fork)…"
 "${RS[@]}" "$FLA/" "$STAGE/fla-rola/"
