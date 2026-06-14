@@ -15,6 +15,8 @@ from fleet import Dispatcher
 JOBS = {
     "mqar": ("rola_bench.mqar.job", "mqar_job"),
     "lm":   ("rola_bench.lm.job", "lm_job"),
+    "perf": ("rola_bench.perf.job", "perf_job"),     # kernel-efficiency (whole-bench cells, no ckpt)
+    "rank": ("rola_bench.rank.job", "rank_job"),      # post-hoc rank (per-ckpt, base64 payload)
 }
 
 

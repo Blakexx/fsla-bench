@@ -31,6 +31,10 @@ def work_list():
     if shps:
         sset = set(shps.split(","))
         ids = [r for r in ids if len(r.split("-")) > 2 and r.split("-")[2] in sset]
+    excl = os.environ.get("EXCLUDE_SHAPES")  # e.g. EXCLUDE_SHAPES=wide -> 4090-safe full grid
+    if excl:
+        eset = set(excl.split(","))
+        ids = [r for r in ids if not (len(r.split("-")) > 2 and r.split("-")[2] in eset)]
     return ids
 
 
@@ -62,5 +66,8 @@ mqar_job = Job(
     env={"GRID_TIERS": GRID_TIERS},
     bad_hosts=os.path.join(RESULTS_DIR, "bad_hosts.txt"),
     idle_timeout=1200,
-    batch=5,
+    batch=1,                  # one cell per batch: the slowest high-nc square/heads cells take ~3.6h for
+                              # 40 epochs; batched 5-at-a-time (5 LRs of one config) they'd need ~18h and
+                              # never fit any timeout. batch=1 lets each slow cell finish inside per_batch_timeout.
+    per_batch_timeout=18000,  # 5h: comfortably exceeds the slowest single cell (~3.6h at ~4 it/s on nc256 square)
 )

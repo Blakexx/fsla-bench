@@ -16,9 +16,13 @@ TARGET="${1:?usage: build.sh <mqar|lm> [--push] [--prune]}"; shift || true
 PUSH=0; PRUNE=0
 for a in "$@"; do case "$a" in --push) PUSH=1;; --prune) PRUNE=1;; esac; done
 
+# IMG_VERSION pins the tag (default v2: v1 = the proven MQAR image, left untouched; v2 adds the
+# perf/rank code + the box_server base64-payload base). The mqar image is the WHOLE rola_bench
+# suite (perf+rank+mqar modules); perf/rank select their runner via FLEET_RUN_CMD at launch.
+V="${IMG_VERSION:-v2}"
 case "$TARGET" in
-  mqar) TAG="blakeresearch/rola-bench:v1"; DF="mqar.Dockerfile"; WITH_ZOO=1;;
-  lm)   TAG="blakeresearch/rola-lm:v1";    DF="lm.Dockerfile";   WITH_ZOO=0;;
+  mqar) TAG="blakeresearch/rola-bench:$V"; DF="mqar.Dockerfile"; WITH_ZOO=1;;
+  lm)   TAG="blakeresearch/rola-lm:$V";    DF="lm.Dockerfile";   WITH_ZOO=0;;
   *) echo "unknown target '$TARGET' (mqar|lm)"; exit 2;;
 esac
 

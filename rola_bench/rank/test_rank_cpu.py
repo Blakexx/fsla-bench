@@ -206,7 +206,7 @@ def verify_against_inline_stub():
         GPU forward may have used the Triton den kernel — numerically equal to within the
         kernel's own 1e-2 gate (rola.py:725), so expect agreement at the 0.01 rounding of
         the reported means, not bit-exactness.
-      - max_b / max_l defaults match (64 / 8192) — they do.
+      - max_b / max_l defaults match the inline reference (4 / 4096) — they do.
     """
     print("[stub] verify_against_inline_stub: documented; needs GPU + paired checkpoint "
           "(see docstring). Asserts nothing in the CPU suite.")

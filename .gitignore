@@ -1,7 +1,11 @@
 wandb/
 *.log
-*.pt
-# results dirs: track the dir (.gitkeep), ignore the generated contents (operational state)
+*.pt          # NEVER check in model files (checkpoints live on /mnt/d, outside the repo)
+# RAW-RESULTS POLICY: result data (jsonl/csv/md/tex) under results/<bench>/ IS checked in — the
+# rows hold run_ids + metrics only, verified free of secrets (no IPs/tokens/gcp-ids/keys). Only
+# model files (*.pt) are excluded. results/ is tracked by default (intentionally NOT listed here).
+# Commit result data once a run completes — not a churning mid-sweep snapshot.
+# Legacy live dirs below are operational churn; their data migrates to results/<bench>/ post-run.
 fleet_results/*
 !fleet_results/.gitkeep
 lm_results/*

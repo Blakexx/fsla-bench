@@ -1,0 +1,88 @@
+"""Box-side runner for the perf fleet job (FLEET_RUN_CMD -> this module).
+
+Reads RUN_IDS (comma list of bench modules) from the env, runs each WHOLE bench on this box's GPU
+preserving the in-process round-robin, and appends one ndjson summary row per run_id to
+$FLEET_RESULTS — {"run_id", "ok", "gpu", <bench rows>}. The dispatcher's done_ids keys off that ok
+row; the full per-cell table lives inside it (and in the CSVs the benches also write for the paper).
+
+Mirrors mqar/run_rla_sweep.py's contract: never abort the batch on one cell's failure; write an
+ok=False row with the error so the dispatcher records it rather than silently dropping it.
+"""
+import csv
+import json
+import os
+import sys
+import traceback
+from pathlib import Path
+
+RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
+REPS = int(os.environ.get("PERF_REPS", "15"))
+
+
+def _append(row):
+    with open(RESULTS, "a") as fh:
+        fh.write(json.dumps(row) + "\n")
+        fh.flush()
+
+
+def _read_csv(path):
+    if not Path(path).exists():
+        return []
+    with open(path) as fh:
+        return list(csv.DictReader(fh))
+
+
+def run_chunked(out_dir):
+    """Full chunked fwd+bwd sweep (kernel efficiency + projection cost), round-robin in-process."""
+    from rola_bench.perf import chunked as ch
+    import rola_bench.perf._common as C
+    rows, proj = [], []
+    ch.bench_kernel(REPS, rows)
+    ch.bench_projections(REPS, proj)
+    # also write the canonical CSV/TeX (paper artifacts) next to the dispatch jsonl
+    if rows:
+        C.write_csv(Path(out_dir) / "kernel_efficiency.csv", rows)
+    if proj:
+        C.write_csv(Path(out_dir) / "projection_cost.csv", proj)
+    if rows and proj:
+        ch.write_tex(Path(out_dir), rows, proj, REPS)
+    return {"kernel": rows, "projection": proj}
+
+
+def run_recurrent(out_dir):
+    """Full recurrent (decode, forward-only) sweep."""
+    from rola_bench.perf import recurrent as rc
+    rc.bench(steps=int(os.environ.get("PERF_DECODE_STEPS", "200")),
+             warmup=int(os.environ.get("PERF_DECODE_WARMUP", "50")), out=out_dir)
+    return {"decode": _read_csv(Path(out_dir) / "recurrent_decode.csv")}
+
+
+BENCHES = {"perf-chunked": run_chunked, "perf-recurrent": run_recurrent}
+
+
+def main():
+    import rola_bench.perf._common as C
+    C.require_cuda()
+    gpu = C.gpu_name()
+    run_ids = [r for r in os.environ.get("RUN_IDS", "").split(",") if r]
+    out_dir = str(C.RESULTS_DIR)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    for rid in run_ids:
+        fn = BENCHES.get(rid)
+        if fn is None:
+            _append({"run_id": rid, "ok": False, "gpu": gpu, "error": "unknown perf bench id"})
+            print(f"[perf] unknown bench {rid!r}", flush=True)
+            continue
+        try:
+            print(f"[perf] running {rid} on {gpu} (reps={REPS})", flush=True)
+            data = fn(out_dir)
+            _append({"run_id": rid, "ok": True, "gpu": gpu, "reps": REPS, **data})
+            print(f"[perf] {rid} OK", flush=True)
+        except Exception as e:  # noqa: BLE001 -- one bench's failure must not drop the rest
+            _append({"run_id": rid, "ok": False, "gpu": gpu,
+                     "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-2000:]})
+            print(f"[perf] {rid} FAILED: {type(e).__name__}: {e}", flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
