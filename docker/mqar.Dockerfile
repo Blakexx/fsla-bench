@@ -18,10 +18,12 @@ COPY rola       /opt/rola
 COPY fla-rola   /opt/fla-rola
 COPY zoology    /opt/zoology
 COPY rola-bench /opt/rola-bench
-RUN pip install --no-cache-dir --no-deps -e /opt/rola \
- && pip install --no-cache-dir --no-deps -e /opt/fla-rola \
- && pip install --no-cache-dir --no-deps -e /opt/zoology \
- && pip install --no-cache-dir --no-deps -e /opt/rola-bench
+# --no-build-isolation: use the image's torch (zoology's setup.py imports torch at build time;
+# build isolation would give it a torch-less env -> ModuleNotFoundError).
+RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/zoology \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
 # Build-time gate: the whole dependency graph imports cleanly (no path hacks).
 RUN python -c "import torch, fla.ops.simple_gla, fla.layers, fla_rola, rola, zoology, fleet; \

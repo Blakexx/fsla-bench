@@ -17,9 +17,10 @@ RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
 COPY rola       /opt/rola
 COPY fla-rola   /opt/fla-rola
 COPY rola-bench /opt/rola-bench
-RUN pip install --no-cache-dir --no-deps -e /opt/rola \
- && pip install --no-cache-dir --no-deps -e /opt/fla-rola \
- && pip install --no-cache-dir --no-deps -e /opt/rola-bench
+# --no-build-isolation: build against the image's torch (some setup.py's import torch at build).
+RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
 RUN python -c "import torch, fla.layers, fla_rola, rola, fleet; import rola_bench.lm.job; \
 print('rola-bench lm image OK; torch', torch.__version__)"
