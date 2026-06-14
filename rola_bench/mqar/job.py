@@ -15,11 +15,23 @@ IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v1")
 
 
 def work_list():
-    """Every run_id in the grid at the configured GRID_TIERS (reloaded so the tier env applies)."""
+    """Every run_id in the grid at the configured GRID_TIERS (reloaded so the tier env applies).
+    Optional manager-side filters (run_id = `grid-<family>-<shape>-...`): FAMILIES / SHAPES env
+    (comma lists) restrict which cells the dispatcher hands out — e.g. FAMILIES=hedgehog,gla,gdn
+    SHAPES=square,heads for a 4090-safe baseline subset (wide shapes OOM at batch 128 on 4090)."""
     os.environ["GRID_TIERS"] = GRID_TIERS
     from rola_bench.mqar.experiments import canonical_mqar_grid as g
     importlib.reload(g)
-    return [c.run_id for c in g.configs]
+    ids = [c.run_id for c in g.configs]
+    fams = os.environ.get("FAMILIES")
+    shps = os.environ.get("SHAPES")
+    if fams:
+        fset = set(fams.split(","))
+        ids = [r for r in ids if r.split("-")[1] in fset]
+    if shps:
+        sset = set(shps.split(","))
+        ids = [r for r in ids if len(r.split("-")) > 2 and r.split("-")[2] in sset]
+    return ids
 
 
 def done_ids():
@@ -39,7 +51,10 @@ def done_ids():
 mqar_job = Job(
     name="canonical-mqar-grid",
     image=IMAGE,
-    offer_query="gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500",
+    # 4090 default (cheap, fits square/heads); override for the wide / Based cells that OOM at
+    # batch 128 on a 4090: OFFER_QUERY="gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97".
+    offer_query=os.environ.get(
+        "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
     results_path=os.path.join(RESULTS_DIR, "results_dispatch.jsonl"),
     ckpt_dir=CKPT_DIR,
     work_list=work_list,

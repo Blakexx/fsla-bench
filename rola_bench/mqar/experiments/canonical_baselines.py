@@ -43,8 +43,12 @@ def _lin(feature_map, d_k_total, d_v_total, num_heads):
     # (Katharopoulos 2020 / Hedgehog): o / (phi(q) . sum_j phi(k_j)). FLA's default is False
     # (unnormalized + output RMSNorm) — a modern variant, not the published form. The denominator
     # is recomputed from k (FLA's final_state stays [B,H,K,V]), so the matched-state formula is
-    # unchanged. output_norm='rmsnorm' (FLA default) still applies on top.
-    return dict(name="fla.layers.LinearAttention",
+    # unchanged. output_norm='rmsnorm' (FLA default) still applies on top. Uses the fla-rola FORK's
+    # layer = upstream fla's LinearAttention verbatim + a one-line fused_recurrent scale-default fix
+    # (fla's fused_recurrent omits the `scale=k.shape[-1]**-0.5` default chunk has, crashing the
+    # normalized short-seq path). The fix is committed/visible in the fork, so results reproduce for
+    # anyone using fla-rola — no hidden runtime monkeypatch of the canonical library.
+    return dict(name="fla_rola.layers.LinearAttention",
                 kwargs=dict(hidden_size=DMODEL, expand_k=d_k_total / DMODEL,
                             expand_v=d_v_total / DMODEL, num_heads=num_heads,
                             feature_map=feature_map, do_feature_map_norm=True))
