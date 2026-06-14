@@ -61,6 +61,11 @@ def main():
                 mixer = sm.instantiate(d_model=d_model, layer_idx=0).to(dev)
             except TypeError:
                 mixer = sm.instantiate(d_model=d_model).to(dev)
+            # Exercise the harness state-logging path (Hybrid.state_size -> sub-mixer): the runner
+            # sets ROLA_PRINT_STATE_JSON and the logger calls model.state_size, which crashed on
+            # canonical baselines lacking state_size. A family that can't report state fails here.
+            if hasattr(mixer, "state_size"):
+                mixer.state_size(sequence_length=16)
             x = torch.randn(2, 16, d_model, device=dev, requires_grad=True)
             try:
                 o = mixer(x)
