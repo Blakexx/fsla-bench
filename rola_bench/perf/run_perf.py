@@ -61,13 +61,29 @@ BENCHES = {"perf-chunked": run_chunked, "perf-recurrent": run_recurrent}
 
 
 def main():
+    import torch
     import rola_bench.perf._common as C
-    C.require_cuda()
-    gpu = C.gpu_name()
     run_ids = [r for r in os.environ.get("RUN_IDS", "").split(",") if r]
+    # Capture CUDA status EXPLICITLY. Previously require_cuda() raised SystemExit on a failed init
+    # (e.g. driver/runtime mismatch -> "named symbol not found"), which the per-bench except didn't
+    # catch -> run_perf exited with EMPTY results and no recorded error (the A100 mystery). Now a
+    # CUDA-init failure becomes a VISIBLE, synced failure row carrying the actual error string.
+    cuda_ok = torch.cuda.is_available()
+    cuda_err = ""
+    if not cuda_ok:
+        try:
+            torch.cuda.init()
+        except Exception as e:  # noqa: BLE001
+            cuda_err = f"{type(e).__name__}: {e}"
+    gpu = torch.cuda.get_device_name() if cuda_ok else "NO_CUDA"
     out_dir = str(C.RESULTS_DIR)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for rid in run_ids:
+        if not cuda_ok:
+            _append({"run_id": rid, "ok": False, "gpu": gpu,
+                     "error": f"cuda unavailable: {cuda_err or 'is_available()=False'}"})
+            print(f"[perf] {rid} FAILED: cuda unavailable ({cuda_err})", flush=True)
+            continue
         fn = BENCHES.get(rid)
         if fn is None:
             _append({"run_id": rid, "ok": False, "gpu": gpu, "error": "unknown perf bench id"})

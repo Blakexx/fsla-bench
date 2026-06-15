@@ -67,7 +67,10 @@ def sse_ladder():
     # Two regimes per rung so SSE picks its best: NATIVE (few big partitions, its strong
     # regime) and PARALLEL (N~nc small partitions, mirroring RoLA's states). top-k=2 (the
     # matched-state winner) + top-1 on native to show the sparsity effect; LR-swept.
-    for nc in (8, 16, 32, 64, 128, 256):
+    # nc128/256 dropped: native SSE cost scales with N*c (the matched state, regardless of top-k),
+    # so high-nc SSE is 57->100+ min/cell — the slowest cells in the grid — and adds the least info
+    # (SSE already loses to RoLA at matched state, harder as state grows; nc8-64 shows the trend).
+    for nc in (8, 16, 32, 64):
         budget = 13 * nc                                   # (N+1)*c target, dh=12, H=4
         native = (4, max(2, round(budget / 5)))            # few-big: N=4, c=budget/(N+1)
         par = (max(1, nc), max(2, round(budget / (nc + 1))))  # many-small: N~nc, c~13

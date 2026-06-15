@@ -22,10 +22,26 @@ from pathlib import Path
 
 import torch
 
-# Canonical benchmark shapes (match the LM training config).
+# Benchmark shapes. DEFAULT = the canonical LM-training shape (the headline efficiency table).
+# These are module globals so the arms (chunked.mk / mk_gdn / ...) read them at call time; the
+# per-cell loop overrides them via set_shape() to time at each MQAR cell's exact dims (task #98 —
+# cost-vs-accuracy), with no arm-signature changes. nc is passed explicitly (not a global).
 B, H, L, DQK, DV = 8, 8, 1024, 16, 16
 NCS = (16, 64, 256)
 DEV, DT = "cuda", torch.bfloat16
+
+
+def set_shape(B=None, H=None, L=None, DQK=None, DV=None):
+    """Override the active benchmark shape (per-cell). Only the named dims change; others keep
+    their current value. Returns the prior shape so callers can restore it."""
+    import rola_bench.perf._common as _c
+    prior = (_c.B, _c.H, _c.L, _c.DQK, _c.DV)
+    if B is not None: _c.B = B
+    if H is not None: _c.H = H
+    if L is not None: _c.L = L
+    if DQK is not None: _c.DQK = DQK
+    if DV is not None: _c.DV = DV
+    return prior
 
 # Default reps; override on the CLI. WARM rounds are discarded before timing.
 REPS, WARMUP = 15, 4

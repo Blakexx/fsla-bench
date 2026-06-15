@@ -35,6 +35,10 @@ def work_list():
     if excl:
         eset = set(excl.split(","))
         ids = [r for r in ids if not (len(r.split("-")) > 2 and r.split("-")[2] in eset)]
+    exfam = os.environ.get("EXCLUDE_FAMILIES")  # e.g. EXCLUDE_FAMILIES=sse,gdn -> drop those families
+    if exfam:
+        xset = set(exfam.split(","))
+        ids = [r for r in ids if r.split("-")[1] not in xset]
     return ids
 
 

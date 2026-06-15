@@ -15,7 +15,7 @@ import glob, json, os
 from fleet import Job
 
 RESULTS_DIR = os.environ.get("ROLA_BENCH_PERF_RESULTS", "/home/blake/rola-bench/results/perf")
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v2")  # v2 = suite + perf/rank
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v3")  # v3 = + run_perf crash-capture
 
 # One run_id per bench module. PERF_BENCHES restricts the set (e.g. PERF_BENCHES=chunked).
 ALL_BENCHES = ["perf-chunked", "perf-recurrent"]
