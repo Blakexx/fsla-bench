@@ -12,7 +12,7 @@ Run:  pytest rola_bench/rank/test_equivalence.py            # softmax (CPU) alwa
 import pytest
 import torch
 
-from rola_bench.rank import evaluator as E
+from rola_bench.similarity import evaluator as E
 
 B, L, DM, H = 2, 8, 32, 2
 CUDA = torch.cuda.is_available()
@@ -49,7 +49,7 @@ def test_rola_equiv_cpu():
     assert rel < 1e-4, f"RoLA M@v vs eager readout: rel {rel:.2e}"
 
 
-from rola_bench.rank.evaluator import build_rola_attention_extractor  # noqa: E402
+from rola_bench.similarity.evaluator import build_rola_attention_extractor  # noqa: E402
 
 
 def test_softmax_equiv_cpu():

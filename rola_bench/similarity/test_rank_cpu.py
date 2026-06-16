@@ -3,7 +3,7 @@
 Run with the project venv (no GPU needed):
 
     /mnt/c/Users/Blake/Documents/VSCode/CLA/.venv/bin/python \
-        -m rola_bench.rank.test_rank_cpu
+        -m rola_bench.similarity.test_rank_cpu
 
 or, from /home/blake/rola-bench:
 
@@ -27,7 +27,7 @@ import math
 
 import torch
 
-from rola_bench.rank import (
+from rola_bench.similarity import (
     build_rola_attention_extractor,
     evaluate_rank,
     make_eval_batch,

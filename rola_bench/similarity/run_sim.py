@@ -17,7 +17,7 @@ import traceback
 
 import torch
 
-from rola_bench.rank import evaluator as E
+from rola_bench.similarity import evaluator as E
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 PAYLOAD_DIR = os.environ.get("FLEET_PAYLOAD_DIR", "/workspace/payloads")

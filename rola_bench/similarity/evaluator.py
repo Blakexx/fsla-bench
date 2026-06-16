@@ -131,13 +131,42 @@ def rank_stats(
     # Per-slice SVD loop (rola.py:373-381). Subsample to [:b, :, :l, :l] up front so the
     # singular-value tensor is l-wide (matches rola.py q[:b,:l] subsampling at line 366).
     svs = []
+    diff_l, effrac_l, t1_l = [], [], []                       # per-row SHARPNESS (selection peakiness)
     for bi in range(b):
         for hi in range(H):
             W = attn[bi, hi, :l, :l].float()
             svs.append(torch.linalg.svdvals(W))               # rola.py:378
+            # Each row = query i's weighting over keys. Renormalize to a selection distribution
+            # (clamp negatives->0 [no-op for our non-negative similarity], divide by row sum) ->
+            # SCALE-INVARIANT (comparable normalized vs unnormalized). Then normalize the non-
+            # uniformity by the number of AVAILABLE keys K (causal: i+1; full: L) -> a clean [0,1]
+            # "diffuseness" comparable across seq-len / causal position. rank = how many UNIQUE
+            # blends; sharpness = how PEAKED each blend is (orthogonal axes).
+            is_causal = W.triu(1).abs().max().item() < 1e-8
+            A = W.clamp(min=0)
+            P = A / A.sum(-1, keepdim=True).clamp_min(1e-20)   # [l, l] row-stochastic
+            ent = -(P * P.clamp_min(1e-20).log()).sum(-1)      # nats, per row
+            ipr = 1.0 / P.pow(2).sum(-1).clamp_min(1e-20)      # effective #keys blended, per row
+            Kav = (torch.arange(1, l + 1, device=W.device).float() if is_causal
+                   else torch.full((l,), float(l), device=W.device))  # available keys per row
+            m = Kav >= 2                                       # drop trivial rows (<2 available keys)
+            if m.any():
+                diff_l.append(ent[m] / Kav[m].log())           # diffuseness in [0,1]: 0=one-hot,1=uniform
+                effrac_l.append(ipr[m] / Kav[m])               # eff-keys as a FRACTION of available
+                t1_l.append(P[m].amax(-1))                     # top-1 selection mass
     sv = torch.stack(svs)                                     # [b*H, l]   rola.py:381
 
     out = _rank_stats_from_sv(sv, l, tols)                    # rola.py:382
+
+    # SHARPNESS panel (L-normalized, scale-free -> comparable across models/seq-len/normalization).
+    # Complements rank: a full-rank matrix can still be diffuse (diffuseness~1), which rank alone
+    # can't see; together they pin down "many sharp distinct selections" = a (partial) permutation.
+    if diff_l:
+        D = torch.cat(diff_l); E = torch.cat(effrac_l); T = torch.cat(t1_l)
+        out["sharp_diffuseness_mean"] = round(D.mean().item(), 4)   # 0=one-hot select, 1=uniform blend
+        out["sharp_diffuseness_p90"] = round(torch.quantile(D, 0.9).item(), 4)  # most-diffuse decile
+        out["sharp_eff_key_frac_mean"] = round(E.mean().item(), 4)  # eff #keys / available keys
+        out["sharp_top1_mean"] = round(T.mean().item(), 4)          # mean top-1 mass
 
     if emit_spectrum:
         # Spectrum sigma_i/sigma_max at log-spaced indices, quantiles over slices — the

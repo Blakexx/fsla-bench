@@ -10,7 +10,7 @@ Run: pytest rola_bench/rank/test_extractors_cpu.py
 import pytest
 import torch
 
-from rola_bench.rank import evaluator as E
+from rola_bench.similarity import evaluator as E
 
 B, L, DM, H = 2, 8, 32, 2
 
