@@ -167,6 +167,11 @@ def rank_stats(
         out["sharp_diffuseness_p90"] = round(torch.quantile(D, 0.9).item(), 4)  # most-diffuse decile
         out["sharp_eff_key_frac_mean"] = round(E.mean().item(), 4)  # eff #keys / available keys
         out["sharp_top1_mean"] = round(T.mean().item(), 4)          # mean top-1 mass
+        # raw per-slice (sorted) so a chunked caller can concat across chunks and recompute the
+        # full-dataset distribution (the eval-batch must be chunked at large L to fit memory).
+        out["sharp_diffuseness_dist"] = [round(v, 4) for v in D.sort().values.tolist()]
+        out["sharp_eff_key_frac_dist"] = [round(v, 4) for v in E.sort().values.tolist()]
+        out["sharp_top1_dist"] = [round(v, 4) for v in T.sort().values.tolist()]
 
     if emit_spectrum:
         # Spectrum sigma_i/sigma_max at log-spaced indices, quantiles over slices — the
@@ -251,23 +256,27 @@ def to_final_attention(
 # ======================================================================================
 # Generic checkpoint-driven driver.
 # ======================================================================================
-def make_eval_batch(
-    batch_size: int,
-    seq_len: int,
+def make_mqar_eval(
     vocab_size: int,
+    input_seq_len: int,
+    num_kv_pairs: int,
+    num_examples: int,
     seed: int = 1234,
     device: str = "cpu",
-    dtype: torch.dtype = torch.long,
 ) -> torch.Tensor:
-    """A FIXED, seeded eval batch so ranks are comparable across cells/models.
+    """A FIXED, seeded batch of REAL MQAR sequences (the actual task), shape [num_examples, L].
 
-    Returns token ids [B,L] in [0, vocab_size). Use the SAME (batch_size, seq_len,
-    vocab_size, seed) for every model you want to compare — that is the whole point of
-    pinning the batch (rola.py's inline probe measured on whatever live batch flowed
-    through; here we control it so cross-model numbers are apples-to-apples)."""
-    g = torch.Generator().manual_seed(seed)
-    ids = torch.randint(0, vocab_size, (batch_size, seq_len), generator=g)
-    return ids.to(device=device, dtype=dtype)
+    CRITICAL: rank/sharpness must be measured on the trained recall task, NOT random tokens. The
+    earlier make_eval_batch fed `torch.randint` noise — on which a trained recall model has nothing
+    to select, so attention reads near-uniform (rla monolith → eff_rank 1) and RoLA's routing gram
+    only injects mechanical rank. Here we build the same MQAR distribution the models trained/eval'd
+    on (key-value pairs + queries) via zoology's canonical generator, so the extracted W is the
+    model's genuine recall selection. Seeded so cells are comparable; the test segment's own seed
+    space is used (>= MAX_SEED//2 region is fine for a fixed eval)."""
+    from zoology.data.multiquery_ar import MQARConfig
+    seg = MQARConfig(vocab_size=vocab_size, input_seq_len=input_seq_len,
+                     num_kv_pairs=num_kv_pairs, num_examples=num_examples).build(seed=seed)
+    return seg.inputs.to(device=device, dtype=torch.long)
 
 
 @torch.no_grad()

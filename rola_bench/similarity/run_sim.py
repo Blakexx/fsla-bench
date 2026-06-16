@@ -11,6 +11,7 @@ here we just dispatch on which family's predicate matches the rebuilt model. SSE
 (excluded upstream in the job); if one slips through we record ok=False rather than guess.
 """
 import json
+import math
 import os
 import sys
 import traceback
@@ -21,9 +22,27 @@ from rola_bench.similarity import evaluator as E
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 PAYLOAD_DIR = os.environ.get("FLEET_PAYLOAD_DIR", "/workspace/payloads")
-BATCH = int(os.environ.get("RANK_BATCH", "4"))
-SEQ_LEN = int(os.environ.get("RANK_SEQ_LEN", "2048"))
+RANK_FRAC = float(os.environ.get("RANK_FRAC", "0.25"))     # fraction of each test slice's examples to eval
+MEM_BUDGET = float(os.environ.get("RANK_MEM_BUDGET", "3e9"))  # bytes for the [chunk,H,L,L] W tensor (4090-safe)
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
+# per-(kernel) metric -> rank_stats key whose per-slice `_dist` we aggregate across chunks.
+_METRICS = ("eff_rank", "stable_rank", "rank_1e-02", "sharp_diffuseness", "sharp_eff_key_frac", "sharp_top1")
+
+
+def _agg(vals):
+    """Summarize a concatenated per-slice distribution -> mean + percentiles (compact)."""
+    if not vals:
+        return None
+    s = sorted(vals); n = len(s)
+    q = lambda p: s[min(n - 1, int(p * (n - 1) + 0.5))]
+    return {"mean": round(sum(s) / n, 3), "p10": round(q(0.1), 3), "p50": round(q(0.5), 3),
+            "p90": round(q(0.9), 3), "min": round(s[0], 3), "max": round(s[-1], 3), "n": n}
+
+
+def _chunk_size(L, n_heads=8):
+    """Largest example-chunk whose [chunk, H, L, L] bf32 W fits MEM_BUDGET (H over-estimated → safe)."""
+    per = max(1, n_heads * L * L * 4)
+    return max(1, min(64, int(MEM_BUDGET // per)))
 
 
 def _append(row):
@@ -68,6 +87,9 @@ def _pick_extractor_builder(model):
 
 
 def _rank_one(run_id, cfg):
+    """Rank/sharpness DISTRIBUTION over the real MQAR test set (per kv-density slice), at RANK_FRAC
+    sampling, memory-chunked. One row per (run_id, causal) carrying a per-slice summary dict."""
+    from rola_bench.mqar.experiments.rola_router_width_v2 import TEST_CONFIGS
     ckpt = os.path.join(PAYLOAD_DIR, run_id)
     if not os.path.exists(ckpt):
         _append({"run_id": run_id, "ok": False, "error": "checkpoint payload missing"})
@@ -81,15 +103,29 @@ def _rank_one(run_id, cfg):
         _append({"run_id": run_id, "ok": False, "error": "no faithful extractor for this family"})
         return
     vocab = cfg.model.vocab_size
-    eval_batch = E.make_eval_batch(BATCH, SEQ_LEN, vocab, seed=1234, device=DEV)
     wrote_ok = True
     for causal in (False, True):
         try:
             extractor = builder(layer_index=0, causal=causal)
-            attn = extractor(model, eval_batch)
-            stats = E.rank_stats(attn, max_b=BATCH, max_l=SEQ_LEN, emit_spectrum=False)
+            per_slice = {}
+            for sc in TEST_CONFIGS:                                   # one entry per kv-density slice
+                L, kv = sc.input_seq_len, sc.num_kv_pairs
+                n = max(1, math.ceil(RANK_FRAC * sc.num_examples))
+                batch = E.make_mqar_eval(vocab, L, kv, n, seed=1234, device=DEV)  # [n, L] real MQAR
+                cs = _chunk_size(L)
+                acc = {m: [] for m in _METRICS}
+                with torch.no_grad():
+                    for i in range(0, n, cs):
+                        attn = extractor(model, batch[i:i + cs])      # [b,H,L,L]
+                        st = E.rank_stats(attn, max_b=cs, max_l=L, emit_spectrum=False)
+                        for m in _METRICS:
+                            acc[m].extend(st.get(m + "_dist", []))
+                        del attn
+                        if DEV == "cuda":
+                            torch.cuda.empty_cache()
+                per_slice[f"kv{kv}"] = {"L": L, "n_examples": n, **{m: _agg(acc[m]) for m in _METRICS}}
             _append({"run_id": run_id, "ok": True, "family": family, "causal": causal,
-                     "seq_len": SEQ_LEN, "batch": BATCH, **stats})
+                     "frac": RANK_FRAC, "per_slice": per_slice})
         except Exception as e:  # noqa: BLE001
             wrote_ok = False
             _append({"run_id": run_id, "ok": False, "family": family, "causal": causal,

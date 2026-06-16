@@ -8,7 +8,7 @@ Public API:
   evaluate_rank(ckpt, builder, extractor, batch) — generic checkpoint-driven driver
   build_rola_attention_extractor()       — per-model adapter that returns RoLA's implied W
   rola_attn_from_features(qf,kf,r,w)     — assemble W = (phi(Q)phi(K)^T) ∘ (read write^T)
-  make_eval_batch(...)                   — fixed, seeded batch for cross-model comparability
+  make_mqar_eval(...)                    — real MQAR eval batch (per kv-slice) for the rank probe
 
 Metric definitions are mirrored verbatim from rola.py:311-401 (see evaluator.py docstring
 for the exact line map).
@@ -17,7 +17,7 @@ from .evaluator import (
     DEFAULT_TOLS,
     build_rola_attention_extractor,
     evaluate_rank,
-    make_eval_batch,
+    make_mqar_eval,
     rank_stats,
     rola_attn_from_features,
 )
@@ -26,7 +26,7 @@ __all__ = [
     "DEFAULT_TOLS",
     "build_rola_attention_extractor",
     "evaluate_rank",
-    "make_eval_batch",
+    "make_mqar_eval",
     "rank_stats",
     "rola_attn_from_features",
 ]

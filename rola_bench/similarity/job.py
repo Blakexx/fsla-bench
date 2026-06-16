@@ -18,7 +18,7 @@ CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
 MQAR_RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # unified results/<bench>/
 RESULTS_DIR = os.environ.get("ROLA_BENCH_SIM_RESULTS", "/home/blake/rola-bench/results/similarity")  # scientific output
 RUNTIME_DIR = os.environ.get("ROLA_BENCH_SIM_RUNTIME", "/home/blake/rola-bench/runtime/similarity")  # fleet ops state — gitignored
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v4")  # v4 = similarity rename + sharpness
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v8")  # v8 = MQAR-input fix (real task, per-kv-slice, 25% sample, chunked) + seed_confirm
 
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)            # SSE has no faithful extractor
 
@@ -63,13 +63,18 @@ def _mqar_accuracy():
 
 
 def work_list():
-    """Best-accuracy checkpoint per cell (LR collapsed): one similarity-eval per (kernel,shape,state)."""
+    """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to the SIM_RUNGS nc rungs
+    (default 16,64,256 — the rank-vs-state sample) + mha (rung-independent)."""
+    rungs = set(os.environ.get("SIM_RUNGS", "16,64,256").split(","))
     have_pt = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(CKPT_DIR, "*.pt"))}
     best = {}                                       # cell_key -> (acc, run_id)
     for rid, a in _mqar_accuracy().items():
         if rid not in have_pt or not _has_extractor(rid):
             continue
-        k = _cell_key(rid)
+        k = _cell_key(rid)                          # e.g. routed-rla-nc256, rla-nc16, mha-ncna
+        nc = k.rsplit("-nc", 1)[-1]
+        if nc not in rungs and not k.startswith("mha"):
+            continue
         if a > best.get(k, (-1.0, None))[0]:
             best[k] = (a, rid)
     return [rid for _, rid in best.values()]
@@ -110,8 +115,8 @@ sim_job = Job(
     payload_for=payload_for,                                # ships the best .pt per cell to the box
     env={"FLEET_RUN_CMD": "python -u -m rola_bench.similarity.run_sim",
          "GRID_TIERS": "all",                               # so every cell's config is reconstructable
-         "RANK_BATCH": os.environ.get("RANK_BATCH", "4"),
-         "RANK_SEQ_LEN": os.environ.get("RANK_SEQ_LEN", "2048")},
+         "RANK_FRAC": os.environ.get("RANK_FRAC", "0.25"),  # 25% of each MQAR test slice's examples
+         "SIM_RUNGS": os.environ.get("SIM_RUNGS", "16,64,256")},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=900,
     batch=4,
