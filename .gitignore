@@ -5,7 +5,10 @@ wandb/
 # rows hold run_ids + metrics only, verified free of secrets (no IPs/tokens/gcp-ids/keys). Only
 # model files (*.pt) are excluded. results/ is tracked by default (intentionally NOT listed here).
 # Commit result data once a run completes — not a churning mid-sweep snapshot.
-# Legacy live dirs below are operational churn; their data migrates to results/<bench>/ post-run.
+# FLEET OPS STATE: runtime/<bench>/ holds operational churn — bad_hosts blocklists, dispatch logs,
+# unused-ckpt scaffolding. Never scientific output; always gitignored (kept separate from results/).
+runtime/
+# Legacy live dirs below are operational churn; their data migrated to results/<bench>/ post-run.
 fleet_results/*
 !fleet_results/.gitkeep
 lm_results/*

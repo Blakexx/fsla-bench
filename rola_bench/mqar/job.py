@@ -9,7 +9,8 @@ from fleet import Job
 
 GRID_TIERS = os.environ.get("GRID_TIERS", "12")
 # Manager-side homes for results + the durable bad-machine blocklist.
-RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/fleet_results")
+RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # scientific output (jsonl, git-tracked)
+RUNTIME_DIR = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime/mqar")  # fleet ops state (bad_hosts, logs) — gitignored
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
 IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v1")
 
@@ -68,7 +69,7 @@ mqar_job = Job(
     work_list=work_list,
     done_ids=done_ids,
     env={"GRID_TIERS": GRID_TIERS},
-    bad_hosts=os.path.join(RESULTS_DIR, "bad_hosts.txt"),
+    bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1200,
     batch=1,                  # one cell per batch: the slowest high-nc square/heads cells take ~3.6h for
                               # 40 epochs; batched 5-at-a-time (5 LRs of one config) they'd need ~18h and

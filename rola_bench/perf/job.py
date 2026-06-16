@@ -14,8 +14,9 @@ FLEET_RUN_CMD (set via env below) points the box at run_perf.py.
 import glob, json, os
 from fleet import Job
 
-RESULTS_DIR = os.environ.get("ROLA_BENCH_PERF_RESULTS", "/home/blake/rola-bench/results/perf")
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v3")  # v3 = + run_perf crash-capture
+RESULTS_DIR = os.environ.get("ROLA_BENCH_PERF_RESULTS", "/home/blake/rola-bench/results/perf")  # scientific output
+RUNTIME_DIR = os.environ.get("ROLA_BENCH_PERF_RUNTIME", "/home/blake/rola-bench/runtime/perf")  # fleet ops state — gitignored
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v5")  # v5 = perf shape×full-nc sweep (wide/square/heads, nc 2..256)
 
 # One run_id per bench module. PERF_BENCHES restricts the set (e.g. PERF_BENCHES=chunked).
 ALL_BENCHES = ["perf-chunked", "perf-recurrent"]
@@ -51,12 +52,12 @@ perf_job = Job(
     offer_query=os.environ.get(
         "OFFER_QUERY", "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
     results_path=os.path.join(RESULTS_DIR, "perf_dispatch.jsonl"),
-    ckpt_dir=os.path.join(RESULTS_DIR, "_unused_ckpts"),   # perf saves no checkpoints
+    ckpt_dir=os.path.join(RUNTIME_DIR, "_unused_ckpts"),   # perf saves no checkpoints
     work_list=work_list,
     done_ids=done_ids,
     env={"FLEET_RUN_CMD": "python -u -m rola_bench.perf.run_perf",
          "PERF_REPS": os.environ.get("PERF_REPS", "15")},
-    bad_hosts=os.path.join(RESULTS_DIR, "bad_hosts.txt"),
+    bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=900,
     batch=1,                  # one whole bench per box (round-robin integrity lives inside the run)
     per_batch_timeout=3600,   # a full chunked/recurrent sweep is minutes; 1h is generous headroom

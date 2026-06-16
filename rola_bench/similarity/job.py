@@ -15,8 +15,9 @@ import glob, json, os, re
 from fleet import Job
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-MQAR_RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/fleet_results")
-RESULTS_DIR = os.environ.get("ROLA_BENCH_SIM_RESULTS", "/home/blake/rola-bench/results/similarity")
+MQAR_RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # unified results/<bench>/
+RESULTS_DIR = os.environ.get("ROLA_BENCH_SIM_RESULTS", "/home/blake/rola-bench/results/similarity")  # scientific output
+RUNTIME_DIR = os.environ.get("ROLA_BENCH_SIM_RUNTIME", "/home/blake/rola-bench/runtime/similarity")  # fleet ops state — gitignored
 IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v4")  # v4 = similarity rename + sharpness
 
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)            # SSE has no faithful extractor
@@ -103,7 +104,7 @@ sim_job = Job(
     offer_query=os.environ.get(
         "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
     results_path=os.path.join(RESULTS_DIR, "similarity_dispatch.jsonl"),
-    ckpt_dir=os.path.join(RESULTS_DIR, "_unused_ckpts"),    # similarity produces no checkpoints
+    ckpt_dir=os.path.join(RUNTIME_DIR, "_unused_ckpts"),    # similarity produces no checkpoints
     work_list=work_list,
     done_ids=done_ids,
     payload_for=payload_for,                                # ships the best .pt per cell to the box
@@ -111,7 +112,7 @@ sim_job = Job(
          "GRID_TIERS": "all",                               # so every cell's config is reconstructable
          "RANK_BATCH": os.environ.get("RANK_BATCH", "4"),
          "RANK_SEQ_LEN": os.environ.get("RANK_SEQ_LEN", "2048")},
-    bad_hosts=os.path.join(RESULTS_DIR, "bad_hosts.txt"),
+    bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=900,
     batch=4,
     per_batch_timeout=3600,
