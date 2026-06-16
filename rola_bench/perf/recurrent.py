@@ -215,6 +215,95 @@ def bench(steps, warmup, out):
     print(f"\nWROTE {out}/recurrent_decode.csv  [{C.gpu_name()}]")
 
 
+# --------------------------------------------------------------------------------------------
+# END-TO-END decode: the FUSED single-token layer fwd = in_proj(d_model -> q/k/v/…) -> recurrent
+# kernel -> out_proj, timed as one region (forward only; decode has no backward). d_model=DM.
+# Mirrors chunked.bench_e2e but for the decode path; same arm set as bench().
+# --------------------------------------------------------------------------------------------
+def bench_e2e(steps, warmup, out, DM=512):
+    import torch.nn as nn
+    rows = []
+    def lin(i, o): return nn.Linear(i, o, bias=False).to(C.DEV, C.DT)
+    def t1(*s): return torch.randn(*s, device=C.DEV, dtype=C.DT)
+    print(f"\n# recurrent E2E decode (fused layer, fwd only) | {C.gpu_name()} | d_model={DM} "
+          f"| ms/token (median of {steps})")
+
+    def time_cell(meta, fwd):
+        try:
+            ms = C.time_forward(fwd, steps, warmup)
+            rows.append({**meta, "e2e_ms_per_tok": round(ms, 3)}); print(rows[-1], flush=True)
+        except torch.cuda.OutOfMemoryError:
+            rows.append({**meta, "e2e_ms_per_tok": "OOM"}); torch.cuda.empty_cache(); print(f"OOM {meta}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            rows.append({**meta, "e2e_ms_per_tok": "ERR"}); torch.cuda.empty_cache(); print(f"ERR {meta}: {type(e).__name__}: {e}", flush=True)
+
+    for gla in (False, True):
+        var = "GLA" if gla else "RLA"
+        for nc in C.NCS:
+            B = C.B
+            x = t1(B, 1, DM)
+            # rola-vh (native): project q/k/v/r/w(/ld), decode, out_proj
+            qp, kp, vp = lin(DM, C.H*C.DQK), lin(DM, C.H*C.DQK), lin(DM, C.H*C.DV)
+            rp, wp = lin(DM, C.H*nc), lin(DM, C.H*nc)
+            ldp = lin(DM, C.H*nc) if gla else None
+            op = lin(C.H*C.DV, DM)
+            for arm, norm in (("rola-vh global", "global"), ("rola-vh kappa", "kappa")):
+                state = torch.zeros(B, C.H*nc, C.DQK, C.DV+1, device=C.DEV, dtype=torch.float32)
+                def fwd(norm=norm, st=state):
+                    q = qp(x).view(B, 1, C.H, C.DQK); k = kp(x).view(B, 1, C.H, C.DQK); v = vp(x).view(B, 1, C.H, C.DV)
+                    r = torch.softmax(rp(x).view(B, 1, C.H, nc).float(), -1).to(C.DT)
+                    w = torch.softmax(wp(x).view(B, 1, C.H, nc).float(), -1).to(C.DT)
+                    ld = ldp(x).view(B, 1, C.H, nc) if ldp is not None else None
+                    o, _ = decode_routed_step(q, k, v, r, w, ld, st, nc, norm)
+                    return op(o.reshape(B, 1, -1).to(C.DT))
+                time_cell(dict(variant=var, nc=nc, shape="native", arm=arm), fwd)
+            # monolith shapes
+            for shape in ("wide", "square", "heads"):
+                d = C.shaped_dims("lin1", shape, nc)
+                if d is None: continue
+                H, dk, dv = d["H"], d["d_k"], d["d_v"]
+                mqp, mkp, mvp = lin(DM, H*dk), lin(DM, H*dk), lin(DM, H*dv)
+                mgp = lin(DM, H) if gla else None; mop = lin(H*dv, DM)
+                st = torch.zeros(B, H, dk, dv, device=C.DEV, dtype=torch.float32)
+                def fwd(H=H, dk=dk, dv=dv, mqp=mqp, mkp=mkp, mvp=mvp, mgp=mgp, mop=mop, st=st):
+                    q = mqp(x).view(B, 1, H, dk).abs(); k = mkp(x).view(B, 1, H, dk).abs(); v = mvp(x).view(B, 1, H, dv)
+                    g = torch.nn.functional.logsigmoid(mgp(x).view(B, 1, H).float()).to(C.DT) if mgp is not None else None
+                    o, _ = decode_monolith_step(q, k, v, st, g=g)
+                    return mop(o.reshape(B, 1, -1).to(C.DT))
+                time_cell(dict(variant=var, nc=nc, shape=shape, arm="monolith"), fwd)
+    # cross-arch (own): gdn + hedgehog × shape
+    for nc in C.NCS:
+        B = C.B; x = t1(B, 1, DM)
+        for shape in ("wide", "square", "heads"):
+            dg = C.shaped_dims("gdn", shape, nc)
+            if dg is not None:
+                H, dk, dv = dg["H"], dg["d_k"], dg["d_v"]
+                gqp, gkp, gvp = lin(DM, H*dk), lin(DM, H*dk), lin(DM, H*dv)
+                gbp, ggp, gop = lin(DM, H), lin(DM, H), lin(H*dv, DM)
+                st = torch.zeros(B, H, dk, dv, device=C.DEV, dtype=torch.float32)
+                def fwd(H=H, dk=dk, dv=dv, gqp=gqp, gkp=gkp, gvp=gvp, gbp=gbp, ggp=ggp, gop=gop, st=st):
+                    q = gqp(x).view(B, 1, H, dk); k = gkp(x).view(B, 1, H, dk); v = gvp(x).view(B, 1, H, dv)
+                    beta = gbp(x).view(B, 1, H).sigmoid().to(C.DT)
+                    ldg = torch.nn.functional.logsigmoid(ggp(x).view(B, 1, H).float()).to(C.DT)
+                    o, _ = decode_gdn_step(q, k, v, ldg, beta, st)
+                    return gop(o.reshape(B, 1, -1).to(C.DT))
+                time_cell(dict(variant="own", nc=nc, shape=shape, arm="gdn"), fwd)
+            dh = C.shaped_dims("lin2", shape, nc)
+            if dh is not None:
+                H, dk, dv = dh["H"], dh["d_k"], dh["d_v"]
+                hqp, hkp, hvp = lin(DM, H*dk), lin(DM, H*dk), lin(DM, H*dv)
+                fmap = HedgehogFeatureMap(head_dim=dk).to(C.DEV, C.DT); feat = fmap(t1(1, 1, H, dk)).shape[-1]
+                hop = lin(H*dv, DM); st = torch.zeros(B, H, feat, dv, device=C.DEV, dtype=torch.float32)
+                def fwd(H=H, dk=dk, dv=dv, hqp=hqp, hkp=hkp, hvp=hvp, fmap=fmap, hop=hop, st=st):
+                    q = hqp(x).view(B, 1, H, dk); k = hkp(x).view(B, 1, H, dk); v = hvp(x).view(B, 1, H, dv)
+                    o, _ = decode_hedgehog_step(q, k, v, fmap, st)
+                    return hop(o.reshape(B, 1, -1).to(C.DT))
+                time_cell(dict(variant="own", nc=nc, shape=shape, arm="hedgehog"), fwd)
+    C.write_csv(Path(out) / "recurrent_e2e.csv", rows)
+    print(f"WROTE {Path(out)}/recurrent_e2e.csv  [{C.gpu_name()}]")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description="Recurrent (decode, forward-only) benchmark.")
     ap.add_argument("--check", action="store_true", help="assert step-decode == chunked, then exit")

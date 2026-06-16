@@ -16,7 +16,7 @@ from fleet import Job
 
 RESULTS_DIR = os.environ.get("ROLA_BENCH_PERF_RESULTS", "/home/blake/rola-bench/results/perf")  # scientific output
 RUNTIME_DIR = os.environ.get("ROLA_BENCH_PERF_RUNTIME", "/home/blake/rola-bench/runtime/perf")  # fleet ops state — gitignored
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v5")  # v5 = perf shape×full-nc sweep (wide/square/heads, nc 2..256)
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v7")  # v7 = + true end-to-end fused layer (chunked fwd/fwd+bwd, recurrent decode fwd)
 
 # One run_id per bench module. PERF_BENCHES restricts the set (e.g. PERF_BENCHES=chunked).
 ALL_BENCHES = ["perf-chunked", "perf-recurrent"]

@@ -285,6 +285,96 @@ TEX_OWN_IMPLS = ("gdn", "based", "hedgehog")
 PROJ_FALLBACK = {"vh": "rola", "kappa": "rola"}
 
 
+# --------------------------------------------------------------------------------------------
+# END-TO-END: the FUSED layer cost = in_proj(d_model -> q/k/v/routers) -> kernel -> out_proj,
+# timed as ONE region (fwd, and fwd+bwd). This is the real per-layer wall-clock, comparable to
+# the kernel+projection SUM but capturing launch overlap. Built generically by projecting each
+# kernel input from x at the SAME realized dims the decomposition uses (so e2e ⟷ sum is apples-
+# to-apples). Uses the same run-fn as the kernel arm; routers get a softmax; out_proj maps the
+# kernel output (H·d_v) back to d_model.
+# --------------------------------------------------------------------------------------------
+def build_e2e(arm, shape, nc, gla, DM):
+    """Return (forward_fn(leaves)->out, module_list, n_params) or None if the cell is infeasible."""
+    t_ref = arm["make_inputs"](shape, nc, gla)
+    if t_ref is None:
+        return None
+    B, L = C.B, C.L
+    in_proj, shp = nn.ModuleDict(), {}
+    for k, vv in t_ref.items():
+        if torch.is_tensor(vv):
+            in_proj[k] = nn.Linear(DM, vv[0, 0].numel(), bias=False)   # d_model -> per-token features
+            shp[k] = tuple(vv.shape[2:])
+    out_proj = nn.Linear(t_ref["v"][0, 0].numel(), DM, bias=False)     # kernel out (H·d_v) -> d_model
+    mods = nn.ModuleList(list(in_proj.values()) + [out_proj]).to(C.DEV, C.DT)
+    passthru = {k: v for k, v in t_ref.items() if not torch.is_tensor(v)}  # e.g. Hedgehog feature map
+
+    def forward(leaves):
+        x = leaves["x"]
+        t = dict(passthru)
+        for k, lin in in_proj.items():
+            y = lin(x).view(B, L, *shp[k])
+            if k in ("r", "w"):
+                y = torch.softmax(y.float(), -1).to(C.DT)              # routers are simplex weights
+            t[k] = y
+        o = arm["run"](t, gla)
+        return out_proj(o.reshape(B, L, -1))
+
+    return forward, mods, sum(p.numel() for p in mods.parameters())
+
+
+def _e2e_rep(forward, leaves, mods):
+    """One fused fwd+bwd rep -> (fwd_ms, fwd_bwd_ms, peak_mib). Clears x AND param grads per rep."""
+    torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
+    base = torch.cuda.memory_allocated()
+    e0, e1, e2 = (torch.cuda.Event(enable_timing=True) for _ in range(3))
+    e0.record(); o = forward(leaves); e1.record(); torch.cuda.synchronize()
+    o.float().sum().backward(); e2.record(); torch.cuda.synchronize()
+    peak = (torch.cuda.max_memory_allocated() - base) / 2 ** 20
+    leaves["x"].grad = None
+    for p in mods.parameters():
+        p.grad = None
+    return e0.elapsed_time(e1), e0.elapsed_time(e2), peak
+
+
+def bench_e2e(reps, rows):
+    """Fused end-to-end fwd + fwd+bwd for every arm × shape × nc, at d_model=DM. Same in-process
+    run as bench_kernel so Triton autotuning is shared (no extra tuning cost)."""
+    DM = 512
+    for arm in ARMS:
+        variants = [(False, "RLA"), (True, "GLA")] if arm["variants"] == "rla_gla" else [(False, "own")]
+        for gla, var in variants:
+            for shape in arm["shapes"]:
+                for nc in C.NCS:
+                    name = arm["name"]
+                    try:
+                        built = build_e2e(arm, shape, nc, gla, DM)
+                        if built is None:
+                            continue
+                        forward, mods, npar = built
+                        torch.manual_seed(0)
+                        x = torch.randn(C.B, C.L, DM, device=C.DEV, dtype=C.DT)
+                        leaves = {"x": x.detach().requires_grad_()}
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings("ignore", message=".*format mismatch.*")
+                            data = C.round_robin([(name, None)],
+                                                 lambda nm, _p: _e2e_rep(forward, leaves, mods), reps=reps)
+                        f, fb, pk = zip(*data[name])
+                        row = dict(variant=var, nc=nc, shape=shape, impl=name,
+                                   e2e_fwd_ms=round(C.median(f), 3), e2e_fwd_iqr=round(C.iqr(f), 3),
+                                   e2e_fb_ms=round(C.median(fb), 3), e2e_fb_iqr=round(C.iqr(fb), 3),
+                                   e2e_peak_mib=round(max(pk)), params_m=round(npar / 1e6, 2))
+                        rows.append(row); print(row, flush=True)
+                    except torch.cuda.OutOfMemoryError:
+                        rows.append(dict(variant=var, nc=nc, shape=shape, impl=name, e2e_fwd_ms="OOM",
+                                         e2e_fb_ms="OOM")); torch.cuda.empty_cache()
+                        print(f"OOM  e2e {var}/{shape}/nc{nc}/{name}", flush=True)
+                    except Exception as e:  # noqa: BLE001
+                        rows.append(dict(variant=var, nc=nc, shape=shape, impl=name, e2e_fwd_ms="ERR",
+                                         e2e_fb_ms="ERR")); torch.cuda.empty_cache()
+                        print(f"ERR  e2e {var}/{shape}/nc{nc}/{name}: {type(e).__name__}: {e}", flush=True)
+    return rows
+
+
 def _leaves(t, keys):
     """Mask requires_grad onto `keys`; pass non-tensor entries (e.g. modules) through untouched."""
     out = {}
@@ -458,19 +548,22 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     print(f"# chunked fwd+bwd | {C.gpu_name()} | B={C.B} H={C.H} L={C.L} d_qk=d_v={C.DQK} bf16 "
           f"| nc {tuple(C.NCS)} | shapes wide/square/heads | median of {a.reps} interleaved reps")
-    rows, proj = [], []
+    rows, proj, e2e = [], [], []
     try:
-        bench_kernel(a.reps, rows)
-        bench_projections(a.reps, proj)
+        bench_kernel(a.reps, rows)        # stage-2 kernel (isolated)
+        bench_projections(a.reps, proj)   # stage-1 projection GEMMs (isolated)
+        bench_e2e(a.reps, e2e)            # FUSED end-to-end layer (fwd + fwd+bwd) — same process, warm autotune
     finally:
         # Always persist whatever completed, so a partial / OOM-truncated run is not lost.
         if rows:
             C.write_csv(out / "kernel_efficiency.csv", rows)
         if proj:
             C.write_csv(out / "projection_cost.csv", proj)
+        if e2e:
+            C.write_csv(out / "kernel_e2e.csv", e2e)
         if rows and proj:
             write_tex(out, rows, proj, a.reps)
-    print(f"\nWROTE {out}/kernel_efficiency.csv, projection_cost.csv, kernel_efficiency.tex  [{C.gpu_name()}]")
+    print(f"\nWROTE {out}/kernel_efficiency.csv, projection_cost.csv, kernel_e2e.csv, kernel_efficiency.tex  [{C.gpu_name()}]")
 
 
 if __name__ == "__main__":

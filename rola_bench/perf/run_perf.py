@@ -36,25 +36,31 @@ def run_chunked(out_dir):
     """Full chunked fwd+bwd sweep (kernel efficiency + projection cost), round-robin in-process."""
     from rola_bench.perf import chunked as ch
     import rola_bench.perf._common as C
-    rows, proj = [], []
-    ch.bench_kernel(REPS, rows)
-    ch.bench_projections(REPS, proj)
+    rows, proj, e2e = [], [], []
+    ch.bench_kernel(REPS, rows)            # stage-2 kernel (isolated)
+    ch.bench_projections(REPS, proj)       # stage-1 projections (isolated)
+    ch.bench_e2e(REPS, e2e)                # FUSED end-to-end layer (fwd + fwd+bwd)
     # also write the canonical CSV/TeX (paper artifacts) next to the dispatch jsonl
     if rows:
         C.write_csv(Path(out_dir) / "kernel_efficiency.csv", rows)
     if proj:
         C.write_csv(Path(out_dir) / "projection_cost.csv", proj)
+    if e2e:
+        C.write_csv(Path(out_dir) / "kernel_e2e.csv", e2e)
     if rows and proj:
         ch.write_tex(Path(out_dir), rows, proj, REPS)
-    return {"kernel": rows, "projection": proj}
+    return {"kernel": rows, "projection": proj, "e2e": e2e}
 
 
 def run_recurrent(out_dir):
     """Full recurrent (decode, forward-only) sweep."""
     from rola_bench.perf import recurrent as rc
-    rc.bench(steps=int(os.environ.get("PERF_DECODE_STEPS", "200")),
-             warmup=int(os.environ.get("PERF_DECODE_WARMUP", "50")), out=out_dir)
-    return {"decode": _read_csv(Path(out_dir) / "recurrent_decode.csv")}
+    steps = int(os.environ.get("PERF_DECODE_STEPS", "200"))
+    warm = int(os.environ.get("PERF_DECODE_WARMUP", "50"))
+    rc.bench(steps=steps, warmup=warm, out=out_dir)        # decode decomposition (kernel only)
+    rc.bench_e2e(steps=steps, warmup=warm, out=out_dir)    # FUSED end-to-end decode (fwd only)
+    return {"decode": _read_csv(Path(out_dir) / "recurrent_decode.csv"),
+            "e2e": _read_csv(Path(out_dir) / "recurrent_e2e.csv")}
 
 
 BENCHES = {"perf-chunked": run_chunked, "perf-recurrent": run_recurrent}
