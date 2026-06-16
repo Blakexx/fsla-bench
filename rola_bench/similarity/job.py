@@ -18,7 +18,7 @@ CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
 MQAR_RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # unified results/<bench>/
 RESULTS_DIR = os.environ.get("ROLA_BENCH_SIM_RESULTS", "/home/blake/rola-bench/results/similarity")  # scientific output
 RUNTIME_DIR = os.environ.get("ROLA_BENCH_SIM_RUNTIME", "/home/blake/rola-bench/runtime/similarity")  # fleet ops state — gitignored
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v8")  # v8 = MQAR-input fix (real task, per-kv-slice, 25% sample, chunked) + seed_confirm
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v9")  # v9 = + signed-sharpness guard, faithful GLA V=I probe, reproducible make_mqar_eval, head-count chunk probe
 
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)            # SSE has no faithful extractor
 

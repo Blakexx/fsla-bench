@@ -11,7 +11,7 @@ from fleet import Job
 RESULTS_DIR = os.environ.get("ROLA_SEED_RESULTS", "/home/blake/rola-bench/results/seed")
 RUNTIME_DIR = os.environ.get("ROLA_SEED_RUNTIME", "/home/blake/rola-bench/runtime/seed")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v8")
+IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v9")  # v9 = seed_confirm configs_envs + data.seed fix
 SEEDS = os.environ.get("SEED_CONFIRM_SEEDS", "2024,777")   # ADDITIONAL seeds (existing grid is s1337)
 
 
