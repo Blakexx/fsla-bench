@@ -130,17 +130,33 @@ def rank_stats(
 
     # Per-slice SVD loop (rola.py:373-381). Subsample to [:b, :, :l, :l] up front so the
     # singular-value tensor is l-wide (matches rola.py q[:b,:l] subsampling at line 366).
+    #
+    # SHARPNESS VALIDITY GUARD: the sharpness panel below treats each ROW of W as a selection
+    # distribution (clamp<0 -> 0, then renormalize). That is meaningful ONLY for an effectively
+    # NON-NEGATIVE operator — softmax attention, and normalized/positive-feature linear attention
+    # (RoLA-RLA elu+1, Based taylor). For SIGNED operators — the GLA content/decay operator and the
+    # GDN delta operator (M contains (I - beta k kᵀ) terms) — clamp(min=0) silently DISCARDS the
+    # negative mass, so diffuseness/eff_key_frac/top1 would be computed on a truncated positive part
+    # and are NOT faithful. We detect signed slices and SKIP sharpness for them (rank is still valid:
+    # SVD needs no sign assumption), reporting `sharp_n_signed_skipped` so the omission is explicit.
+    SHARP_SIGN_TOL = 1e-6   # RELATIVE to each slice's magnitude (not absolute): a large-scale
+                            # positive operator's fp rounding noise (~eps·max) must not read as
+                            # "signed", and a tiny-scale signed operator's genuine negatives must.
     svs = []
     diff_l, effrac_l, t1_l = [], [], []                       # per-row SHARPNESS (selection peakiness)
+    n_signed = 0
     for bi in range(b):
         for hi in range(H):
             W = attn[bi, hi, :l, :l].float()
             svs.append(torch.linalg.svdvals(W))               # rola.py:378
+            if W.amin() < -SHARP_SIGN_TOL * W.abs().amax().clamp_min(1e-20):  # signed -> sharpness undefined
+                n_signed += 1                                 # (rank above is still measured for it)
+                continue
             # Each row = query i's weighting over keys. Renormalize to a selection distribution
-            # (clamp negatives->0 [no-op for our non-negative similarity], divide by row sum) ->
-            # SCALE-INVARIANT (comparable normalized vs unnormalized). Then normalize the non-
-            # uniformity by the number of AVAILABLE keys K (causal: i+1; full: L) -> a clean [0,1]
-            # "diffuseness" comparable across seq-len / causal position. rank = how many UNIQUE
+            # (clamp negatives->0 [no-op for the non-negative slices reaching here], divide by row
+            # sum) -> SCALE-INVARIANT (comparable normalized vs unnormalized). Then normalize the
+            # non-uniformity by the number of AVAILABLE keys K (causal: i+1; full: L) -> a clean
+            # [0,1] "diffuseness" comparable across seq-len / causal position. rank = how many UNIQUE
             # blends; sharpness = how PEAKED each blend is (orthogonal axes).
             is_causal = W.triu(1).abs().max().item() < 1e-8
             A = W.clamp(min=0)
@@ -172,6 +188,10 @@ def rank_stats(
         out["sharp_diffuseness_dist"] = [round(v, 4) for v in D.sort().values.tolist()]
         out["sharp_eff_key_frac_dist"] = [round(v, 4) for v in E.sort().values.tolist()]
         out["sharp_top1_dist"] = [round(v, 4) for v in T.sort().values.tolist()]
+    if n_signed:
+        # Signed operator (GLA / GDN): sharpness skipped (would be computed on a clamped positive
+        # part). Rank metrics above are unaffected. Recorded so the absence is explicit, not silent.
+        out["sharp_n_signed_skipped"] = n_signed
 
     if emit_spectrum:
         # Spectrum sigma_i/sigma_max at log-spaced indices, quantiles over slices — the
@@ -271,9 +291,16 @@ def make_mqar_eval(
     to select, so attention reads near-uniform (rla monolith → eff_rank 1) and RoLA's routing gram
     only injects mechanical rank. Here we build the same MQAR distribution the models trained/eval'd
     on (key-value pairs + queries) via zoology's canonical generator, so the extracted W is the
-    model's genuine recall selection. Seeded so cells are comparable; the test segment's own seed
-    space is used (>= MAX_SEED//2 region is fine for a fixed eval)."""
+    model's genuine recall selection.
+
+    REPRODUCIBILITY: MQARConfig.build seeds only numpy (np.random.seed), but with the default
+    random_non_queries=True the filler tokens are drawn by `torch.randint` from torch's GLOBAL RNG —
+    which build() never seeds. Without the manual_seed below, every call (and every box) would draw
+    DIFFERENT filler tokens, so the "fixed seeded batch" wouldn't be fixed and reported rank/sharpness
+    wouldn't reproduce across runs of the same run_id. Seed torch's global RNG here to pin the fillers
+    too (kept random_non_queries=True to match the trained distribution — only the seeding is added)."""
     from zoology.data.multiquery_ar import MQARConfig
+    torch.manual_seed(seed)                                   # pin the torch-RNG non-query fillers
     seg = MQARConfig(vocab_size=vocab_size, input_seq_len=input_seq_len,
                      num_kv_pairs=num_kv_pairs, num_examples=num_examples).build(seed=seed)
     return seg.inputs.to(device=device, dtype=torch.long)
@@ -485,30 +512,53 @@ def _is_gla(m: torch.nn.Module) -> bool:
             and not hasattr(m, "feature_map_q"))
 
 
-def build_gla_extractor(layer_index: int = 0, causal: bool = False, eps: float = 1e-5) -> Callable:
-    """FINAL content-matrix extractor for a zoology `GatedLinearAttention` layer. UNMASKED object is
-    the content gram φ(q)φ(k)ᵀ (φ = the layer's own `feature_map_fn`, default identity); GLA's
-    per-key-dim forget-gate decay is a rank-preserving two-sided diagonal (omitted unmasked, exactly
-    as the RoLA-GLA reference does), and the output gate / output norm act on O channel-wise (do not
-    enter M). GLA is unnormalized → `normalize=False`. The CAUSAL decayed operator is obtained
-    separately via the kernel-probe extractor (faithful, no analytic decay re-derivation)."""
+def build_gla_extractor(layer_index: int = 0, causal: bool = True, eps: float = 1e-5) -> Callable:
+    """FINAL token-mixing-matrix extractor for a zoology `GatedLinearAttention` layer, via the
+    kernel-PROBE (V=identity) — the SAME technique as the GDN extractor.
+
+    Why not the content gram: GLA's forget gate is a PER-KEY-DIMENSION (vector) decay g_k. Unlike
+    RoLA-GLA's SCALAR decay (a rank-preserving two-sided diagonal on the [L,L] matrix), a per-dim
+    decay does NOT factor as a two-sided diagonal of M — so the unmasked content gram φ(q)φ(k)ᵀ is
+    NOT a faithful stand-in for GLA's operator (it drops the decay entirely). GLA is a LINEAR
+    attention, O = M @ V, so we recover the true causal decayed M EXACTLY by running the REAL kernel
+    (`fla.ops.gla.chunk_gla`, the very function `GatedLinearAttention.forward` calls, with its default
+    scale = head_k_dim**-0.5) on v = identity (one value-channel per key position): O|_{V=I} = M. No
+    analytic decay re-derivation. The output gate / g_norm / o_proj act channel-wise on O and do not
+    enter M.
+
+    GLA is inherently causal (the decay needs token ordering — there is no meaningful unmasked GLA
+    operator), so `causal` is IGNORED (always the causal decayed operator), exactly as the GDN probe;
+    GLA has no entry in an 'unmasked rank-law' table. The recovered M is SIGNED (q·k gram), so the
+    downstream sharpness panel is skipped for it (rank-only) — see rank_stats' signed guard. Requires
+    CUDA (Triton kernel)."""
+    import torch.nn.functional as F
     from einops import rearrange, repeat
 
     def extractor(model: torch.nn.Module, eval_batch) -> torch.Tensor:
+        from fla.ops.gla import chunk_gla
         layer = _find_layer(model, layer_index, _is_gla, "zoology GatedLinearAttention layer")
+        if getattr(layer, "use_short_conv", False):
+            raise NotImplementedError("GLA extractor: use_short_conv=True not supported (baselines use it off)")
         x = _to_hidden_states(model, layer, eval_batch)
+        Bx, Lx, _ = x.shape
         d = layer.head_k_dim
-        q = rearrange(layer.q_proj(x), "... (h d) -> ... h d", d=d)
+        q = layer.q_proj(x); k = layer.k_proj(x); gk = layer.gk_proj(x)
+        if layer.feature_map_fn is not None:                  # elementwise → order vs rearrange is moot
+            q, k = layer.feature_map_fn(q), layer.feature_map_fn(k)
+        q = rearrange(q, "b s (h d) -> b s h d", d=d)
         g = getattr(layer, "num_kv_groups", 1)
-        if g > 1:
-            k = repeat(layer.k_proj(x), "... (h d) -> ... (h g) d", d=d, g=g)
+        if g > 1:                                             # MQA: repeat k / gate across kv-groups
+            k, gk = (repeat(_t, "b s (h d) -> b s (h g) d", g=g, d=d) for _t in (k, gk))
         else:
-            k = rearrange(layer.k_proj(x), "... (h d) -> ... h d", d=d)
-        if layer.feature_map_fn is not None:
-            q = layer.feature_map_fn(q)
-            k = layer.feature_map_fn(k)
-        W = torch.einsum("blhd,bmhd->bhlm", q, k)
-        return to_final_attention(W, normalize=False, causal=causal, eps=eps)
+            k, gk = (rearrange(_t, "b s (h d) -> b s h d", d=d) for _t in (k, gk))
+        gk = F.logsigmoid(gk) / layer.gate_logit_normalizer   # GLA's log-decay parametrization
+        if getattr(layer, "clamp_min", None) is not None:
+            gk = torch.clamp_min(gk, layer.clamp_min)
+        Hk = q.shape[-2]
+        # v = identity over (position, value-channel): O[b,t,h,j] = M[b,h,t,j]
+        v = torch.eye(Lx, device=x.device, dtype=q.dtype)[None, :, None, :].expand(Bx, Lx, Hk, Lx).contiguous()
+        o, _ = chunk_gla(q, k, v, g=gk, output_final_state=False)
+        return o.permute(0, 2, 1, 3).contiguous()             # [B,L,H,L] -> [B,H,L,L] = M (causal decayed)
 
     return extractor
 
@@ -557,7 +607,7 @@ def build_gdn_extractor(layer_index: int = 0, causal: bool = True) -> Callable:
     from einops import rearrange, repeat
 
     def extractor(model: torch.nn.Module, eval_batch) -> torch.Tensor:
-        from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
+        from fla.ops.gated_delta_rule import chunk_gated_delta_rule   # match fla.layers.GatedDeltaNet
         layer = _find_layer(model, layer_index, _is_gdn, "fla GatedDeltaNet layer")
         if getattr(layer, "use_short_conv", False):
             raise NotImplementedError("GDN extractor: use_short_conv=True not supported (baselines use it off)")

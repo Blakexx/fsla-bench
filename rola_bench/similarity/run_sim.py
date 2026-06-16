@@ -39,8 +39,10 @@ def _agg(vals):
             "p90": round(q(0.9), 3), "min": round(s[0], 3), "max": round(s[-1], 3), "n": n}
 
 
-def _chunk_size(L, n_heads=8):
-    """Largest example-chunk whose [chunk, H, L, L] bf32 W fits MEM_BUDGET (H over-estimated → safe)."""
+def _chunk_size(L, n_heads):
+    """Largest example-chunk whose [chunk, H, L, L] fp32 W fits MEM_BUDGET. n_heads is the model's
+    ACTUAL head count (probed per cell): heads-shape baselines reach H~140, so a hardcoded H=8 would
+    under-budget by ~17x and OOM the heavy slices."""
     per = max(1, n_heads * L * L * 4)
     return max(1, min(64, int(MEM_BUDGET // per)))
 
@@ -107,12 +109,18 @@ def _rank_one(run_id, cfg):
     for causal in (False, True):
         try:
             extractor = builder(layer_index=0, causal=causal)
+            # Probe this family's head count H once (W is [b,H,L,L]) on the SMALLEST-L slice, 1 example,
+            # so the per-slice memory-chunk size reflects the real H (heads-shape baselines reach ~140).
+            _sc0 = min(TEST_CONFIGS, key=lambda c: c.input_seq_len)
+            with torch.no_grad():
+                _probe = E.make_mqar_eval(vocab, _sc0.input_seq_len, _sc0.num_kv_pairs, 1, seed=1234, device=DEV)
+                n_heads = int(extractor(model, _probe).shape[1])
             per_slice = {}
             for sc in TEST_CONFIGS:                                   # one entry per kv-density slice
                 L, kv = sc.input_seq_len, sc.num_kv_pairs
                 n = max(1, math.ceil(RANK_FRAC * sc.num_examples))
                 batch = E.make_mqar_eval(vocab, L, kv, n, seed=1234, device=DEV)  # [n, L] real MQAR
-                cs = _chunk_size(L)
+                cs = _chunk_size(L, n_heads)
                 acc = {m: [] for m in _METRICS}
                 with torch.no_grad():
                     for i in range(0, n, cs):
@@ -143,7 +151,7 @@ def main():
             print(f"[rank] {rid}: no config", flush=True)
             continue
         try:
-            print(f"[rank] {rid} on {DEV} (B={BATCH} L={SEQ_LEN})", flush=True)
+            print(f"[rank] {rid} on {DEV} (frac={RANK_FRAC}, rungs per SIM_RUNGS)", flush=True)
             _rank_one(rid, cfg)
             print(f"[rank] {rid} done", flush=True)
         except Exception as e:  # noqa: BLE001 -- never abort the batch on one cell

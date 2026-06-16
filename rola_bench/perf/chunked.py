@@ -143,10 +143,13 @@ def mk_gdn(shape, nc, gla=False, seed=0):
         return None
     torch.manual_seed(seed)
     g = lambda *s: torch.randn(*s, device=C.DEV, dtype=C.DT)
-    # GDN expects L2-normalized keys; beta in (0,1); g in log space (logsigmoid).
+    # q AND k are raw (unnormalized): the canonical fla.layers.GatedDeltaNet L2-normalizes BOTH
+    # q and k INSIDE the kernel (use_qk_l2norm_in_kernel=True). Pre-normalizing k here (and leaving
+    # q raw) measured a DIFFERENT computation than the real layer and hid the in-kernel norm cost.
+    # beta in (0,1); g in log space (logsigmoid).
     return dict(
         q=g(C.B, C.L, d["H"], d["d_k"]),
-        k=torch.nn.functional.normalize(g(C.B, C.L, d["H"], d["d_k"]).float(), p=2, dim=-1).to(C.DT),
+        k=g(C.B, C.L, d["H"], d["d_k"]),
         v=g(C.B, C.L, d["H"], d["d_v"]),
         beta=torch.rand(C.B, C.L, d["H"], device=C.DEV, dtype=C.DT).sigmoid(),
         ldg=torch.nn.functional.logsigmoid(g(C.B, C.L, d["H"]).float()).to(C.DT),
@@ -154,7 +157,9 @@ def mk_gdn(shape, nc, gla=False, seed=0):
 
 
 def run_gdn(t, gla):
-    o, _ = chunk_gated_delta_rule(t["q"], t["k"], t["v"], g=t["ldg"], beta=t["beta"], scale=1.0)
+    # use_qk_l2norm_in_kernel=True == fla.layers.GatedDeltaNet (normalizes q,k in-kernel).
+    o, _ = chunk_gated_delta_rule(t["q"], t["k"], t["v"], g=t["ldg"], beta=t["beta"], scale=1.0,
+                                  use_qk_l2norm_in_kernel=True)
     return o
 
 
@@ -185,6 +190,13 @@ def run_hedgehog(t, gla):
 # (mirrors the MQAR 'wide' Based: feature_dim the sole knob). Single head -> square/heads undefined.
 def based_dims(nc):
     K = 16  # kernel asserts q.shape[-1] <= 16
+    # feat = the fla fused_chunk_based kernel's TRUE expanded feature dim = 1 + K + K*K (FULL outer
+    # product — its recurrent kv state is [feat, d_v]; cf. ops/based/naive.py whose quadratic einsum
+    # uses INDEPENDENT key-feature indices 'x y', not a triangular dedup). This is the honest state of
+    # the kernel we benchmark, so V solves 273*V == nc*d_qk*d_v to hold total state. (NB: the accuracy
+    # grid's zoology Based uses the TRIANGULAR taylor expanded_size 1+K+K(K+1)/2=153 — a different,
+    # numerically-equivalent kernel that stores each symmetric pair once; each bench correctly holds S
+    # for ITS own kernel.)
     feat = 1 + K + K * K  # 273
     V = max(1, round(C.DQK * C.DV * nc / feat))   # per-head matched state nc*d_qk*d_v
     return dict(K=K, d_v=V)
@@ -305,16 +317,27 @@ def build_e2e(arm, shape, nc, gla, DM):
             in_proj[k] = nn.Linear(DM, vv[0, 0].numel(), bias=False)   # d_model -> per-token features
             shp[k] = tuple(vv.shape[2:])
     out_proj = nn.Linear(t_ref["v"][0, 0].numel(), DM, bias=False)     # kernel out (H·d_v) -> d_model
-    mods = nn.ModuleList(list(in_proj.values()) + [out_proj]).to(C.DEV, C.DT)
     passthru = {k: v for k, v in t_ref.items() if not torch.is_tensor(v)}  # e.g. Hedgehog feature map
+    # Learnable passthru sub-modules (Hedgehog's feature-map Linear) ARE part of the layer: fold them
+    # into `mods` so their params count toward params_m and their grads are cleared each rep.
+    passthru_mods = [v for v in passthru.values() if isinstance(v, nn.Module)]
+    mods = nn.ModuleList(list(in_proj.values()) + [out_proj] + passthru_mods).to(C.DEV, C.DT)
 
     def forward(leaves):
         x = leaves["x"]
         t = dict(passthru)
         for k, lin in in_proj.items():
             y = lin(x).view(B, L, *shp[k])
+            # Apply each input's REAL gate transform so the kernel sees a valid gate (a raw Linear
+            # output would feed e.g. positive/garbage "log-decay" → NaN/unfaithful cost). Matches the
+            # maker transforms: routers→softmax, log-decay gates→logsigmoid, GDN beta→sigmoid;
+            # q/k/v features pass through raw.
             if k in ("r", "w"):
                 y = torch.softmax(y.float(), -1).to(C.DT)              # routers are simplex weights
+            elif k in ("ld", "ldg", "mg"):
+                y = torch.nn.functional.logsigmoid(y.float()).to(C.DT)  # log-decay (negative) gates
+            elif k == "beta":
+                y = y.float().sigmoid().to(C.DT)                       # GDN beta in (0,1)
             t[k] = y
         o = arm["run"](t, gla)
         return out_proj(o.reshape(B, L, -1))

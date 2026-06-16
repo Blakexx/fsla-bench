@@ -151,6 +151,11 @@ def fwd_bwd_rep(fn, leaves):
     for v in leaves.values():
         if isinstance(v, torch.Tensor) and v.grad is not None:
             v.grad = None
+        elif isinstance(v, torch.nn.Module):
+            # Non-tensor leaves can be learnable sub-modules (e.g. the Hedgehog feature map's
+            # Linear). Their param grads ACCUMULATE across reps if not cleared, inflating the
+            # baseline allocation and skewing the per-rep peak delta. Zero them too.
+            v.zero_grad(set_to_none=True)
     return e0.elapsed_time(e1), e0.elapsed_time(e2), peak, act
 
 

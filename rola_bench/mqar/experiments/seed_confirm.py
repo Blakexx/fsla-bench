@@ -53,17 +53,23 @@ WINNERS = [
 ]
 
 _base = {c.run_id: c for c in _g.configs}
-configs = []
-_missing = []
+_base_env = {c.run_id: e for c, e in zip(_g.configs, _g.configs_envs)}   # clone each winner's env verbatim
+configs, configs_envs = [], []            # run_rla_sweep.load_configs returns (configs, configs_envs);
+_missing = []                             # BOTH must exist + be parallel or the loader AttributeErrors.
 for _rid in WINNERS:
     _c0 = _base.get(_rid)
     if _c0 is None:
         _missing.append(_rid); continue
     for _sd in SEEDS:
         _c = copy.deepcopy(_c0)
-        _c.seed = _sd
+        _c.seed = _sd                     # model-init + training RNG
+        _c.data.seed = _sd                # CRITICAL: also resample the MQAR data. data.seed defaults to
+                                          # 123 and the grid never sets it, so without this every seed
+                                          # trains on the SAME cached dataset → error bars would capture
+                                          # init variance ONLY, not a fresh data draw (the whole point).
         _c.run_id = _rid.replace("_s1337", f"_s{_sd}")   # seed→fresh run_id (no collision)
         configs.append(_c)
+        configs_envs.append(dict(_base_env.get(_rid, {"EVAL_EVERY_N": "10"})))
 
 if _missing:
     import sys
