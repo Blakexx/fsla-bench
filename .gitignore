@@ -8,11 +8,6 @@ wandb/
 # FLEET OPS STATE: runtime/<bench>/ holds operational churn — bad_hosts blocklists, dispatch logs,
 # unused-ckpt scaffolding. Never scientific output; always gitignored (kept separate from results/).
 runtime/
-# Legacy live dirs below are operational churn; their data migrated to results/<bench>/ post-run.
-fleet_results/*
-!fleet_results/.gitkeep
-lm_results/*
-!lm_results/.gitkeep
 __pycache__/
 *.pyc
 *.egg-info/
