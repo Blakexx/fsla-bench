@@ -46,6 +46,37 @@ def set_shape(B=None, H=None, L=None, DQK=None, DV=None):
     if DV is not None: _c.DV = DV
     return prior
 
+# --------------------------------------------------------------------------------------------
+# Matched-state SHAPED dims (wide / square / heads), shared by the chunked + recurrent benches.
+# Mirrors rola_bench/mqar/experiments/canonical_baselines.baseline_cell in the perf base shape:
+# total recurrent floats S = H*nc*d_qk*d_v are held constant across shapes; returns (H, d_k, d_v)
+# or None when the accuracy grid omits the cell (gdn head_dim>256; head-scaling at nc>32).
+#   kind: 'lin1' = dimension-preserving feature map (monolith RLA/GLA),  fm=1
+#         'lin2' = feature-doubling map (Hedgehog softmax([x,-x])),       fm=2
+#         'gdn'  = delta-rule; head_dim (d_k) kernel-capped at 256
+# Reads the live module globals (H/DQK/DV) so set_shape() composes; the head-count base is H.
+GDN_HEAD_CAP = 256       # chunk/recurrent gated_delta_rule head_dim ceiling
+HEADS_NC_CAP = 32        # head-scaling OOMs beyond ~H140 at batch 128 (accuracy grid cap)
+
+
+def shaped_dims(kind, shape, nc):
+    S = H * nc * DQK * DV
+    fm = 2 if kind == "lin2" else 1
+    cap = GDN_HEAD_CAP if kind == "gdn" else None
+    if shape == "wide":                                  # H * fm * d_k * DV = S (widen keys)
+        dk = max(1, round(S / (H * DV * fm)))
+        return None if (cap and dk > cap) else dict(H=H, d_k=dk, d_v=DV)
+    if shape == "square":                                # H * fm * d * d = S
+        d = max(1, round((S / (H * fm)) ** 0.5))
+        return None if (cap and d > cap) else dict(H=H, d_k=d, d_v=d)
+    if shape == "heads":                                 # h * fm * DV * DV = S (scale head count)
+        if nc > HEADS_NC_CAP:
+            return None
+        h = max(1, round(S / (DV * DV * fm)))
+        return dict(H=h, d_k=DV, d_v=DV)
+    return None
+
+
 # Default reps; override on the CLI. WARM rounds are discarded before timing.
 REPS, WARMUP = 15, 4
 

@@ -23,6 +23,9 @@ import torch
 
 from fla_rola.ops.simple_gla import chunk_simple_gla
 from fla_rola.ops.simple_gla.fused_recurrent import fused_recurrent_simple_gla
+from fla_rola.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
+from fla_rola.ops.linear_attn import fused_recurrent_linear_attn
+from fla_rola.modules.feature_map import HedgehogFeatureMap
 
 from . import _common as C
 
@@ -71,9 +74,24 @@ def decode_routed_step(qt, kt, vt, rt, wt, ldt, state, nc, norm):
     return vh_combine(o.float(), rt, nc, norm), state
 
 
-def decode_monolith_step(qt, kt, vt, state):
-    o, state = fused_recurrent_simple_gla(qt, kt, vt, scale=1.0,
+def decode_monolith_step(qt, kt, vt, state, g=None):
+    o, state = fused_recurrent_simple_gla(qt, kt, vt, g=g, scale=1.0,
                                           initial_state=state, output_final_state=True)
+    return o, state
+
+
+def decode_gdn_step(qt, kt, vt, gt, beta, state):
+    """GatedDeltaNet decode step (L=1). use_qk_l2norm_in_kernel normalizes q/k internally."""
+    o, state = fused_recurrent_gated_delta_rule(qt, kt, vt, g=gt, beta=beta, scale=1.0,
+                                                initial_state=state, output_final_state=True,
+                                                use_qk_l2norm_in_kernel=True)
+    return o, state
+
+
+def decode_hedgehog_step(qt, kt, vt, fmap, state):
+    """Hedgehog decode step (L=1): feature map on q/k, then normalized linear-attn recurrence."""
+    o, state = fused_recurrent_linear_attn(fmap(qt), fmap(kt), vt, scale=1.0,
+                                           initial_state=state, output_final_state=True, normalize=True)
     return o, state
 
 
@@ -106,39 +124,92 @@ def run_check():
     return ok
 
 
+def _mib(*dims):
+    n = 1
+    for d in dims:
+        n *= d
+    return round(n * 4 / 2 ** 20, 1)
+
+
+def _time_cell(meta, fn, steps, warmup, rows):
+    """Time one decode cell; on OOM / any error record a sentinel ms_per_tok + recover (one bad
+    shape never aborts the whole sweep). meta carries variant/nc/shape/arm/state_mib."""
+    try:
+        ms = C.time_forward(fn, steps, warmup)
+        rows.append({**meta, "ms_per_tok": round(ms, 3)})
+        print(rows[-1], flush=True)
+    except torch.cuda.OutOfMemoryError:
+        rows.append({**meta, "ms_per_tok": "OOM"}); torch.cuda.empty_cache()
+        print(f"OOM  {meta}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        rows.append({**meta, "ms_per_tok": "ERR"}); torch.cuda.empty_cache()
+        print(f"ERR  {meta}: {type(e).__name__}: {e}", flush=True)
+
+
 def bench(steps, warmup, out):
+    """Decode ms/token + recurrent-state MiB, swept over the full nc scan AND shape (wide/square/
+    heads), mirroring the chunked bench's arm set. State is NOT threaded across reps: decode cost is
+    step-invariant for these kernels, so a representative single step is timed; state_mib reports the
+    recurrent footprint. Cells the shape solve declares infeasible (gdn head_dim>256, heads nc>32)
+    are skipped. Based has no fused_recurrent kernel in the fork (chunk-only) -> not benched here."""
     rows = []
     cdt = lambda x: x.to(C.DT) if x is not None else None
-    print(f"# recurrent decode | {C.gpu_name()} | B={C.B} H={C.H} d_qk=d_v={C.DQK} bf16 "
-          f"| forward only | ms/token (median of {steps})")
+    rnd = lambda *s, gen=None: torch.randn(*s, device=C.DEV, generator=gen)
+    print(f"# recurrent decode | {C.gpu_name()} | B={C.B} H={C.H} d_qk=d_v={C.DQK} bf16 | forward only "
+          f"| ms/token (median of {steps}) | shapes wide/square/heads, nc {tuple(C.NCS)}")
+
+    # ---- RoLA-family (native) + monolith (shape sweep): RLA & GLA inner kernels ----
     for gla in (False, True):
         var = "GLA" if gla else "RLA"
         for nc in C.NCS:
             q, k, v, r, w, ld = make_inputs(1, nc, gla, seed=1)
-            # state intentionally NOT threaded across reps: decode cost is step-invariant for these
-            # kernels, so we time a representative single step (state stays at step 0), not a full
-            # rollout. state_mib reports the recurrent-state footprint, not a sequence.
             for arm, norm in (("rola-vh global", "global"), ("rola-vh kappa", "kappa")):
                 state = torch.zeros(C.B, C.H * nc, C.DQK, C.DV + 1, device=C.DEV, dtype=torch.float32)
-                f = lambda norm=norm: decode_routed_step(cdt(q), cdt(k), cdt(v), r, w, cdt(ld), state, nc, norm)
-                ms = C.time_forward(f, steps, warmup)
-                rows.append(dict(variant=var, nc=nc, arm=arm, ms_per_tok=round(ms, 3),
-                                 state_mib=round(state.numel() * 4 / 2 ** 20, 1)))
-                print(rows[-1], flush=True)
-            # matched wide monolith: d_qk' = nc*d_qk, same state floats (+den col to match).
-            # seeded for byte-reproducibility (forward-only; no --check on this arm).
-            dqkw = nc * C.DQK
-            gm = torch.Generator(device=C.DEV).manual_seed(2)
-            rm = lambda *s: torch.randn(*s, device=C.DEV, generator=gm)
-            qm = rm(C.B, 1, C.H, dqkw).abs().to(C.DT)
-            km = rm(C.B, 1, C.H, dqkw).abs().to(C.DT)
-            vm = rm(C.B, 1, C.H, C.DV + 1).to(C.DT)
-            state_m = torch.zeros(C.B, C.H, dqkw, C.DV + 1, device=C.DEV, dtype=torch.float32)
-            f = lambda: decode_monolith_step(qm, km, vm, state_m)
-            ms = C.time_forward(f, steps, warmup)
-            rows.append(dict(variant=var, nc=nc, arm="monolith wide", ms_per_tok=round(ms, 3),
-                             state_mib=round(state_m.numel() * 4 / 2 ** 20, 1)))
-            print(rows[-1], flush=True)
+                meta = dict(variant=var, nc=nc, shape="native", arm=arm,
+                            state_mib=_mib(C.B, C.H * nc, C.DQK, C.DV + 1))
+                _time_cell(meta, lambda norm=norm, st=state: decode_routed_step(
+                    cdt(q), cdt(k), cdt(v), r, w, cdt(ld), st, nc, norm), steps, warmup, rows)
+            # matched monolith, swept over shape (one dense state per head; GLA adds a scalar gate).
+            for shape in ("wide", "square", "heads"):
+                d = C.shaped_dims("lin1", shape, nc)
+                if d is None:
+                    print(f"skip monolith {shape} nc{nc} (infeasible)", flush=True); continue
+                H, dk, dv = d["H"], d["d_k"], d["d_v"]
+                gm = torch.Generator(device=C.DEV).manual_seed(2)
+                qm, km = rnd(C.B, 1, H, dk, gen=gm).abs().to(C.DT), rnd(C.B, 1, H, dk, gen=gm).abs().to(C.DT)
+                vm = rnd(C.B, 1, H, dv, gen=gm).to(C.DT)
+                gate = torch.nn.functional.logsigmoid(rnd(C.B, 1, H, gen=gm).float()).to(C.DT) if gla else None
+                state_m = torch.zeros(C.B, H, dk, dv, device=C.DEV, dtype=torch.float32)
+                meta = dict(variant=var, nc=nc, shape=shape, arm="monolith", state_mib=_mib(C.B, H, dk, dv))
+                _time_cell(meta, lambda gate=gate, st=state_m: decode_monolith_step(
+                    qm, km, vm, st, g=(gate.float() if gate is not None else None)), steps, warmup, rows)
+
+    # ---- cross-architecture decode (own; no RLA/GLA split): gdn + hedgehog × shape ----
+    for nc in C.NCS:
+        for shape in ("wide", "square", "heads"):
+            dg = C.shaped_dims("gdn", shape, nc)
+            if dg is not None:
+                H, dk, dv = dg["H"], dg["d_k"], dg["d_v"]
+                gm = torch.Generator(device=C.DEV).manual_seed(3)
+                q1, k1 = rnd(C.B, 1, H, dk, gen=gm).to(C.DT), rnd(C.B, 1, H, dk, gen=gm).to(C.DT)
+                v1 = rnd(C.B, 1, H, dv, gen=gm).to(C.DT)
+                beta = torch.rand(C.B, 1, H, device=C.DEV, generator=gm).sigmoid().to(C.DT)
+                ldg = torch.nn.functional.logsigmoid(rnd(C.B, 1, H, gen=gm).float()).to(C.DT)
+                st = torch.zeros(C.B, H, dk, dv, device=C.DEV, dtype=torch.float32)
+                meta = dict(variant="own", nc=nc, shape=shape, arm="gdn", state_mib=_mib(C.B, H, dk, dv))
+                _time_cell(meta, lambda: decode_gdn_step(q1, k1, v1, ldg, beta, st), steps, warmup, rows)
+            dh = C.shaped_dims("lin2", shape, nc)
+            if dh is not None:
+                H, dk, dv = dh["H"], dh["d_k"], dh["d_v"]
+                gm = torch.Generator(device=C.DEV).manual_seed(4)
+                q1, k1 = rnd(C.B, 1, H, dk, gen=gm).to(C.DT), rnd(C.B, 1, H, dk, gen=gm).to(C.DT)
+                v1 = rnd(C.B, 1, H, dv, gen=gm).to(C.DT)
+                fmap = HedgehogFeatureMap(head_dim=dk).to(C.DEV, C.DT)
+                feat = fmap(q1).shape[-1]                       # doubled feature dim
+                st = torch.zeros(C.B, H, feat, dv, device=C.DEV, dtype=torch.float32)
+                meta = dict(variant="own", nc=nc, shape=shape, arm="hedgehog", state_mib=_mib(C.B, H, feat, dv))
+                _time_cell(meta, lambda: decode_hedgehog_step(q1, k1, v1, fmap, st), steps, warmup, rows)
+
     out = Path(out)
     C.write_csv(out / "recurrent_decode.csv", rows)
     print(f"\nWROTE {out}/recurrent_decode.csv  [{C.gpu_name()}]")

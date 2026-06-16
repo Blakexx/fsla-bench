@@ -41,7 +41,6 @@ a `finally` so a partial run is never lost.
 Run:  python -m rola_bench.perf.chunked [--reps N] [--out DIR]   (idle GPU)
 """
 import argparse
-import math
 import warnings
 from pathlib import Path
 
@@ -108,38 +107,10 @@ def run_vh(t, gla):
     return (o.view(C.B, C.L, C.H, nc, C.DV) * t["r"].unsqueeze(-1)).sum(3)
 
 
-# --------------------------------------------------------------------------------------------
-# Matched-state SHAPED dims (wide / square / heads), mirroring canonical_baselines.baseline_cell
-# in the perf base shape (H=8, d_qk=d_v=16). Total recurrent floats S = H0*nc*d_qk*d_v are held
-# constant across shapes; each returns (H, d_k, d_v) or None when the accuracy grid omits the cell.
-#   kind: 'lin1' = dimension-preserving feature map (monolith RLA/GLA),  fm=1
-#         'lin2' = feature-doubling map (Hedgehog softmax([x,-x])),       fm=2
-#         'gdn'  = delta-rule; head_dim (d_k) kernel-capped at 256
-# --------------------------------------------------------------------------------------------
-H0 = C.H                                        # base head count (8)
-S_TOTAL = lambda nc: H0 * nc * C.DQK * C.DV      # total recurrent floats across heads
-GDN_HEAD_CAP = 256                               # chunk_gated_delta_rule head_dim ceiling
-HEADS_NC_CAP = 32                                # head-scaling OOMs beyond ~H140 at batch 128 (accuracy grid cap)
-
-
-def shaped_dims(kind, shape, nc):
-    """(dict H/d_k/d_v) for a matched-state baseline cell, or None if the cell is infeasible/undefined."""
-    S = S_TOTAL(nc)
-    DV = C.DV
-    fm = 2 if kind == "lin2" else 1
-    cap = GDN_HEAD_CAP if kind == "gdn" else None
-    if shape == "wide":                                  # H0 * fm * d_k * DV = S  (widen keys)
-        dk = max(1, round(S / (H0 * DV * fm)))
-        return None if (cap and dk > cap) else dict(H=H0, d_k=dk, d_v=DV)
-    if shape == "square":                                # H0 * fm * d * d = S
-        d = max(1, round(math.sqrt(S / (H0 * fm))))
-        return None if (cap and d > cap) else dict(H=H0, d_k=d, d_v=d)
-    if shape == "heads":                                 # h * fm * DV * DV = S  (scale head count)
-        if nc > HEADS_NC_CAP:
-            return None
-        h = max(1, round(S / (DV * DV * fm)))
-        return dict(H=h, d_k=DV, d_v=DV)
-    return None
+# Matched-state shaped dims (wide/square/heads) live in _common, shared with the recurrent bench:
+# C.shaped_dims(kind, shape, nc) -> {H,d_k,d_v} or None. kind: 'lin1' monolith / 'lin2' hedgehog
+# (feature-doubling) / 'gdn' (head_dim<=256). gdn-wide skips nc>=32; heads skips nc>32.
+shaped_dims = C.shaped_dims
 
 
 # --------------------------------------------------------------------------------------------
