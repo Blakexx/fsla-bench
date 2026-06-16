@@ -18,6 +18,7 @@ JOBS = {
     "perf": ("rola_bench.perf.job", "perf_job"),     # kernel-efficiency (whole-bench cells, no ckpt)
     "similarity": ("rola_bench.similarity.job", "sim_job"),  # post-hoc similarity-matrix eval (rank+sharpness), best-per-cell ckpts
     "seed": ("rola_bench.mqar.seed_job", "seed_job"),  # seed-confirmation: best cell per (kernel,rung) at extra seeds
+    "glakappa": ("rola_bench.mqar.glakappa_job", "glakappa_job"),  # routed-GLA re-run with kappa (matches RLA kappa-asym)
 }
 
 

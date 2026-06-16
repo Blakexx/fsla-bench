@@ -54,11 +54,18 @@ def _append(row):
 
 
 def _configs_by_runid():
-    """run_id -> TrainConfig for the full grid (GRID_TIERS=all set by the job env)."""
+    """run_id -> TrainConfig. The canonical grid (GRID_TIERS=all) PLUS the kappa-GLA re-run
+    (grid-routed-glakappa-*), which lives in a separate config module so the box can rebuild
+    those models for the similarity probe."""
     import importlib
     from rola_bench.mqar.experiments import canonical_mqar_grid as g
     importlib.reload(g)
-    return {c.run_id: c for c in g.configs}
+    by_id = {c.run_id: c for c in g.configs}
+    from rola_bench.mqar.experiments import gla_kappa_rerun as gk   # kappa-GLA cells (grid-routed-glakappa-*)
+    importlib.reload(gk)
+    for c in gk.configs:
+        by_id[c.run_id] = c
+    return by_id
 
 
 def _build_model(cfg):

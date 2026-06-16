@@ -42,8 +42,9 @@ def main():
         r = max(rel(of, oc), max(rel(a, b) for a, b in zip(gf, gc)))
         print(f"regression {name:11s} {r:.1e} {'PASS' if r < TOL_R else 'FAIL'}")
         ok &= r < TOL_R
-    # (2) routed Triton vs the fork's torch reference
-    from fla_rola.ops.simple_gla.chunk import chunk_simple_gla, _rola_chunk_core
+    # (2) routed Triton vs the fork's torch reference (un-normalized readout, norm='raw')
+    from fla_rola.ops.rola import chunk_rola
+    from fla_rola.ops.rola.interface import _rola_chunk_core
     for variant in ('RLA', 'GLA'):
         for nc in (16, 64):
             torch.manual_seed(nc)
@@ -53,7 +54,7 @@ def main():
             ld = (1 - w_ * (1 - torch.sigmoid(g(B, L, H, nc)))).clamp(min=1e-6).log().clamp(min=-2.5) \
                 if variant == 'GLA' else None
             leaves = [t.requires_grad_() for t in [q, k, v, r_, w_] + ([ld] if ld is not None else [])]
-            o_t = chunk_simple_gla(q, k, v, g=ld, scale=1.0, r=r_, w=w_)[0]
+            o_t = chunk_rola(q, k, v, r=r_, w=w_, g=ld, norm='raw', scale=1.0)
             dO = torch.randn_like(o_t)
             g_t = torch.autograd.grad(o_t, leaves, dO, retain_graph=False)
             fold = lambda t: t.permute(0, 2, 1, 3).reshape(B * H, L, t.shape[-1])
@@ -65,7 +66,7 @@ def main():
             print(f"routing {variant} nc={nc:<4d} {rr:.1e} {'PASS' if rr < TOL_T else 'FAIL'}")
             ok &= rr < TOL_T
     # (3) per-state denominator kernels (kappa) vs in-script dense oracle: additive + decayed
-    from fla_rola.ops.simple_gla.rola import rola_perstate_den_triton, rola_perstate_den_gla_triton
+    from fla_rola.ops.rola import rola_perstate_den_triton, rola_perstate_den_gla_triton
     for variant in ('RLA', 'GLA'):
         for nc in (16, 64):
             torch.manual_seed(100 + nc)

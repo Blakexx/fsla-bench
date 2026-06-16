@@ -16,6 +16,7 @@ Imports are clean: `fla` (canonical) and `fla_rola` (the fork) are pip-installed
 sys.path hacks. Run on an IDLE GPU for the memory/timing numbers to be meaningful.
 """
 import csv
+import os
 import statistics
 import time
 from pathlib import Path
@@ -27,10 +28,10 @@ import torch
 # per-cell loop overrides them via set_shape() to time at each MQAR cell's exact dims (task #98 —
 # cost-vs-accuracy), with no arm-signature changes. nc is passed explicitly (not a global).
 B, H, L, DQK, DV = 8, 8, 1024, 16, 16
-# Full MQAR-equivalent state scan (the accuracy grid's nc rungs), not just {16,64,256}. A100 has
-# the headroom for the wide/heads high-nc cells (the 3080Ti OOM'd them); per-cell OOM sentinel
-# still guards anything that doesn't fit.
-NCS = (2, 4, 8, 16, 32, 64, 128, 256)
+# nc rungs to bench. DEFAULT = {16,64,256} (the similarity-rung sample) — each (nc,shape) is its own
+# Triton autotune, so 3 rungs instead of the full 8 cuts ~2.6x of the autotune cost. Override with
+# PERF_NCS (e.g. "2,4,8,16,32,64,128,256") for the full state scan. NOT a silent cap — explicit env.
+NCS = tuple(int(x) for x in os.environ.get("PERF_NCS", "16,64,256").split(",") if x.strip())
 DEV, DT = "cuda", torch.bfloat16
 
 

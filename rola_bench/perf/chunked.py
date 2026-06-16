@@ -49,6 +49,7 @@ import torch.nn as nn
 
 import fla.ops.simple_gla as fla_sg
 import fla_rola.ops.simple_gla as fork_sg
+from fla_rola.ops.rola import chunk_rola
 from fla_rola.ops.based import fused_chunk_based
 from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
 from fla_rola.ops.linear_attn import chunk_linear_attn
@@ -76,25 +77,17 @@ def mk(nc, gla, seed=0):
 
 
 def run_rola(t, gla):
-    o, _ = fork_sg.chunk_simple_gla(t["q"], t["k"], t["v"], g=t.get("ld"), scale=1.0, r=t["r"], w=t["w"])
-    return o
+    # un-normalized routed readout (numerator only) via the first-class op
+    return chunk_rola(t["q"], t["k"], t["v"], r=t["r"], w=t["w"], g=t.get("ld"), norm="raw", scale=1.0)
 
 
 def run_kappa(t, gla):
-    """Per-state-denominator normalization (kappa=0.5) pre-pass + gate rescale + same fork kernel.
-    |d| guard keeps timing numerics finite on random (non-positive) bench inputs."""
-    Bq, Lq, Hq, _ = t["q"].shape
-    fold = lambda x: x.permute(0, 2, 1, 3).reshape(Bq * Hq, Lq, x.shape[-1])
-    if gla:
-        from fla_rola.ops.simple_gla.rola import rola_perstate_den_gla_triton
-        d = rola_perstate_den_gla_triton(fold(t["q"]), fold(t["k"]), fold(t["w"]), fold(t["ld"]))
-    else:
-        from fla_rola.ops.simple_gla.rola import rola_perstate_den_triton
-        d = rola_perstate_den_triton(fold(t["q"]), fold(t["k"]), fold(t["w"]))
-    d = d.view(Bq, Hq, Lq, -1).permute(0, 2, 1, 3)
-    rk = t["r"] * (d.abs() + 1e-5).pow(-0.5).to(t["r"].dtype)
-    o, _ = fork_sg.chunk_simple_gla(t["q"], t["k"], t["v"], g=t.get("ld"), scale=1.0, r=rk, w=t["w"])
-    return o
+    """Per-state-denominator (kappa=0.5) normalization — chunk_rola owns the den pre-pass, gate
+    rescale, numerator-only readout, and divide. Times the production kappa path end-to-end."""
+    B, L, H, _ = t["q"].shape
+    kap = torch.full((B, L, H, 1), 0.5, device=t["q"].device, dtype=t["q"].dtype)
+    return chunk_rola(t["q"], t["k"], t["v"], r=t["r"], w=t["w"], g=t.get("ld"),
+                      norm="kappa", kappa=kap, scale=1.0)
 
 
 def run_vh(t, gla):

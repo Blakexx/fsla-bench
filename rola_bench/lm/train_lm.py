@@ -9,10 +9,14 @@ so it plugs straight in; the saved checkpoint runs in lm-evaluation-harness as-i
 For SCALED multi-GPU FineWeb pretraining use flame (torchtitan) instead; this is the cheap
 single-GPU path (WikiText-103 first).
 """
-import argparse, math
+import argparse, math, os, json, time, tarfile, tempfile
 from itertools import chain
+import torch
+from transformers.trainer_utils import get_last_checkpoint
+from transformers import TrainerCallback
 import rola_hf  # registers RoLA with HF AutoClasses
 from rola_hf import RoLAConfig
+import arms  # the 5-arm iso-backbone registry (RoLA x3 + GDN + attn ceiling)
 from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments,
                           DataCollatorForLanguageModeling)
@@ -50,8 +54,67 @@ def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_sam
     return t.map(group, batched=True, num_proc=num_proc, desc=f"group {block_size}")
 
 
+# ---- preemption-safe checkpoint sync (see fleet pull_in_progress) -------------------------------
+# The box exposes ONLY complete checkpoints at $FLEET_CKPT_DIR/<run_id>.pt: we tar the latest HF
+# checkpoint dir to a temp file then ATOMICALLY rename it into place (a reader sees either the old
+# full tar or the new full tar, never a torn one). The dispatcher pulls that tar periodically and
+# ships it back on re-dispatch as $FLEET_PAYLOAD_DIR/<run_id>, which we untar + resume from.
+def _tar_dir_atomic(src_dir, dest_pt):
+    """tar `src_dir` -> `dest_pt` via temp + atomic rename (dest is the box's served <run_id>.pt)."""
+    d = os.path.dirname(dest_pt) or "."
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tar.tmp"); os.close(fd)
+    with tarfile.open(tmp, "w") as t:
+        t.add(src_dir, arcname=os.path.basename(src_dir))
+    os.replace(tmp, dest_pt)                              # atomic on same fs
+
+
+class CkptTarCallback(TrainerCallback):
+    """After each HF checkpoint save, tar the LATEST checkpoint-* dir to <ckpt_dir>/<run_id>.pt so the
+    box serves only a COMPLETE checkpoint (the callback fires after the save finishes)."""
+    def __init__(self, out_dir, dest_pt):
+        self.out_dir, self.dest_pt = out_dir, dest_pt
+    def on_save(self, args, state, control, **kw):
+        ck = get_last_checkpoint(self.out_dir)
+        if ck:
+            try:
+                _tar_dir_atomic(ck, self.dest_pt)
+                print(f"[ckpt-sync] tarred {os.path.basename(ck)} -> {self.dest_pt}", flush=True)
+            except Exception as e:
+                print(f"[ckpt-sync] WARN tar failed: {e!r}", flush=True)
+
+
+def _restore_resume(run_id, out_dir):
+    """If the dispatcher shipped a resume tar ($FLEET_PAYLOAD_DIR/<run_id>), untar it into out_dir and
+    return the checkpoint path for Trainer.resume_from_checkpoint. FAIL LOUD if a tar was shipped but
+    is unusable (don't silently restart from 0 or continue from garbage)."""
+    pdir = os.environ.get("FLEET_PAYLOAD_DIR")
+    if not pdir:
+        return None
+    tar = os.path.join(pdir, run_id)
+    if not os.path.exists(tar) or os.path.getsize(tar) == 0:
+        return None                                      # fresh start, no resume shipped
+    os.makedirs(out_dir, exist_ok=True)
+    with tarfile.open(tar, "r") as t:
+        t.extractall(out_dir)
+    ck = get_last_checkpoint(out_dir)
+    if ck is None or not os.path.exists(os.path.join(ck, "trainer_state.json")):
+        raise RuntimeError(f"resume tar {tar} present but no valid checkpoint after untar (corrupt) "
+                           f"— refusing to silently restart; re-dispatch will retry")
+    print(f"[resume] restored {os.path.basename(ck)} from shipped tar -> resuming", flush=True)
+    return ck
+
+
 def main():
     p = argparse.ArgumentParser()
+    # --arm selects from the 5-arm iso-backbone registry (arms.ARMS): the canonical RoLA-vs-attention
+    # LM comparison. When set, it OVERRIDES the legacy --rola_instance/geometry flags below (those
+    # remain for ad-hoc single-RoLA runs). Fleet contract: --arm + --results + --ckpt_dir.
+    p.add_argument("--arm", default=None, choices=(None, *arms.ARMS),
+                   help="registry arm (rola-rla-kappa-{sym,asym} / rola-gla-kappa-asym / gdn / attn)")
+    p.add_argument("--seed", type=int, default=1337)
+    p.add_argument("--results", default=None, help="fleet result ndjson to append {run_id, ok, ...}")
+    p.add_argument("--ckpt_dir", default=os.environ.get("FLEET_CKPT_DIR"), help="dir to save_pretrained into")
     p.add_argument("--rola_instance", default="rola-rla-asym")
     p.add_argument("--hidden_size", type=int, default=512)
     p.add_argument("--num_hidden_layers", type=int, default=12)
@@ -69,41 +132,88 @@ def main():
     p.add_argument("--max_steps", type=int, default=20000)
     p.add_argument("--weight_decay", type=float, default=0.1)
     p.add_argument("--eval_steps", type=int, default=1000)
+    p.add_argument("--save_steps", type=int, default=1000, help="periodic checkpoint cadence (preemption-resume)")
     p.add_argument("--out_dir", default=None)
     p.add_argument("--num_proc", type=int, default=8)
     p.add_argument("--max_train_samples", type=int, default=None,
                    help="slice train to N docs (calibration / token-budgeted runs)")
     a = p.parse_args()
-    out = a.out_dir or f"lm_runs/{a.rola_instance}-d{a.hidden_size}L{a.num_hidden_layers}"
+    torch.manual_seed(a.seed)
+    # run_id: arm path -> "<arm>_s<seed>" (fleet work-item id); legacy path -> the old descriptive id.
+    run_id = f"{a.arm}_s{a.seed}" if a.arm else f"{a.rola_instance}-d{a.hidden_size}L{a.num_hidden_layers}"
+    out = a.out_dir or (os.path.join(a.ckpt_dir, run_id) if a.ckpt_dir else f"lm_runs/{run_id}")
 
     tok = AutoTokenizer.from_pretrained("gpt2"); tok.pad_token = tok.eos_token
     ds = build_dataset(a.dataset, a.dataset_config, a.block_size, tok, a.num_proc, a.max_train_samples)
-    cfg = RoLAConfig(rola_instance=a.rola_instance, num_states=a.num_states, d_qk=a.d_qk,
-                     d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
-                     num_hidden_layers=a.num_hidden_layers, vocab_size=len(tok),
-                     bos_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
-    model = AutoModelForCausalLM.from_config(cfg)
-    print(f"[model] {a.rola_instance} {sum(p.numel() for p in model.parameters())/1e6:.1f}M params", flush=True)
+    if a.arm:                                            # iso-backbone registry arm (the LM comparison)
+        model = arms.build_arm(a.arm, vocab_size=len(tok),
+                               bos_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
+        state_floats = arms.recurrent_state_floats(a.arm)
+    else:                                                # legacy single-RoLA run
+        cfg = RoLAConfig(rola_instance=a.rola_instance, num_states=a.num_states, d_qk=a.d_qk,
+                         d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
+                         num_hidden_layers=a.num_hidden_layers, vocab_size=len(tok),
+                         bos_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
+        model = AutoModelForCausalLM.from_config(cfg)
+        state_floats = a.num_heads * a.num_states * a.d_qk * (a.d_v + 1)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats}", flush=True)
+
+    # Resume tar shipped by the dispatcher (preemption-safe). Resolve BEFORE building the Trainer so
+    # output_dir holds the restored checkpoint for resume_from_checkpoint. ckpt_pt is the box-served
+    # <run_id>.pt the dispatcher pulls in-progress.
+    resume_ckpt = _restore_resume(run_id, out)
+    ckpt_pt = os.path.join(a.ckpt_dir, run_id + ".pt") if a.ckpt_dir else os.path.join(out + ".pt")
 
     args = TrainingArguments(
         output_dir=out, max_steps=a.max_steps, per_device_train_batch_size=a.batch_size,
         per_device_eval_batch_size=a.batch_size, gradient_accumulation_steps=a.grad_accum,
-        learning_rate=a.lr, lr_scheduler_type="cosine", warmup_steps=a.warmup,
+        learning_rate=a.lr, lr_scheduler_type="cosine", warmup_steps=a.warmup, seed=a.seed,
         weight_decay=a.weight_decay, max_grad_norm=1.0, bf16=True,
         gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=50, eval_strategy="steps", eval_steps=a.eval_steps,
-        # No mid-training checkpoints: the Trainer's default safetensors save crashes on sym's
-        # tied routers (read_router==write_router is a shared tensor safetensors refuses). We
-        # save once at the end as .bin (safe_serialization=False) which allows shared tensors.
-        save_strategy="no",
+        # PREEMPTION-SAFE: periodic checkpoints every save_steps, keep last 2 (defense vs a torn
+        # newest). save_safetensors=False -> .bin so the save doesn't crash on sym's tied/shared
+        # routers (safetensors refuses shared tensors — the reason this used to be save_strategy=no).
+        save_strategy="steps", save_steps=a.save_steps, save_total_limit=2, save_safetensors=False,
         report_to="none", dataloader_num_workers=4)
     trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                       eval_dataset=ds["validation"],
-                      data_collator=DataCollatorForLanguageModeling(tok, mlm=False))
-    trainer.train()
+                      data_collator=DataCollatorForLanguageModeling(tok, mlm=False),
+                      callbacks=[CkptTarCallback(out, ckpt_pt)])   # tar each checkpoint -> box-served <run_id>.pt
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    tr = trainer.train(resume_from_checkpoint=resume_ckpt)
     metrics = trainer.evaluate()
-    print(f"DONE eval_loss={metrics['eval_loss']:.4f} ppl={math.exp(min(metrics['eval_loss'],20)):.2f}", flush=True)
-    model.save_pretrained(out, safe_serialization=False); tok.save_pretrained(out)  # .bin: allows sym's shared routers
+    ppl = math.exp(min(metrics["eval_loss"], 20))
+    # Resource profile (the cost axes RoLA actually spends on — reported alongside quality):
+    tok_per_s = round(tr.metrics.get("train_samples_per_second", 0.0) * a.block_size, 1)
+    peak_mib = round(torch.cuda.max_memory_allocated() / 2**20) if torch.cuda.is_available() else None
+    print(f"DONE {run_id} eval_loss={metrics['eval_loss']:.4f} ppl={ppl:.2f} "
+          f"tok/s={tok_per_s} peak_mib={peak_mib}", flush=True)
+    # Final EVAL artifact: a clean save_pretrained dir (model+config+tokenizer, no optimizer/checkpoints)
+    # → tar to the box-served <run_id>.pt, overwriting the last resume tar. from_pretrained-able for the
+    # post-hoc recall eval. .bin (safe_serialization=False) allows sym's shared routers.
+    final_dir = os.path.join(out, "final")
+    model.save_pretrained(final_dir, safe_serialization=False); tok.save_pretrained(final_dir)
+    if a.ckpt_dir:
+        try:
+            _tar_dir_atomic(final_dir, ckpt_pt)
+            print(f"[ckpt-sync] final model tarred -> {ckpt_pt}", flush=True)
+        except Exception as e:
+            print(f"[ckpt-sync] WARN final tar failed: {e!r}", flush=True)
+
+    if a.results:   # fleet result row — recall-downstream eval is a separate post-hoc pass over the ckpt
+        row = dict(run_id=run_id, ok=True, arm=a.arm or a.rola_instance, seed=a.seed,
+                   params_m=round(n_params / 1e6, 2), state_floats=state_floats,
+                   hidden_size=getattr(model.config, "hidden_size", None),
+                   num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
+                   tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
+                   eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3),
+                   train_tok_per_s=tok_per_s, peak_mib=peak_mib, ckpt=ckpt_pt)
+        with open(a.results, "a") as fh:
+            fh.write(json.dumps(row) + "\n"); fh.flush()
+        print("RESULT_ROW " + json.dumps(row), flush=True)
 
 
 if __name__ == "__main__":
