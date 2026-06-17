@@ -25,33 +25,50 @@ from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, Training
 FINEWEB = "HuggingFaceFW/fineweb-edu"  # natural text -> matches lm-eval's detokenized format
 
 
+def _group(ex, block_size):
+    # Canonical run_clm group_texts: concatenate + chunk EVERY key consistently (drops the
+    # per-batch remainder — negligible at LM scale).
+    cat = {k: list(chain(*ex[k])) for k in ex.keys()}
+    n = (len(cat["input_ids"]) // block_size) * block_size
+    res = {k: [t[i:i + block_size] for i in range(0, n, block_size)] for k, t in cat.items()}
+    res["labels"] = [x[:] for x in res["input_ids"]]
+    return res
+
+
 def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_samples=None):
-    # Friendly alias: --dataset fineweb-edu -> the canonical FineWeb-Edu sample.
+    """Large web corpora (FineWeb-Edu) are STREAMED — never materialized to disk (the [Errno 28]
+    'no space left' failure: sample-10BT is ~10B tokens). Tokenize + group into block_size on the
+    fly; carve a small validation head from the stream (FineWeb-Edu ships train-only). Small datasets
+    (WikiText) keep the simple materialized path."""
+    fineweb = name in ("fineweb", "fineweb-edu") or (name or "").startswith("HuggingFaceFW")
     if name in ("fineweb", "fineweb-edu"):
         name = FINEWEB
         config = config if (config or "").startswith("sample") else "sample-10BT"
-    # Slice the train split for calibration / token-budgeted runs (avoids the full
-    # 27GB download: HF fetches only the shards the slice touches).
-    train_split = f"train[:{max_train_samples}]" if max_train_samples else "train"
+
+    def tok(ex):
+        return tokenizer(ex["text"])
+
+    if fineweb:
+        raw = load_dataset(name, config, split="train", streaming=True)
+        cols = list(raw.column_names) if getattr(raw, "column_names", None) else ["text"]
+        blocks = (raw.map(tok, batched=True, remove_columns=cols)
+                     .map(lambda ex: _group(ex, block_size), batched=True))
+        N_VAL = 256                              # ~256 blocks held out for val (block_size tokens each)
+        return {"train": blocks.skip(N_VAL), "validation": blocks.take(N_VAL)}
+
+    # small/local datasets (e.g. WikiText): materialize (cheap), real validation split.
     from datasets import DatasetDict
+    train_split = f"train[:{max_train_samples}]" if max_train_samples else "train"
     train_raw = load_dataset(name, config, split=train_split)
-    try:                                   # WikiText etc. ship a validation split
+    try:
         val_raw = load_dataset(name, config, split="validation")
-    except Exception:                      # FineWeb-Edu is train-only -> carve a tail
+    except Exception:
         sp = train_raw.train_test_split(test_size=min(2000, max(2, len(train_raw) // 50)), seed=0)
         train_raw, val_raw = sp["train"], sp["test"]
     raw = DatasetDict(train=train_raw, validation=val_raw)
-    def tok(ex): return tokenizer(ex["text"])
     cols = raw["train"].column_names
     t = raw.map(tok, batched=True, remove_columns=cols, num_proc=num_proc, desc="tokenize")
-    def group(ex):
-        # Canonical run_clm group_texts: concatenate + chunk EVERY key consistently.
-        cat = {k: list(chain(*ex[k])) for k in ex.keys()}
-        n = (len(cat["input_ids"]) // block_size) * block_size
-        res = {k: [t[i:i + block_size] for i in range(0, n, block_size)] for k, t in cat.items()}
-        res["labels"] = [x[:] for x in res["input_ids"]]
-        return res
-    return t.map(group, batched=True, num_proc=num_proc, desc=f"group {block_size}")
+    return t.map(lambda ex: _group(ex, block_size), batched=True, num_proc=num_proc, desc=f"group {block_size}")
 
 
 # ---- preemption-safe checkpoint sync (see fleet pull_in_progress) -------------------------------
@@ -168,14 +185,22 @@ def main():
     args = TrainingArguments(
         output_dir=out, max_steps=a.max_steps, per_device_train_batch_size=a.batch_size,
         per_device_eval_batch_size=a.batch_size, gradient_accumulation_steps=a.grad_accum,
-        learning_rate=a.lr, lr_scheduler_type="cosine", warmup_steps=a.warmup, seed=a.seed,
-        weight_decay=a.weight_decay, max_grad_norm=1.0, bf16=True,
-        gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False},
+        learning_rate=a.lr, lr_scheduler_type="cosine",
+        warmup_steps=min(a.warmup, max(10, a.max_steps // 50)),   # cap warmup at ~2% (reduced runs)
+        adam_beta1=0.9, adam_beta2=0.95,        # modern-LM standard (GPT-3/Llama/Mamba/GLA); HF default beta2=0.999
+        seed=a.seed, weight_decay=a.weight_decay, max_grad_norm=1.0, bf16=True,
+        remove_unused_columns=False,            # streaming IterableDataset: keep our token columns intact
+        # grad-ckpt OFF: smoke showed peak 6.9GB on a 40GB A100 -> recompute was pure slowdown, no memory
+        # need. ~1.3-1.5x faster; the routed-RoLA mixer (nc256) is the per-token cost driver.
+        gradient_checkpointing=False,
         logging_steps=50, eval_strategy="steps", eval_steps=a.eval_steps,
         # PREEMPTION-SAFE: periodic checkpoints every save_steps, keep last 2 (defense vs a torn
         # newest). save_safetensors=False -> .bin so the save doesn't crash on sym's tied/shared
         # routers (safetensors refuses shared tensors — the reason this used to be save_strategy=no).
-        save_strategy="steps", save_steps=a.save_steps, save_total_limit=2, save_safetensors=False,
+        save_strategy="steps", save_steps=a.save_steps, save_total_limit=2,
+        # (transformers 5.x removed the `save_safetensors` arg — safetensors is the default save.
+        # RoLA-sym ties the router via read_router=None, so there's a single router weight, NOT two
+        # state_dict keys sharing one tensor; embeddings are untied -> no shared-tensor save crash.)
         report_to="none", dataloader_num_workers=4)
     trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                       eval_dataset=ds["validation"],

@@ -64,7 +64,8 @@ lm_job = Job(
     done_ids=done_ids,
     payload_for=payload_for,        # ship the last resume tar back on re-dispatch
     pull_in_progress=True,          # periodically pull each box's in-progress checkpoint (preemption-safe)
-    live_pull_every=900,            # at most every 15 min (bounds preemption loss; full optimizer ckpt is large)
+    live_pull_every=int(os.environ.get("LM_LIVE_PULL", "900")),  # min secs between in-progress ckpt pulls;
+    # env-overridable (set small for the resume kill-test; 900s/15min for real runs — optimizer ckpt is large)
     env={"FLEET_RUN_CMD": "python run_lm.py", **_FWD},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1800,

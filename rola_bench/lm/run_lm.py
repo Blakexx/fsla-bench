@@ -20,7 +20,8 @@ DEFAULTS = dict(dataset=os.environ.get("LM_DATASET", "fineweb-edu"),
                 block_size=os.environ.get("LM_BLOCK_SIZE", "2048"),   # train+eval context 2048
                 batch_size=os.environ.get("LM_BATCH_SIZE", "8"),      # halved vs 1024 to fit memory
                 grad_accum=os.environ.get("LM_GRAD_ACCUM", "4"),      # tokens/step = 2048*8*4 = 65536
-                lr=os.environ.get("LM_LR", "3e-4"))
+                lr=os.environ.get("LM_LR", "3e-4"),
+                save_steps=os.environ.get("LM_SAVE_STEPS", "500"))    # periodic ckpt cadence (preemption-resume)
 
 
 def main():
@@ -38,7 +39,7 @@ def main():
                "--dataset", DEFAULTS["dataset"], "--dataset_config", DEFAULTS["dataset_config"],
                "--max_steps", DEFAULTS["max_steps"], "--block_size", DEFAULTS["block_size"],
                "--batch_size", DEFAULTS["batch_size"], "--grad_accum", DEFAULTS["grad_accum"],
-               "--lr", DEFAULTS["lr"]]
+               "--lr", DEFAULTS["lr"], "--save_steps", DEFAULTS["save_steps"]]
         print(f"run_lm: {rid} -> {' '.join(cmd)}", flush=True)
         try:
             subprocess.run(cmd, check=True)              # train_lm writes the success row itself
