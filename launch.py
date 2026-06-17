@@ -19,6 +19,7 @@ JOBS = {
     "similarity": ("rola_bench.similarity.job", "sim_job"),  # post-hoc similarity-matrix eval (rank+sharpness), best-per-cell ckpts
     "seed": ("rola_bench.mqar.seed_job", "seed_job"),  # seed-confirmation: best cell per (kernel,rung) at extra seeds
     "glakappa": ("rola_bench.mqar.glakappa_job", "glakappa_job"),  # routed-GLA re-run with kappa (matches RLA kappa-asym)
+    "rlabias": ("rola_bench.mqar.rlabias_job", "rlabias_job"),     # router-bias ablation (nc128 RLA-kappa, bias={0,1}x2 seeds)
 }
 
 

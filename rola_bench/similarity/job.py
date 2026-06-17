@@ -121,6 +121,9 @@ sim_job = Job(
          "SIM_RUNGS": os.environ.get("SIM_RUNGS", "16,64,256")},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=900,
-    batch=4,
+    batch=1,                  # one checkpoint per POST /run body (~42MB base64) — smaller, faster
+                              # uploads, less uplink contention than batching 30MB+ ckpts together.
     per_batch_timeout=3600,
+    post_timeout=int(os.environ.get("SIM_POST_TIMEOUT", "1800")),  # POST /run base64's the cell's
+    # 30MB+ checkpoint; a 120s POST timeout blows up over a home uplink to many concurrent boxes.
 )
