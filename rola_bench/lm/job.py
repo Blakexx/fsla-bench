@@ -59,7 +59,7 @@ def payload_for(run_id):
 
 
 lm_job = Job(
-    name="rola-lm",
+    name=os.environ.get("ROLA_LM_LABEL", "rola-lm"),   # override to run a 2nd LM fleet alongside the suite
     image=IMAGE,
     offer_query=os.environ.get(
         "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
