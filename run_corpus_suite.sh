@@ -34,7 +34,7 @@ run_corpus() {  # name dataset config L nc batch seeds
 
 # TinyStories first (reuses results/tinystories_final: 5 attn cells already done -> only 20 RoLA re-run)
 run_corpus tinystories_final "roneneldan/TinyStories" "" 512  32  32 "1337,2024,11,42,7"
-run_corpus wikitext103       wikitext               wikitext-103-raw-v1 1024 64 16 "1337,2024,11"
+run_corpus wikitext103       Salesforce/wikitext    wikitext-103-raw-v1 1024 64 16 "1337,2024,11"
 run_corpus text8             text8                  ""                  2048 128 8 "1337,2024,11"
 run_corpus pg19              pg19                   ""                  2048 128 8 "1337,2024,11"
 echo "[driver $(date +%H:%M)] ALL CORPORA DONE"
