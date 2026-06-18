@@ -13,8 +13,10 @@ from rola_bench.mqar.experiments.rla_sweep import wrap_hybrid, D_MODEL, VOCAB
 from rola_bench.mqar.experiments.rola_router_width_v2 import TRAIN_CONFIGS, TEST_CONFIGS
 from rola import rola_instance
 
+import os
 SEED, TEST_BS = 1337, 8
-NCS = [16, 64, 256]
+# nc rungs — env-overridable (NORMSYM_NCS=64 runs just the mid rung: 6 variants x 1 nc x 4 LR = 24 cells).
+NCS = [int(x) for x in os.environ.get("NORMSYM_NCS", "16,64,256").split(",") if x]
 LRS = [1e-3, 3e-3, 1e-2, 3e-2]                  # bracket the known RLA optimum (~1e-2) to find per-cell best
 # (tag, rola_instance): the 6 normalized norm x routing variants.
 VARIANTS = [("g_asym",  "rola-rla-asym"),       ("g_sym",  "rola-rla-sym"),
@@ -40,7 +42,7 @@ for tag, inst in VARIANTS:
                 slice_keys=["num_kv_pairs"]))
             configs_envs.append({"EVAL_EVERY_N": "10"})
 
-assert len(configs) == len(VARIANTS) * len(NCS) * len(LRS) == 72, len(configs)
+assert len(configs) == len(VARIANTS) * len(NCS) * len(LRS), len(configs)
 
 
 def load_configs_and_envs():

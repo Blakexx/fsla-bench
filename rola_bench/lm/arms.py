@@ -87,7 +87,8 @@ USE_SHORT_CONV = False
 # RLA cell: kappa-sym/kappa-asym (RLA) + gla-kappa-asym (scalar GLA, decayed per-state mass — same
 # kappa construction). NOT the 'global'-norm scalar-norm variant. (MQAR routed-GLA is being re-run
 # on the kappa variant too, #112.)
-ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym", "rola-gla-kappa-asym")
+ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
+             "rola-gla-kappa-asym", "rola-gla-kappa-sym")   # both kernels' asym/sym pair (asym>sym test)
 ARMS = ROLA_ARMS + ("gdn", "attn")
 
 

@@ -42,7 +42,8 @@ normsym_job = Job(
     ckpt_dir=CKPT_DIR,
     work_list=work_list,
     done_ids=done_ids,
-    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config normsym_resweep --results $FLEET_RESULTS"},
+    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config normsym_resweep --results $FLEET_RESULTS",
+         **({"NORMSYM_NCS": os.environ["NORMSYM_NCS"]} if "NORMSYM_NCS" in os.environ else {})},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1200,
     batch=6,                  # MQAR cells are minutes — batch several per box (72 cells / 6 ~ 12 batches)
