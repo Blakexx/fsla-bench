@@ -27,6 +27,7 @@ JOBS = {
     "rlabias": ("rola_bench.mqar.rlabias_job", "rlabias_job"),     # router-bias ablation (nc128 RLA-kappa, bias={0,1}x2 seeds)
     "dmodel64": ("rola_bench.mqar.dmodel64_job", "dmodel64_job"),  # d_model=64 nc256 RLA-kappa, 5-LR sweep (task #111)
     "d64base": ("rola_bench.mqar.dmodel64base_job", "d64base_job"),  # d_model=64 nc256 matched baselines (RLA-wide, Hedgehog-square)
+    "normsym": ("rola_bench.mqar.normsym_job", "normsym_job"),       # norm x sym equivalence ablation (72 cells, #96)
 }
 
 

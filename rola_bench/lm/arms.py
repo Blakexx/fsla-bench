@@ -10,11 +10,20 @@ Design (see TASKS #102):
     matched-state principle carried into LM). Softmax attention is the unbounded-state CEILING
     (no recurrent state to match) — the reference the bounded models try to approach.
 
-Matched recurrent state (headline rung) = 524,288 floats/layer:
-    RoLA  n_h=8, nc=256, d_qk=d_v=16  ->  8*256*16*16 = 524288
-    GDN   head_dim=256, expand_v=2 (=131072 floats/head) x num_heads=4 = 524288   (EXACT; verified)
-  GDN scales state by HEAD COUNT at its canonical per-head shape, so the head_dim<=256 kernel cap
-  never binds. Attention: 12 heads (head_dim 64), no recurrent state.
+Matched recurrent state (headline rung, Option Y) = 1,048,576 floats/layer, ALL ARMS AT 8 HEADS:
+    RoLA  n_h=8, nc=128, d_qk=16, d_v=64  ->  8*128*16*64 = 1048576   (output width n_h*d_v = 512 = d_model)
+    GDN   8 heads, head_dim=256, expand_v=2 (->head_v=512)  ->  8*256*512 = 1048576   (EXACT; canonical)
+  All three arms share num_heads=8 (head is the same primitive: an independent mixing channel), GDN
+  stays at its CANONICAL head shape (head_dim<=256 kernel cap never binds), and attn=8 (head_dim 64)
+  is the standard softmax config. State = 1/2 of attn's KV cache at L=2048 (2*L*d_model = 2097152),
+  a compression advantage that GROWS linearly with context (constant state vs attn's linear KV).
+  Attention has no recurrent state (unbounded-KV ceiling). [Option X = 524288 / GDN-4h, run later.]
+
+  RoLA's d_v=64 (not 16) is deliberate: the mixer readout width is n_h*d_v, and w_o lifts it to
+  d_model. At d_v=16 that readout is only 128-wide (d_model/4) -> the mixer could write at most a
+  rank-128 update to the 512-d residual, an output BOTTLENECK vs attn (512) and GDN (2048). We set
+  n_h*d_v = 512 = d_model so RoLA is not handicapped on output capacity; the state budget is then
+  spent on nc=64 routed states (output_width * nc*d_qk = state is the fixed-state tradeoff).
 
 Each arm returns a fresh `AutoModelForCausalLM.from_config(cfg)`. `arm_config(...)` builds the
 config only (cheap, for param/state accounting); `build_arm(...)` builds the model.
@@ -30,30 +39,42 @@ import rola_hf  # noqa: F401,E402
 from rola_hf import RoLAConfig  # noqa: E402
 from transformers import AutoModelForCausalLM  # noqa: E402
 
+# --- env-overridable knobs (defaults = Option-Y headline @ d_model=512). The d_model=128 small-
+# backbone diagnostic sets LM_HIDDEN/LM_ROLA_*/LM_ATTN_HEADS to run RoLA's narrow-output regime
+# (nc=256, d_qk=d_v=16 -> output 128 = d_model=128, no waste) against a matched small attn. -------
+_HID     = int(_os.environ.get("LM_HIDDEN", "512"))        # backbone d_model
+_NC      = int(_os.environ.get("LM_ROLA_NC", "128"))       # RoLA routed states (Y: 128)
+_DQK     = int(_os.environ.get("LM_ROLA_DQK", "16"))
+_DV      = int(_os.environ.get("LM_ROLA_DV", "64"))        # Y: 64 -> n_h*d_v = 512 = d_model (no bottleneck)
+_NH      = int(_os.environ.get("LM_ROLA_NH", "8"))         # shared head count
+_GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y: 8 -> canonical-8h, state matches RoLA)
+_ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
+_MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
+_LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (TinyStories/ListOps)
+
 # --- shared backbone (the part that must be IDENTICAL across all arms) -------------------------
 BACKBONE = dict(
-    hidden_size=512,          # small/cheap compute-optimal scale (~90M total). hidden % ATTN_HEADS == 0.
-    num_hidden_layers=12,
+    hidden_size=_HID,         # small/cheap compute-optimal scale (~108M @512). hidden % ATTN_HEADS == 0.
+    num_hidden_layers=_LAYERS,
     hidden_ratio=4,           # SwiGLU MLP expansion (fla convention)
     norm_eps=1e-6,
-    max_position_embeddings=2048,   # train+eval context = 2048 (recall docs exceed 1024; attn ceiling needs it)
+    max_position_embeddings=_MAXPOS,   # >= train ctx; 4k headline. NIAH may eval beyond (extrapolation).
     tie_word_embeddings=False,
     fuse_cross_entropy=True,
 )
-# --- matched recurrent-state geometry ---------------------------------------------------------
-# Matched on CONTENT recurrent state = n_h * nc * d_qk * d_v = 8*256*16*16 = 524288 floats/layer.
-# GDN matches it at its CANONICAL head shape (head_dim=256, expand_v=2 -> head_v=512) by HEAD COUNT:
-#   num_heads=4 -> 4*256*512 = 524288 (exact). Head count is the dial; the head_dim<=256 kernel cap
-#   never binds. expand_v=2 is the canonical value (flame gated_deltanet_*.json) — NOT a reverse-
-#   engineered fraction.
-# RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 32768, ~6%) for its
+# --- matched recurrent-state geometry (Option Y: all 8 heads, state = 1,048,576) ---------------
+# RoLA  n_h=8 * nc=128 * d_qk=16 * d_v=64 = 1048576 floats/layer; n_h*d_v = 512 = d_model (no output
+#   bottleneck — see module docstring). GDN matches EXACTLY at its CANONICAL 8-head shape
+#   (head_dim=256, expand_v=2 -> head_v=512): 8*256*512 = 1048576. expand_v=2 is the canonical value
+#   (flame gated_deltanet_*.json) — NOT a reverse-engineered fraction; head_dim<=256 cap never binds.
+# RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
-ROLA_GEOM = dict(num_states=256, d_qk=16, d_v=16, num_heads=8)
-GDN_GEOM = dict(num_heads=4, head_dim=256, expand_v=2.0)         # -> 4*256*512 = 524288 (canonical expand_v)
-ATTN_HEADS = 8                                                   # head_dim 64 at hidden 512 (512 % 8 == 0)
+ROLA_GEOM = dict(num_states=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH)
+GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=256, expand_v=2.0)   # 8*256*512 = 1048576 (canonical expand_v)
+ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
 MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["num_states"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
-ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["num_states"] * ROLA_GEOM["d_qk"]  # 32768, asym/kappa only
+ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["num_states"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
 
 # Uniform component policy across the sub-quadratic arms: short conv OFF for ALL (isolate the mixer;
 # attention has no conv, so conv-off keeps the only difference the mixer itself). This runs GDN

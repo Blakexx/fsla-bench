@@ -19,7 +19,7 @@ from rola_hf import RoLAConfig
 import arms  # the 5-arm iso-backbone registry (RoLA x3 + GDN + attn ceiling)
 from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments,
-                          DataCollatorForLanguageModeling)
+                          DataCollatorForLanguageModeling, default_data_collator)
 
 
 FINEWEB = "HuggingFaceFW/fineweb-edu"  # natural text -> matches lm-eval's detokenized format
@@ -40,6 +40,11 @@ def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_sam
     'no space left' failure: sample-10BT is ~10B tokens). Tokenize + group into block_size on the
     fly; carve a small validation head from the stream (FineWeb-Edu ships train-only). Small datasets
     (WikiText) keep the simple materialized path."""
+    if name == "listops":                                # synthetic non-reciprocal task (asym vs sym)
+        from listops import listops_dataset
+        n_train = int(max_train_samples) if max_train_samples else 100000
+        return listops_dataset(tokenizer, n_train=n_train, n_val=2000, max_len=block_size)
+
     fineweb = name in ("fineweb", "fineweb-edu") or (name or "").startswith("HuggingFaceFW")
     if name in ("fineweb", "fineweb-edu"):
         name = FINEWEB
@@ -56,7 +61,8 @@ def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_sam
         N_VAL = 256                              # ~256 blocks held out for val (block_size tokens each)
         return {"train": blocks.skip(N_VAL), "validation": blocks.take(N_VAL)}
 
-    # small/local datasets (e.g. WikiText): materialize (cheap), real validation split.
+    # small/local datasets (e.g. WikiText, TinyStories): materialize (cheap), real validation split.
+    config = config or None                              # TinyStories & friends have no config name
     from datasets import DatasetDict
     train_split = f"train[:{max_train_samples}]" if max_train_samples else "train"
     train_raw = load_dataset(name, config, split=train_split)
@@ -101,25 +107,55 @@ class CkptTarCallback(TrainerCallback):
                 print(f"[ckpt-sync] WARN tar failed: {e!r}", flush=True)
 
 
-def _restore_resume(run_id, out_dir):
-    """If the dispatcher shipped a resume tar ($FLEET_PAYLOAD_DIR/<run_id>), untar it into out_dir and
-    return the checkpoint path for Trainer.resume_from_checkpoint. FAIL LOUD if a tar was shipped but
-    is unusable (don't silently restart from 0 or continue from garbage)."""
+def _ckpt_config_matches(ck, cfg):
+    """True iff the checkpoint's config.json matches the current model on the architecture-defining
+    fields. Guards against the run_id-collision gotcha: run_id = '<arm>_s<seed>' encodes neither
+    geometry nor dataset, so a checkpoint from a DIFFERENT regime (e.g. d_model=512 vs 256) can land
+    at the same id; resuming from it would train garbage (or crash on shape mismatch). Refuse it."""
+    try:
+        cj = json.load(open(os.path.join(ck, "config.json")))
+    except Exception:
+        return False
+    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "num_states", "d_qk", "d_v"):
+        want = getattr(cfg, k, None)
+        if want is not None and k in cj and cj[k] != want:
+            print(f"[resume] checkpoint {os.path.basename(ck)} config mismatch: {k}={cj[k]} != {want} "
+                  f"-> REFUSING this checkpoint, starting FRESH (run_id collision across regimes?)", flush=True)
+            return False
+    return True
+
+
+def _restore_resume(run_id, out_dir, cfg):
+    """Resolve a checkpoint for Trainer.resume_from_checkpoint, in priority order:
+      1. SHIPPED TAR ($FLEET_PAYLOAD_DIR/<run_id>): the dispatcher pulled this off a dead box and
+         shipped it back on re-dispatch -> untar into out_dir + resume. FAIL LOUD if corrupt.
+      2. LOCAL DISK (out_dir already holds a checkpoint-*): the box_server restarted on a PERSISTENT
+         disk (on-demand pause+resume, or any container restart) -> resume from local, no transfer.
+    Either candidate is REFUSED (fresh start) if its config doesn't match `cfg` — see
+    _ckpt_config_matches. Returns the checkpoint dir or None (fresh start)."""
     pdir = os.environ.get("FLEET_PAYLOAD_DIR")
-    if not pdir:
-        return None
-    tar = os.path.join(pdir, run_id)
-    if not os.path.exists(tar) or os.path.getsize(tar) == 0:
-        return None                                      # fresh start, no resume shipped
-    os.makedirs(out_dir, exist_ok=True)
-    with tarfile.open(tar, "r") as t:
-        t.extractall(out_dir)
-    ck = get_last_checkpoint(out_dir)
-    if ck is None or not os.path.exists(os.path.join(ck, "trainer_state.json")):
-        raise RuntimeError(f"resume tar {tar} present but no valid checkpoint after untar (corrupt) "
-                           f"— refusing to silently restart; re-dispatch will retry")
-    print(f"[resume] restored {os.path.basename(ck)} from shipped tar -> resuming", flush=True)
-    return ck
+    tar = os.path.join(pdir, run_id) if pdir else None
+    if tar and os.path.exists(tar) and os.path.getsize(tar) > 0:
+        os.makedirs(out_dir, exist_ok=True)
+        with tarfile.open(tar, "r") as t:
+            t.extractall(out_dir)
+        ck = get_last_checkpoint(out_dir)
+        if ck is None or not os.path.exists(os.path.join(ck, "trainer_state.json")):
+            raise RuntimeError(f"resume tar {tar} present but no valid checkpoint after untar (corrupt) "
+                               f"— refusing to silently restart; re-dispatch will retry")
+        if not _ckpt_config_matches(ck, cfg):            # stale/wrong ship (run_id collision) -> fresh
+            return None
+        print(f"[resume] restored {os.path.basename(ck)} from shipped tar -> resuming", flush=True)
+        return ck
+    # No tar shipped: resume from a checkpoint already on the LOCAL disk (paused+resumed / restarted
+    # box). This is the transfer-free recovery path the no-kill dispatcher relies on.
+    if os.path.isdir(out_dir):
+        ck = get_last_checkpoint(out_dir)
+        if ck is not None and os.path.exists(os.path.join(ck, "trainer_state.json")) and _ckpt_config_matches(ck, cfg):
+            print(f"[resume] found local checkpoint {os.path.basename(ck)} in {out_dir} -> resuming "
+                  f"(no transfer)", flush=True)
+            return ck
+    return None
 
 
 def main():
@@ -150,6 +186,7 @@ def main():
     p.add_argument("--weight_decay", type=float, default=0.1)
     p.add_argument("--eval_steps", type=int, default=1000)
     p.add_argument("--save_steps", type=int, default=1000, help="periodic checkpoint cadence (preemption-resume)")
+    p.add_argument("--grad_ckpt", type=int, default=0, help="gradient checkpointing (1=on, frees activation mem for bigger batch)")
     p.add_argument("--out_dir", default=None)
     p.add_argument("--num_proc", type=int, default=8)
     p.add_argument("--max_train_samples", type=int, default=None,
@@ -176,10 +213,19 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats}", flush=True)
 
+    # transformers 5.x expects each module's _tied_weights_keys to be a dict {tied: source}; fla's
+    # CausalLM classes (GatedDeltaNet, Transformer) still declare it as a LIST (e.g. ['lm_head.weight']),
+    # which crashes save_pretrained -> _get_tied_weight_keys ('.keys()' on a list) at the first ckpt.
+    # We use tie_word_embeddings=False (untied) so nothing is actually tied: normalize any list-valued
+    # _tied_weights_keys to {} across the module tree. RoLA already uses {}, so this is a no-op there.
+    for _mod in model.modules():
+        if isinstance(getattr(_mod, "_tied_weights_keys", None), list):
+            _mod._tied_weights_keys = {}
+
     # Resume tar shipped by the dispatcher (preemption-safe). Resolve BEFORE building the Trainer so
     # output_dir holds the restored checkpoint for resume_from_checkpoint. ckpt_pt is the box-served
     # <run_id>.pt the dispatcher pulls in-progress.
-    resume_ckpt = _restore_resume(run_id, out)
+    resume_ckpt = _restore_resume(run_id, out, model.config)
     ckpt_pt = os.path.join(a.ckpt_dir, run_id + ".pt") if a.ckpt_dir else os.path.join(out + ".pt")
 
     args = TrainingArguments(
@@ -190,9 +236,11 @@ def main():
         adam_beta1=0.9, adam_beta2=0.95,        # modern-LM standard (GPT-3/Llama/Mamba/GLA); HF default beta2=0.999
         seed=a.seed, weight_decay=a.weight_decay, max_grad_norm=1.0, bf16=True,
         remove_unused_columns=False,            # streaming IterableDataset: keep our token columns intact
-        # grad-ckpt OFF: smoke showed peak 6.9GB on a 40GB A100 -> recompute was pure slowdown, no memory
-        # need. ~1.3-1.5x faster; the routed-RoLA mixer (nc256) is the per-token cost driver.
-        gradient_checkpointing=False,
+        # grad-ckpt: env-tunable. OFF by default (peak 6.9GB/40GB at batch 8 — recompute was pure
+        # slowdown). ON frees the routed-RoLA activation memory so a bigger batch fits (better GPU
+        # utilization) — A/B via LM_GRAD_CKPT. (RoLA appears kernel-bound, so batch may not help it.)
+        gradient_checkpointing=bool(a.grad_ckpt),
+        gradient_checkpointing_kwargs={"use_reentrant": False} if a.grad_ckpt else None,
         logging_steps=50, eval_strategy="steps", eval_steps=a.eval_steps,
         # PREEMPTION-SAFE: periodic checkpoints every save_steps, keep last 2 (defense vs a torn
         # newest). save_safetensors=False -> .bin so the save doesn't crash on sym's tied/shared
@@ -202,9 +250,23 @@ def main():
         # RoLA-sym ties the router via read_router=None, so there's a single router weight, NOT two
         # state_dict keys sharing one tensor; embeddings are untied -> no shared-tensor save crash.)
         report_to="none", dataloader_num_workers=4)
+    # ListOps pre-builds answer-only labels (-100 except the answer token); the LM collator would
+    # OVERWRITE them with full-sequence next-token labels -> use a passthrough collator so the eval
+    # loss is the ANSWER NLL it's meant to be, and report answer-token exact-match accuracy (the
+    # headline metric — NLL alone is gameable by the per-op answer prior).
+    is_listops = (a.dataset == "listops")
+    def _answer_acc(eval_pred):
+        preds, labels = eval_pred                     # preds = argmax ids [N,L] (preprocess fn below)
+        labels, preds = labels[:, 1:], preds[:, :-1]  # causal shift: preds[t] predicts labels[t+1]
+        m = labels != -100
+        return {"answer_acc": float((preds[m] == labels[m]).mean()) if m.any() else 0.0}
     trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                       eval_dataset=ds["validation"],
-                      data_collator=DataCollatorForLanguageModeling(tok, mlm=False),
+                      data_collator=(default_data_collator if is_listops
+                                     else DataCollatorForLanguageModeling(tok, mlm=False)),
+                      compute_metrics=_answer_acc if is_listops else None,
+                      preprocess_logits_for_metrics=((lambda logits, lab: logits.argmax(-1))
+                                                     if is_listops else None),
                       callbacks=[CkptTarCallback(out, ckpt_pt)])   # tar each checkpoint -> box-served <run_id>.pt
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -214,7 +276,9 @@ def main():
     # Resource profile (the cost axes RoLA actually spends on — reported alongside quality):
     tok_per_s = round(tr.metrics.get("train_samples_per_second", 0.0) * a.block_size, 1)
     peak_mib = round(torch.cuda.max_memory_allocated() / 2**20) if torch.cuda.is_available() else None
+    answer_acc = metrics.get("eval_answer_acc")           # listops only (None otherwise)
     print(f"DONE {run_id} eval_loss={metrics['eval_loss']:.4f} ppl={ppl:.2f} "
+          f"{'answer_acc=%.4f ' % answer_acc if answer_acc is not None else ''}"
           f"tok/s={tok_per_s} peak_mib={peak_mib}", flush=True)
     # Final EVAL artifact: a clean save_pretrained dir (model+config+tokenizer, no optimizer/checkpoints)
     # → tar to the box-served <run_id>.pt, overwriting the last resume tar. from_pretrained-able for the
@@ -235,6 +299,7 @@ def main():
                    num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
                    tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
                    eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3),
+                   answer_acc=(round(answer_acc, 4) if answer_acc is not None else None),
                    train_tok_per_s=tok_per_s, peak_mib=peak_mib, ckpt=ckpt_pt)
         with open(a.results, "a") as fh:
             fh.write(json.dumps(row) + "\n"); fh.flush()

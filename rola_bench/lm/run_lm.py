@@ -21,7 +21,9 @@ DEFAULTS = dict(dataset=os.environ.get("LM_DATASET", "fineweb-edu"),
                 batch_size=os.environ.get("LM_BATCH_SIZE", "8"),      # halved vs 1024 to fit memory
                 grad_accum=os.environ.get("LM_GRAD_ACCUM", "4"),      # tokens/step = 2048*8*4 = 65536
                 lr=os.environ.get("LM_LR", "3e-4"),
-                save_steps=os.environ.get("LM_SAVE_STEPS", "500"))    # periodic ckpt cadence (preemption-resume)
+                save_steps=os.environ.get("LM_SAVE_STEPS", "500"),    # periodic ckpt cadence (preemption-resume)
+                grad_ckpt=os.environ.get("LM_GRAD_CKPT", "0"),         # 1=grad-checkpointing (frees mem for bigger batch)
+                max_train_samples=os.environ.get("LM_MAX_TRAIN_SAMPLES", ""))  # cap materialized sets (TinyStories)
 
 
 def main():
@@ -40,6 +42,8 @@ def main():
                "--max_steps", DEFAULTS["max_steps"], "--block_size", DEFAULTS["block_size"],
                "--batch_size", DEFAULTS["batch_size"], "--grad_accum", DEFAULTS["grad_accum"],
                "--lr", DEFAULTS["lr"], "--save_steps", DEFAULTS["save_steps"]]
+        if DEFAULTS["max_train_samples"]:
+            cmd += ["--max_train_samples", DEFAULTS["max_train_samples"]]
         print(f"run_lm: {rid} -> {' '.join(cmd)}", flush=True)
         try:
             subprocess.run(cmd, check=True)              # train_lm writes the success row itself

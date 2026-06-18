@@ -20,10 +20,15 @@ CKPT_DIR = os.environ.get("ROLA_LM_CKPTS", "/mnt/d/rola_data/lm_ckpts")
 IMAGE = os.environ.get("ROLA_LM_IMAGE", "blakeresearch/rola-lm:v2")  # v2 = + flash-attn (attn ceiling arm)
 
 
-# Forward LM budget/LR knobs from the launching shell to the box (run_lm reads them from box env).
+# Forward LM budget/LR + geometry knobs from the launching shell to the box (run_lm/arms read them
+# from box env). Geometry knobs (LM_HIDDEN/LM_ROLA_*/LM_GDN_NH/LM_ATTN_HEADS) default to the Option-Y
+# headline; the d_model=128 small-backbone diagnostic overrides them.
 _FWD = {k: os.environ[k] for k in
         ("LM_LR", "LM_MAX_STEPS", "LM_BLOCK_SIZE", "LM_BATCH_SIZE", "LM_GRAD_ACCUM",
-         "LM_DATASET", "LM_DATASET_CONFIG") if k in os.environ}
+         "LM_DATASET", "LM_DATASET_CONFIG", "LM_GRAD_CKPT", "LM_SAVE_STEPS",
+         "LM_HIDDEN", "LM_ROLA_NC", "LM_ROLA_DQK", "LM_ROLA_DV", "LM_ROLA_NH",
+         "LM_GDN_NH", "LM_ATTN_HEADS", "LM_MAX_POS", "LM_LAYERS",
+         "LM_MAX_TRAIN_SAMPLES") if k in os.environ}
 
 
 def work_list():
@@ -62,13 +67,19 @@ lm_job = Job(
     ckpt_dir=CKPT_DIR,
     work_list=work_list,
     done_ids=done_ids,
-    payload_for=payload_for,        # ship the last resume tar back on re-dispatch
+    payload_for=payload_for,        # ship the last resume tar back on re-dispatch (off-box backstop)
     pull_in_progress=True,          # periodically pull each box's in-progress checkpoint (preemption-safe)
     live_pull_every=int(os.environ.get("LM_LIVE_PULL", "900")),  # min secs between in-progress ckpt pulls;
     # env-overridable (set small for the resume kill-test; 900s/15min for real runs — optimizer ckpt is large)
+    # Resilience: on-demand boxes keep their disk, so NEVER destroy a host with incomplete work — PAUSE
+    # (vast.stop) it and reattach (resume-from-local-disk) instead. Guards against the dispatcher's own
+    # transient-unreachability false-positives + survives a dispatcher restart. state_path persists the
+    # host<->run map for reattach. (LM_NO_KILL=0 reverts to destroy-on-drain.)
+    no_kill=bool(int(os.environ.get("LM_NO_KILL", "1"))),
+    state_path=os.path.join(RUNTIME_DIR, "lm_hosts.json"),
     env={"FLEET_RUN_CMD": "python run_lm.py", **_FWD},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1800,
     batch=1,                  # one arm×seed per box (each is a full LM training)
-    per_batch_timeout=43200,  # 12h — a 125M LM run on FineWeb-Edu is hours, not minutes
+    per_batch_timeout=43200,  # 12h log/monitor cadence — under no_kill a longer alive run keeps going
 )
