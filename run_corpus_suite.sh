@@ -1,7 +1,8 @@
 #!/bin/bash
 # Sequential corpus-suite driver: after TinyStories (rola-lm) drains, run WikiText-103 -> text8 -> PG-19
-# one fleet at a time (same label, so sequential = no collision). Fixed RoLA geometry (d=256, 4 heads,
-# d_v=64, d_qk=16); only nc + L + tokenizer move so RoLA state stays ½ attn KV at each context length.
+# one fleet at a time (same label, so sequential = no collision). Fixed RoLA geometry (d=256, 8 heads,
+# d_v=32, d_qk=16 -> output n_h*d_v=256=d_model; d_v=32 avoids the d_v=64 backward smem OOM, task #115);
+# only nc + L + tokenizer move so RoLA state stays ½ attn KV at each context length.
 # Each corpus gets its OWN results+ckpt dir (run_id is <arm>_s<seed> -> would cross-contaminate otherwise).
 set -u
 VENV=/mnt/c/Users/Blake/Documents/VSCode/CLA/.venv/bin/python
@@ -24,7 +25,7 @@ run_corpus() {  # name dataset config L nc batch
     ROLA_LM_RUNTIME="/home/blake/rola-bench/runtime/$name" \
     ROLA_LM_CKPTS="/mnt/d/rola_data/lm_ckpts_$name" \
     LM_ARMS="$ARMS" LM_SEEDS="$SEEDS" LM_DATASET="$dataset" LM_DATASET_CONFIG="$cfg" \
-    LM_HIDDEN=256 LM_LAYERS=6 LM_ROLA_NC=$nc LM_ROLA_DQK=16 LM_ROLA_DV=64 LM_ROLA_NH=4 LM_ATTN_HEADS=4 \
+    LM_HIDDEN=256 LM_LAYERS=6 LM_ROLA_NC=$nc LM_ROLA_DQK=16 LM_ROLA_DV=32 LM_ROLA_NH=8 LM_ATTN_HEADS=4 \
     LM_MAX_POS=2048 LM_BLOCK_SIZE=$L LM_BATCH_SIZE=$bs LM_GRAD_ACCUM=1 LM_LR=3e-4 \
     LM_MAX_STEPS=15000 LM_SAVE_STEPS=1500 LM_GRAD_CKPT=0 LM_LIVE_PULL=900 \
     OFFER_QUERY="gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500" \
