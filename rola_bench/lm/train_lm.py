@@ -49,11 +49,14 @@ def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_sam
     if name in ("fineweb", "fineweb-edu"):
         name = FINEWEB
         config = config if (config or "").startswith("sample") else "sample-10BT"
+    pg19 = name in ("pg19", "emozilla/pg19", "deepmind/pg19")   # long-DOCUMENT corpus (books); stream (big)
+    if pg19:
+        name, config = "emozilla/pg19", None
 
     def tok(ex):
         return tokenizer(ex["text"])
 
-    if fineweb:
+    if fineweb or pg19:                                  # stream large corpora; never materialize to disk
         raw = load_dataset(name, config, split="train", streaming=True)
         cols = list(raw.column_names) if getattr(raw, "column_names", None) else ["text"]
         blocks = (raw.map(tok, batched=True, remove_columns=cols)
@@ -197,17 +200,25 @@ def main():
     run_id = f"{a.arm}_s{a.seed}" if a.arm else f"{a.rola_instance}-d{a.hidden_size}L{a.num_hidden_layers}"
     out = a.out_dir or (os.path.join(a.ckpt_dir, run_id) if a.ckpt_dir else f"lm_runs/{run_id}")
 
-    tok = AutoTokenizer.from_pretrained("gpt2"); tok.pad_token = tok.eos_token
-    ds = build_dataset(a.dataset, a.dataset_config, a.block_size, tok, a.num_proc, a.max_train_samples)
+    # text8 is CHAR-level (27-symbol vocab, no GPT-2 BPE): pre-grouped LM blocks, default collator,
+    # bits-per-char metric. Every other corpus uses the GPT-2 tokenizer + build_dataset.
+    is_char = (a.dataset == "text8")
+    if is_char:
+        import text8_data
+        tok = None; vocab_sz = text8_data.vocab_size(); eos_id = 0
+        ds = text8_data.text8_dataset(a.block_size, max_train_blocks=a.max_train_samples)
+    else:
+        tok = AutoTokenizer.from_pretrained("gpt2"); tok.pad_token = tok.eos_token
+        vocab_sz = len(tok); eos_id = tok.eos_token_id
+        ds = build_dataset(a.dataset, a.dataset_config, a.block_size, tok, a.num_proc, a.max_train_samples)
     if a.arm:                                            # iso-backbone registry arm (the LM comparison)
-        model = arms.build_arm(a.arm, vocab_size=len(tok),
-                               bos_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
+        model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
         state_floats = arms.recurrent_state_floats(a.arm)
     else:                                                # legacy single-RoLA run
         cfg = RoLAConfig(rola_instance=a.rola_instance, num_states=a.num_states, d_qk=a.d_qk,
                          d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
-                         num_hidden_layers=a.num_hidden_layers, vocab_size=len(tok),
-                         bos_token_id=tok.eos_token_id, eos_token_id=tok.eos_token_id)
+                         num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
+                         bos_token_id=eos_id, eos_token_id=eos_id)
         model = AutoModelForCausalLM.from_config(cfg)
         state_floats = a.num_heads * a.num_states * a.d_qk * (a.d_v + 1)
     n_params = sum(p.numel() for p in model.parameters())
@@ -255,6 +266,7 @@ def main():
     # loss is the ANSWER NLL it's meant to be, and report answer-token exact-match accuracy (the
     # headline metric — NLL alone is gameable by the per-op answer prior).
     is_listops = (a.dataset == "listops")
+    pre_grouped = is_listops or is_char          # both ship fixed-length input_ids+labels -> passthrough collator
     def _answer_acc(eval_pred):
         preds, labels = eval_pred                     # preds = argmax ids [N,L] (preprocess fn below)
         labels, preds = labels[:, 1:], preds[:, :-1]  # causal shift: preds[t] predicts labels[t+1]
@@ -262,7 +274,7 @@ def main():
         return {"answer_acc": float((preds[m] == labels[m]).mean()) if m.any() else 0.0}
     trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                       eval_dataset=ds["validation"],
-                      data_collator=(default_data_collator if is_listops
+                      data_collator=(default_data_collator if pre_grouped
                                      else DataCollatorForLanguageModeling(tok, mlm=False)),
                       compute_metrics=_answer_acc if is_listops else None,
                       preprocess_logits_for_metrics=((lambda logits, lab: logits.argmax(-1))
@@ -273,18 +285,21 @@ def main():
     tr = trainer.train(resume_from_checkpoint=resume_ckpt)
     metrics = trainer.evaluate()
     ppl = math.exp(min(metrics["eval_loss"], 20))
+    bpc = round(metrics["eval_loss"] / math.log(2), 4) if is_char else None   # text8: bits-per-char
     # Resource profile (the cost axes RoLA actually spends on — reported alongside quality):
     tok_per_s = round(tr.metrics.get("train_samples_per_second", 0.0) * a.block_size, 1)
     peak_mib = round(torch.cuda.max_memory_allocated() / 2**20) if torch.cuda.is_available() else None
     answer_acc = metrics.get("eval_answer_acc")           # listops only (None otherwise)
     print(f"DONE {run_id} eval_loss={metrics['eval_loss']:.4f} ppl={ppl:.2f} "
+          f"{'bpc=%.4f ' % bpc if bpc is not None else ''}"
           f"{'answer_acc=%.4f ' % answer_acc if answer_acc is not None else ''}"
           f"tok/s={tok_per_s} peak_mib={peak_mib}", flush=True)
     # Final EVAL artifact: a clean save_pretrained dir (model+config+tokenizer, no optimizer/checkpoints)
     # → tar to the box-served <run_id>.pt, overwriting the last resume tar. from_pretrained-able for the
     # post-hoc recall eval. .bin (safe_serialization=False) allows sym's shared routers.
     final_dir = os.path.join(out, "final")
-    model.save_pretrained(final_dir, safe_serialization=False); tok.save_pretrained(final_dir)
+    model.save_pretrained(final_dir, safe_serialization=False)
+    if tok is not None: tok.save_pretrained(final_dir)   # char path has no HF tokenizer to save
     if a.ckpt_dir:
         try:
             _tar_dir_atomic(final_dir, ckpt_pt)
@@ -298,7 +313,8 @@ def main():
                    hidden_size=getattr(model.config, "hidden_size", None),
                    num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
                    tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
-                   eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3),
+                   eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3), bpc=bpc,
+                   dataset=a.dataset, block_size=a.block_size,
                    answer_acc=(round(answer_acc, 4) if answer_acc is not None else None),
                    train_tok_per_s=tok_per_s, peak_mib=peak_mib, ckpt=ckpt_pt)
         with open(a.results, "a") as fh:
