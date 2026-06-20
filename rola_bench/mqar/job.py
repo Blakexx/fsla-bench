@@ -21,9 +21,8 @@ def work_list():
     (comma lists) restrict which cells the dispatcher hands out — e.g. FAMILIES=hedgehog,gla,gdn
     SHAPES=square,heads for a 4090-safe baseline subset (wide shapes OOM at batch 128 on 4090)."""
     os.environ["GRID_TIERS"] = GRID_TIERS
-    from rola_bench.mqar.experiments import canonical_mqar_grid as g
-    importlib.reload(g)
-    ids = [c.run_id for c in g.configs]
+    from rola_bench.mqar.run_rla_sweep import load_configs
+    ids = [c.run_id for c in load_configs("canonical")[0]]
     fams = os.environ.get("FAMILIES")
     shps = os.environ.get("SHAPES")
     if fams:

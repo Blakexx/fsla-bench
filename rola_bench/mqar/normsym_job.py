@@ -15,9 +15,8 @@ IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v17")
 
 
 def work_list():
-    from rola_bench.mqar.experiments import normsym_resweep as g
-    importlib.reload(g)
-    return [c.run_id for c in g.configs]
+    from rola_bench.mqar.run_rla_sweep import load_configs
+    return [c.run_id for c in load_configs("normsym")[0]]
 
 
 def done_ids():
@@ -42,7 +41,7 @@ normsym_job = Job(
     ckpt_dir=CKPT_DIR,
     work_list=work_list,
     done_ids=done_ids,
-    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config normsym_resweep --results $FLEET_RESULTS",
+    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config normsym --results $FLEET_RESULTS",
          **({"NORMSYM_NCS": os.environ["NORMSYM_NCS"]} if "NORMSYM_NCS" in os.environ else {})},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1200,

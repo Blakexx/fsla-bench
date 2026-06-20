@@ -19,10 +19,8 @@ IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v13")  # v1
 
 
 def work_list():
-    os.environ["GRID_TIERS"] = "all"
-    from rola_bench.mqar.experiments import router_bias_ablation as g
-    importlib.reload(g)
-    return [c.run_id for c in g.configs]
+    from rola_bench.mqar.run_rla_sweep import load_configs
+    return [c.run_id for c in load_configs("router_bias")[0]]
 
 
 def done_ids():
@@ -47,7 +45,7 @@ rlabias_job = Job(
     ckpt_dir=CKPT_DIR,
     work_list=work_list,
     done_ids=done_ids,
-    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config router_bias_ablation --results $FLEET_RESULTS",
+    env={"FLEET_RUN_CMD": "python run_rla_sweep.py --config router_bias --results $FLEET_RESULTS",
          "GRID_TIERS": "all"},
     bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
     idle_timeout=1200,

@@ -37,7 +37,7 @@ print('rola-bench mqar image OK; torch', torch.__version__)"
 # correctness CI (the full fla-rola suite, verify.py, is pre-deploy/CI in rola-scratch).
 ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/mqar \
     FLEET_VERIFY_CMD="python smoke.py" \
-    FLEET_RUN_CMD="python run_rla_sweep.py --config canonical_mqar_grid --results \$FLEET_RESULTS"
+    FLEET_RUN_CMD="python run_rla_sweep.py --config canonical --results \$FLEET_RESULTS"
 
 WORKDIR /opt/rola-bench/rola_bench/mqar
 # CMD inherited from fleet-base: python -u -m fleet.box_server

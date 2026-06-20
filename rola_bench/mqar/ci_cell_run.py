@@ -11,7 +11,7 @@ import copy
 import sys
 
 from rola_bench.mqar.ci_cell_check import family_of
-from rola_bench.mqar.run_rla_sweep import run_one
+from rola_bench.mqar.run_rla_sweep import run_one, load_configs
 
 
 def _set_epochs(cfg, n):
@@ -29,9 +29,9 @@ def _set_epochs(cfg, n):
 
 
 def main():
-    from rola_bench.mqar.experiments import canonical_mqar_grid as g
+    g_configs, _ = load_configs("canonical")
     fams = {}
-    for c in g.configs:
+    for c in g_configs:
         key, nc = family_of(c)
         size = c.model.d_model * (nc or 1)
         if key not in fams or size < fams[key][0]:
