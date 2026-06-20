@@ -1,0 +1,21 @@
+# Router-bias ablation: does a router bias (a content-independent default state) help RLA-kappa at
+# nc128 on the hardest recall slice? Paired bias={False,True} × seeds={1337,2024} at the best LR.
+project_name: canonical-mqar-grid
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 1024}
+data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seeds: [1337, 2024]
+  early_stopping_threshold: 2.0
+  early_stopping_metric: valid/accuracy
+  slice_keys: [num_kv_pairs]
+  eval_every: 10
+lrs: [0.003]
+ncs: [128]
+tiers:
+  all:
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rlabias0, d_qk: 12, d_v: 12, n_heads: 4,
+       kwargs: {router_bias: false}}
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rlabias1, d_qk: 12, d_v: 12, n_heads: 4,
+       kwargs: {router_bias: true}}

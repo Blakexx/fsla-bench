@@ -1,0 +1,19 @@
+# RoLA "best form" ablation: RLA-kappa-asym at a TINY d_model=64 with nc=256 (recurrent state >>
+# backbone), full LR sweep. Tests whether many routed states rescue a small backbone on MQAR.
+project_name: canonical-mqar-grid
+backbone: {d_model: 64, vocab: 8192, n_layers: 2, l_max: 1024}
+data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seed: 1337
+  early_stopping_threshold: 2.0
+  early_stopping_metric: valid/accuracy
+  slice_keys: [num_kv_pairs]
+  eval_every: 10
+lrs: [0.0003, 0.001, 0.003, 0.01, 0.03]
+ncs: [256]
+tiers:
+  all:
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rla, d_qk: 12, d_v: 12, n_heads: 4,
+       run_id: "grid-routed-rla-d{d_model}-nc{nc}_lr{lr:.0e}_s{seed}"}
