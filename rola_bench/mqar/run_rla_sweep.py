@@ -20,16 +20,25 @@ ZOO = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
 
+_EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "experiments")
+
+
 def load_configs(name):
-    # Configs are a proper package now (rola_bench.mqar.experiments.<name>) — import by name, no
-    # hardcoded path. Building the module populates its global `configs`/`configs_envs`.
+    """Load (configs, configs_envs) for an experiment. `name` is a declarative spec — a basename
+    resolving to experiments/<name>.yaml (or a path), expanded by the generic generator
+    (rola_bench.mqar.build_configs). A bare name with no matching .yaml falls back to importing a
+    legacy experiment module (back-compat)."""
+    spec = name if name.endswith((".yaml", ".yml")) else os.path.join(_EXP_DIR, f"{name}.yaml")
+    if os.path.exists(spec):
+        from rola_bench.mqar.build_configs import build_configs, load_spec
+        return build_configs(load_spec(spec))
     mod = importlib.import_module(f"rola_bench.mqar.experiments.{name}")
     return mod.configs, mod.configs_envs
 
 
 def load_configs_and_envs():
-    """Shard-runner entry point. Uses RLA_CONFIG env var (default rla_sweep)."""
-    return load_configs(os.environ.get('RLA_CONFIG', 'rla_sweep'))
+    """Shard-runner entry point. Uses RLA_CONFIG env var (default: the canonical spec)."""
+    return load_configs(os.environ.get('RLA_CONFIG', 'canonical'))
 
 
 def parse_stdout(stdout):
@@ -320,8 +329,8 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="rla_sweep",
-                    help="experiment module under zoology/experiments/ (rla_sweep | rla_pilot)")
+    ap.add_argument("--config", default="canonical",
+                    help="experiment spec basename (experiments/<name>.yaml) or legacy module name")
     ap.add_argument("--results", default=None,
                     help="output jsonl path (default: <config>_results.jsonl in cwd)")
     ap.add_argument("--shard", default=None,
