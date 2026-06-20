@@ -26,6 +26,7 @@ import os
 from zoology.config import TrainConfig, ModelConfig, ModuleConfig, LoggerConfig
 
 from rola_bench.mqar import common as C
+from rola_bench.mqar.experiments import canonical_baselines as _cb
 from rola_bench.mqar.experiments.canonical_baselines import baseline_cell, REF
 from rola import rola_instance
 
@@ -35,6 +36,7 @@ _ROUTED_RUNID = "grid-routed-{tag}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"
 def build_configs(spec):
     """Expand a spec dict into (configs, configs_envs)."""
     bb = {**C.DEFAULTS, **spec.get("backbone", {})}   # spec overrides the library defaults
+    _cb.DMODEL = bb["d_model"]                         # baseline projection solve reads this
     dat, tr = spec["data"], spec["train"]
     def_lrs, ncs = spec["lrs"], spec["ncs"]
     seeds = tr.get("seeds") or [tr["seed"]]
@@ -77,17 +79,19 @@ def build_configs(spec):
                                            d_model=bb["d_model"]), lr, seed)
 
     def baselines(arm):
-        a_lrs = arm.get("lrs", def_lrs)
+        rid = arm.get("run_id", "grid-{method}-{shape}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}")
+        a_lrs, a_ncs = arm.get("lrs", def_lrs), arm.get("ncs", ncs)
         for seed in seeds:
             for method in arm["methods"]:
                 for shape in arm["shapes"]:
-                    for nc in ncs:
+                    for nc in a_ncs:
                         cell = baseline_cell(method, shape, nc)
                         if cell is None:
                             continue
                         kernel, st = cell
                         for lr in a_lrs:
-                            add(kernel, f"grid-{method}-{shape}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}", lr, seed)
+                            add(kernel, rid.format(method=method, shape=shape, nc=nc, st=st, lr=lr,
+                                                   seed=seed, d_model=bb["d_model"]), lr, seed)
 
     def sse_ladder(arm):
         # SSE scaled the way it is strongest: NATIVE (few big partitions) + PARALLEL (N~nc small).
