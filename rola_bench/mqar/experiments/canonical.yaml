@@ -1,0 +1,31 @@
+# Canonical MQAR matched-state grid — every method on one accuracy-vs-state plot, each scaling
+# along its own natural axis. Tier-ordered (strongest competition first). Port of the former
+# canonical_mqar_grid.py; expanded by rola_bench.mqar.build_configs. GRID_TIERS selects tiers.
+project_name: canonical-mqar-grid
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 1024}
+data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seed: 1337
+  early_stopping_threshold: 2.0          # never triggers — want full training
+  early_stopping_metric: valid/accuracy
+  slice_keys: [num_kv_pairs]
+  eval_every: 10
+lrs: [0.0003, 0.001, 0.003, 0.01, 0.03]  # canonical 5-LR grid (3e-4 .. 3e-2)
+ncs: [2, 4, 8, 16, 32, 64, 128, 256]
+tiers:
+  # T1: routed RoLA ladders + same-kernel wide-RLA control
+  "12":
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rla, d_qk: 12, d_v: 12, n_heads: 4}
+    - {build: routed, instance: rola-gla-scalar-sym, tag: gla, d_qk: 12, d_v: 12, n_heads: 4}
+    - {build: baselines, methods: [rla], shapes: [wide]}
+    # T2: Based + SSE (nearest prior method) + RLA square/heads
+    - {build: baselines, methods: [based], shapes: [wide]}
+    - {build: sse_ladder}
+    - {build: baselines, methods: [rla], shapes: [square, heads]}
+  # T3: Hedgehog + GLA monoliths;  T4: GDN + MHA oracle
+  "34":
+    - {build: baselines, methods: [hedgehog, gla], shapes: [wide, square, heads]}
+    - {build: baselines, methods: [gdn], shapes: [wide, square, heads]}
+    - {build: attn}
