@@ -67,11 +67,11 @@ BACKBONE = dict(
 # RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
-ROLA_GEOM = dict(num_states=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH)
+ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH)
 GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=256, expand_v=2.0)   # 8*256*512 = 1048576 (canonical expand_v)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
-MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["num_states"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
-ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["num_states"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
+MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
+ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
 
 # Uniform component policy across the sub-quadratic arms: short conv OFF for ALL (isolate the mixer;
 # attention has no conv, so conv-off keeps the only difference the mixer itself). This runs GDN

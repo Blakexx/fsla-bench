@@ -418,7 +418,7 @@ def build_rola_attention_extractor(
         # 'raw'. Override with `normalize=`. Decay is omitted (rank-preserving diagonal rescale).
         norm = normalize
         if norm is None:
-            norm = getattr(mixer.kernel, "state_norm", "global") != "raw"
+            norm = getattr(mixer, "state_norm", "global") != "raw"
         return to_final_attention(W, normalize=norm, causal=causal)
 
     return extractor
@@ -641,70 +641,51 @@ def _rola_features(mixer: torch.nn.Module, x: torch.Tensor):
     import torch.nn.functional as F
 
     B, L, _ = x.shape
-    H = mixer.n_heads
-    kernel = mixer.kernel
-    # VirtualHeadGLAKernel also has `_log_decay` but its forward is the virtual-head (non-shared-gram)
-    # path — the W reconstructed below would not match it. Fail loud rather than silently mis-measure.
-    if type(kernel).__name__ == "VirtualHeadGLAKernel":
-        raise NotImplementedError(
-            "rank extraction for VirtualHeadGLAKernel is unsupported (virtual-head, non-shared-gram); "
-            "its effective weight differs from the shared-gram form reconstructed here.")
-
-    q = mixer.w_q(x); k = mixer.w_k(x); v = mixer.w_v(x)
+    H = mixer.num_heads
+    # The canonical fla_rola.layers.RoLA ships rla + gla_scalar only (both shared-gram). It exposes
+    # `kernel` as a string ('rla' | 'gla_scalar'), the feature map as `_feature_map`, the routing as
+    # `_route`, and (when present) `w_g` / `w_kappa` / `state_norm` at the top level.
     if getattr(mixer, "use_short_conv", False):
-        # Causal depthwise conv + SiLU, mirroring rola.py:1070-1077.
-        def _cconv(xx, conv):
-            xx = xx.transpose(1, 2)
-            xx = F.pad(xx, (mixer.conv_pad, 0))
-            xx = conv(xx)
-            return F.silu(xx.transpose(1, 2))
-        q = _cconv(q, mixer.q_conv); k = _cconv(k, mixer.k_conv); v = _cconv(v, mixer.v_conv)
-    q = q.view(B, L, H, mixer.proj_qk)
-    k = k.view(B, L, H, mixer.proj_qk)
-    v = v.view(B, L, H, mixer.d_v)
+        raise NotImplementedError("RoLA feature extraction assumes use_short_conv=False (analysis regime)")
 
-    write_gates, read_gates = mixer._route(x)                 # rola.py:1055-1061
+    q = mixer.q_proj(x).view(B, L, H, mixer.proj_qk)
+    k = mixer.k_proj(x).view(B, L, H, mixer.proj_qk)
+    v = mixer.v_proj(x).view(B, L, H, mixer.head_v_dim)
 
-    # Feature map — kernel-specific. AdditiveKernel exposes _feature_map (rola.py:663);
-    # ScalarGLAKernel applies elu+1 inline (rola.py:802). Cover both.
-    if hasattr(kernel, "_feature_map"):
-        qf, kf = kernel._feature_map(q, k)                    # rola.py:663-667
-    else:
-        qf, kf = F.elu(q) + 1.0, F.elu(k) + 1.0               # rola.py:802 (GLA path)
+    write_gates, read_gates = mixer._route(x)
+    qf, kf = mixer._feature_map(q, k)
 
-    # kappa / per_state rescale the read gates by the per-state denominator BEFORE the
-    # combine, and the probe SVDs the rescaled gates. Reproduce on the torch (non-Triton)
-    # path — CPU-safe, exact. CRITICAL: the GLA kernel uses the DECAYED per-state mass
-    # (_rola_gla_perstate_den, needs ld); only the additive (RLA) kernel uses the undecayed
-    # den. Mirrors rola.py ScalarGLAKernel.forward:659-679 vs AdditiveKernel.forward:575-594.
-    state_norm = getattr(kernel, "state_norm", "global")
+    # kappa / per_state rescale the read gates by the per-state denominator BEFORE the combine, and
+    # the probe SVDs the rescaled gates. Reproduce on the torch (non-Triton) path — CPU-safe, exact.
+    # The scalar-GLA kernel uses the DECAYED per-state mass (needs ld); RLA uses the undecayed den.
+    state_norm = getattr(mixer, "state_norm", "global")
     if state_norm in ("kappa", "per_state"):
-        if hasattr(kernel, "_log_decay"):                     # ScalarGLAKernel — decayed mass
+        if mixer.kernel == "gla_scalar":                      # decayed mass
             from rola import _rola_gla_perstate_den
-            ld = kernel._log_decay(x, write_gates)            # rola.py:650-654
-            d = _rola_gla_perstate_den(qf, kf, write_gates, ld)   # rola.py:674
-        else:                                                 # AdditiveKernel (RLA) — undecayed
+            ld = mixer._log_decay(x, write_gates)
+            d = _rola_gla_perstate_den(qf, kf, write_gates, ld)
+        else:                                                 # RLA — undecayed
             from rola import _rola_perstate_den
-            d = _rola_perstate_den(qf, kf, write_gates)       # rola.py:592
+            d = _rola_perstate_den(qf, kf, write_gates)
         if state_norm == "kappa":
-            kap = torch.sigmoid(kernel.w_kappa(x)).view(B, L, mixer.n_heads, 1)  # rola.py:676
+            kap = torch.sigmoid(mixer.w_kappa(x)).view(B, L, H, 1)
             read_gates = read_gates * (d + 1e-5).pow(-kap)
         else:
-            read_gates = read_gates / (d + 1e-5)              # rola.py:679
+            read_gates = read_gates / (d + 1e-5)
     return qf, kf, read_gates, write_gates
 
 
 def _find_rola_mixer(model: torch.nn.Module, layer_index: int) -> torch.nn.Module:
     """Locate the target RoLA mixer. A bare mixer is returned directly; otherwise the
-    `layer_index`-th submodule that looks like a RoLA mixer (has w_q + kernel +
-    write_router) is returned. Fails loud if none / not enough found."""
+    `layer_index`-th submodule that looks like a RoLA mixer (has q_proj + write_router +
+    states_per_head) is returned. Fails loud if none / not enough found."""
     if _is_rola_mixer(model):
         return model
     mixers = [m for m in model.modules() if _is_rola_mixer(m)]
     if not mixers:
         raise ValueError(
             "no RoLA mixer found in the model (looking for a submodule with "
-            "w_q + kernel + write_router). Pass a bare mixer or a model containing one."
+            "q_proj + write_router + states_per_head). Pass a bare mixer or a model containing one."
         )
     if layer_index >= len(mixers):
         raise IndexError(f"layer_index={layer_index} but only {len(mixers)} RoLA mixer(s) found")
@@ -712,7 +693,7 @@ def _find_rola_mixer(model: torch.nn.Module, layer_index: int) -> torch.nn.Modul
 
 
 def _is_rola_mixer(m: torch.nn.Module) -> bool:
-    return all(hasattr(m, a) for a in ("w_q", "w_k", "kernel", "write_router", "_route"))
+    return all(hasattr(m, a) for a in ("q_proj", "k_proj", "write_router", "_route", "states_per_head"))
 
 
 def _model_dim(mixer: torch.nn.Module) -> int:

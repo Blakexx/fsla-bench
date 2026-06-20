@@ -15,11 +15,10 @@ def main():
         print("VERIFY FAILED: torch.cuda.is_available() is False")
         return 1
     import fla.ops.simple_gla, fla.layers, fla_rola  # noqa: F401  — load the kernel stack
-    from rola import RoLA
+    from fla_rola.layers import RoLA
     torch.manual_seed(0)
     dev = "cuda"
-    m = RoLA(d_model=64, d_qk=16, d_v=16, num_chunks=4, n_heads=2,
-             writer="softmax_linear", reader="softmax_linear").to(dev)
+    m = RoLA(hidden_size=64, head_k_dim=16, head_v_dim=16, states_per_head=4, num_heads=2).to(dev)
     x = torch.randn(2, 64, 64, device=dev, requires_grad=True)
     o = m(x)
     if isinstance(o, tuple):

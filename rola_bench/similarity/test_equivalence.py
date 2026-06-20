@@ -29,20 +29,23 @@ def test_rola_equiv_cpu():
     Proves the reconstructed final matrix IS the operator RoLA applies. state_norm='global'
     (the standard normalized combine) → causal + normalize."""
     try:
-        from rola import RoLA
+        from fla_rola.layers import RoLA
+        from fla_rola.ops.rola import chunk_rola
     except Exception as e:
-        pytest.skip(f"rola not importable: {e}")
+        pytest.skip(f"fla_rola not importable: {e}")
     torch.manual_seed(0)
     d_model, d_qk, d_v, nc = DM, 8, 8, 4
-    mixer = RoLA(d_model=d_model, d_qk=d_qk, d_v=d_v, num_chunks=nc, n_heads=H,
+    mixer = RoLA(hidden_size=d_model, head_k_dim=d_qk, head_v_dim=d_v, states_per_head=nc, num_heads=H,
                  kernel="rla", phi="elu", state_norm="global", tie_routers=False).eval()
     x = torch.randn(B, L, d_model)
     # raw q/k/v + routing exactly as RoLA.forward feeds the kernel (use_short_conv off)
-    q = mixer.w_q(x).view(B, L, H, mixer.proj_qk)
-    k = mixer.w_k(x).view(B, L, H, mixer.proj_qk)
-    v = mixer.w_v(x).view(B, L, H, mixer.d_v)
+    q = mixer.q_proj(x).view(B, L, H, mixer.proj_qk)
+    k = mixer.k_proj(x).view(B, L, H, mixer.proj_qk)
+    v = mixer.v_proj(x).view(B, L, H, mixer.head_v_dim)
     write_gates, read_gates = mixer._route(x)
-    o_ref = mixer.kernel(x, q, k, v, write_gates, read_gates)     # eager torch readout [B,L,H,d_v]
+    qf, kf = mixer._feature_map(q, k)
+    # the canonical normalized readout, via the same op the layer calls (CPU eager path)
+    o_ref = chunk_rola(qf, kf, v, r=read_gates, w=write_gates, g=None, norm="global", scale=1.0)
     M = build_rola_attention_extractor(causal=True)(mixer, x)
     o_ours = _apply(M.to(v.dtype), v)
     rel = (o_ours - o_ref).abs().max() / (o_ref.abs().max() + 1e-9)

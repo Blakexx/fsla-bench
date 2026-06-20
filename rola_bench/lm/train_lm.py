@@ -119,7 +119,7 @@ def _ckpt_config_matches(ck, cfg):
         cj = json.load(open(os.path.join(ck, "config.json")))
     except Exception:
         return False
-    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "num_states", "d_qk", "d_v"):
+    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "states_per_head", "d_qk", "d_v"):
         want = getattr(cfg, k, None)
         if want is not None and k in cj and cj[k] != want:
             print(f"[resume] checkpoint {os.path.basename(ck)} config mismatch: {k}={cj[k]} != {want} "
@@ -215,7 +215,7 @@ def main():
         model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
         state_floats = arms.recurrent_state_floats(a.arm)
     else:                                                # legacy single-RoLA run
-        cfg = RoLAConfig(rola_instance=a.rola_instance, num_states=a.num_states, d_qk=a.d_qk,
+        cfg = RoLAConfig(rola_instance=a.rola_instance, states_per_head=a.num_states, d_qk=a.d_qk,
                          d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
                          num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
                          bos_token_id=eos_id, eos_token_id=eos_id)
