@@ -3,7 +3,7 @@ test for RoLA's thesis (recall at length / extrapolation), the same benchmark th
 Mamba / FLA papers use to separate architectures (their advantage is "most pronounced on RULER NIAH").
 
 Self-contained (no RULER repo / data download): we synthesize the haystack + needle directly, so it
-runs on ANY AutoModelForCausalLM checkpoint (RoLA is AutoModel-registered via `import rola_hf`) at
+runs on ANY AutoModelForCausalLM checkpoint (RoLA is AutoModel-registered via `import fla_rola.models.rola`) at
 ARBITRARY sequence lengths — including BEYOND the trained context, which is the length-extrapolation
 probe. Greedy decode, exact-match on the retrieved value.
 
@@ -21,7 +21,7 @@ import argparse, json, random
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import rola_hf  # noqa: F401  (registers RoLA AutoClasses so from_pretrained loads RoLA checkpoints)
+import fla_rola.models.rola  # noqa: F401  (registers RoLA AutoClasses so from_pretrained loads RoLA checkpoints)
 
 # RULER S-NIAH-1 filler: benign, low-entropy sentences repeated to fill the haystack (Mohtashami-style).
 FILLER = ("The grass is green. The sky is blue. The sun is yellow. "

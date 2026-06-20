@@ -30,14 +30,11 @@ config only (cheap, for param/state accounting); `build_arm(...)` builds the mod
 """
 from __future__ import annotations
 
-# rola_hf is hard-wired to import as a TOP-LEVEL module (its __init__ does `from rola_hf.X import`),
-# so put this file's dir (lm/) on sys.path — then `import rola_hf` resolves whether arms.py is run
-# from lm/ (train_lm) or imported as rola_bench.lm.arms (job.py). registers RoLA's HF AutoClasses.
-import os as _os, sys as _sys
-_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-import rola_hf  # noqa: F401,E402
-from rola_hf import RoLAConfig  # noqa: E402
-from transformers import AutoModelForCausalLM  # noqa: E402
+# RoLA is now a first-class FLA model: importing the package registers its HF AutoClasses.
+import os as _os
+import fla_rola.models.rola  # noqa: F401  (registers RoLA AutoClasses)
+from fla_rola.models.rola import RoLAConfig
+from transformers import AutoModelForCausalLM
 
 # --- env-overridable knobs (defaults = Option-Y headline @ d_model=512). The d_model=128 small-
 # backbone diagnostic sets LM_HIDDEN/LM_ROLA_*/LM_ATTN_HEADS to run RoLA's narrow-output regime
