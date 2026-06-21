@@ -7,7 +7,7 @@ The matched-state x-axis is the CONTENT recurrent state — the key/value memory
 RoLA additionally spends a per-state denominator (normalizer) column. That is reported SEPARATELY as
 overhead — it is NOT folded into the matched x-axis:
 
-    rola_den_overhead(H, nc) = H * nc
+    rola_den_overhead(H, nc, d_qk) = H * nc * d_qk     # the (d_v+1) column = d_qk extra entries
 
 Why this exists: the three benchmarks historically counted state two different ways, so the same
 `nc` landed at different x-coordinates:
@@ -28,9 +28,10 @@ def content_state(H, nc, d_qk, d_v):
     return H * nc * d_qk * d_v
 
 
-def rola_den_overhead(H, nc):
-    """RoLA per-state denominator column — reported as overhead, NOT part of the matched axis."""
-    return H * nc
+def rola_den_overhead(H, nc, d_qk):
+    """RoLA per-state denominator — the (d_v+1) normalizer column = d_qk extra entries per head per
+    state: H*nc*d_qk. Reported as overhead, NOT part of the matched axis."""
+    return H * nc * d_qk
 
 
 def mqar_ref_to_content(st, d_v=12):
