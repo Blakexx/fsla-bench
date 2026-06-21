@@ -29,6 +29,9 @@ import math
 DV = 12
 DMODEL = 128
 BASE_H = 4
+# REF includes the (d_v+1) denominator column: content 576*nc + den 48*nc. It is baked into MQAR
+# run_ids, so it stays. For any CROSS-benchmark plot use the shared convention in rola_bench.state
+# (content_state / mqar_ref_to_content) — den is reported as separate overhead, not on the axis (#126).
 REF = lambda nc: 624 * nc
 
 
