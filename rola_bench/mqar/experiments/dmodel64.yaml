@@ -23,3 +23,4 @@ tiers:
        run_id: "grid-{method}-{shape}-d{d_model}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
     - {build: baselines, methods: [hedgehog], shapes: [square], ncs: [256],
        run_id: "grid-{method}-{shape}-d{d_model}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+fleet: {batch: 1, per_batch_timeout: 18000}   # high-nc cells run ~hours

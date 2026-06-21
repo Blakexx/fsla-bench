@@ -19,3 +19,4 @@ tiers:
        kwargs: {router_bias: false}}
     - {build: routed, instance: rola-rla-kappa-asym, tag: rlabias1, d_qk: 12, d_v: 12, n_heads: 4,
        kwargs: {router_bias: true}}
+fleet: {batch: 1, per_batch_timeout: 18000}

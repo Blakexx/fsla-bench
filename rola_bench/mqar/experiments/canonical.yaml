@@ -30,3 +30,5 @@ tiers:
     - {build: baselines, methods: [hedgehog, gla], shapes: [wide, square, heads]}
     - {build: baselines, methods: [gdn], shapes: [wide, square, heads]}
     - {build: attn}
+fleet:                                   # launch knobs (rola_bench.jobs.make_job)
+  env: {GRID_TIERS: "12"}                # which tiers a box runs; manager queue matches

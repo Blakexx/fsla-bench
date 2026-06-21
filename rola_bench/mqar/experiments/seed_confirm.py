@@ -28,6 +28,9 @@ BASE = os.environ.get("SEED_CONFIRM_BASE", "canonical")
 SEEDS = [int(s) for s in os.environ.get("SEED_CONFIRM_SEEDS", "2024,777").split(",") if s]
 RESULTS_GLOB = os.environ.get("SEED_CONFIRM_RESULTS", _RESULTS_DEFAULT)
 
+# Launch knobs (module-config, so they live here rather than a yaml `fleet:` block).
+FLEET = {"batch": 1, "per_batch_timeout": 18000, "env": {"SEED_CONFIRM_SEEDS": "2024,777"}}
+
 
 def _kernel(rid):
     if rid.startswith("grid-routed-"):

@@ -23,3 +23,4 @@ tiers:
     - {<<: *routed, tag: ps_sym,  instance: rola-rla-sym-ps}
     - {<<: *routed, tag: k_asym,  instance: rola-rla-kappa-asym}
     - {<<: *routed, tag: k_sym,   instance: rola-rla-kappa-sym}
+fleet: {batch: 6, per_batch_timeout: 10800}   # 72 short cells — batch several per box

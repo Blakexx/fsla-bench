@@ -1,77 +1,51 @@
-"""The canonical-MQAR-grid sweep as a `fleet` Job.
+"""MQAR jobs, config-driven. `mqar_job(<config>)` builds a fleet.Job for ANY MQAR spec
+(canonical / normsym / dmodel64 / router_bias / seed_confirm) — no per-experiment *_job.py.
 
-This is the manager-side description of WHAT to run; `fleet` owns HOW (provision/control/sync). The
-matching box-side run command lives in the mqar image (docker/mqar.Dockerfile sets FLEET_RUN_CMD to
-`run_rla_sweep.py --config canonical_mqar_grid`, and FLEET_VERIFY_CMD to the fla-rola kernel check).
+Launch knobs live WITH the experiment: a `fleet:` block in experiments/<config>.yaml, or a `FLEET`
+dict in a module-config (seed_confirm). Everything else (name, results dir, done_ids, run command)
+is derived from the config name by rola_bench.jobs.make_job.
+
+  launch.py mqar canonical        # tiers via fleet.env.GRID_TIERS
+  launch.py mqar normsym
+  launch.py mqar seed_confirm
 """
-import glob, importlib, json, os
-from fleet import Job
+import importlib
+import os
 
-GRID_TIERS = os.environ.get("GRID_TIERS", "12")
-# Manager-side homes for results + the durable bad-machine blocklist.
-RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # scientific output (jsonl, git-tracked)
-RUNTIME_DIR = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime/mqar")  # fleet ops state (bad_hosts, logs) — gitignored
-CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v1")
+from rola_bench.jobs import make_job
+from rola_bench.mqar.build_configs import load_spec
+from rola_bench.mqar.run_rla_sweep import load_configs, _EXP_DIR
 
 
-def work_list():
-    """Every run_id in the grid at the configured GRID_TIERS (reloaded so the tier env applies).
-    Optional manager-side filters (run_id = `grid-<family>-<shape>-...`): FAMILIES / SHAPES env
-    (comma lists) restrict which cells the dispatcher hands out — e.g. FAMILIES=hedgehog,gla,gdn
-    SHAPES=square,heads for a 4090-safe baseline subset (wide shapes OOM at batch 128 on 4090)."""
-    os.environ["GRID_TIERS"] = GRID_TIERS
-    from rola_bench.mqar.run_rla_sweep import load_configs
-    ids = [c.run_id for c in load_configs("canonical")[0]]
-    fams = os.environ.get("FAMILIES")
-    shps = os.environ.get("SHAPES")
-    if fams:
-        fset = set(fams.split(","))
-        ids = [r for r in ids if r.split("-")[1] in fset]
-    if shps:
-        sset = set(shps.split(","))
-        ids = [r for r in ids if len(r.split("-")) > 2 and r.split("-")[2] in sset]
-    excl = os.environ.get("EXCLUDE_SHAPES")  # e.g. EXCLUDE_SHAPES=wide -> 4090-safe full grid
-    if excl:
-        eset = set(excl.split(","))
-        ids = [r for r in ids if not (len(r.split("-")) > 2 and r.split("-")[2] in eset)]
-    exfam = os.environ.get("EXCLUDE_FAMILIES")  # e.g. EXCLUDE_FAMILIES=sse,gdn -> drop those families
-    if exfam:
-        xset = set(exfam.split(","))
-        ids = [r for r in ids if r.split("-")[1] not in xset]
+def _fleet_knobs(config):
+    spec_path = os.path.join(_EXP_DIR, f"{config}.yaml")
+    if os.path.exists(spec_path):
+        return dict(load_spec(spec_path).get("fleet", {}))
+    try:                                                  # module-config (e.g. seed_confirm)
+        mod = importlib.import_module(f"rola_bench.mqar.experiments.{config}")
+        return dict(getattr(mod, "FLEET", {}))
+    except Exception:
+        return {}
+
+
+def _filtered_ids(config, tiers):
+    if tiers:
+        os.environ["GRID_TIERS"] = tiers                  # manager-side queue must match the box's tiers
+    ids = [c.run_id for c in load_configs(config)[0]]
+    # Optional manager-side run_id filters (run_id = grid-<family>-<shape>-...): FAMILIES / SHAPES /
+    # EXCLUDE_FAMILIES / EXCLUDE_SHAPES env (comma lists) — e.g. a 4090-safe subset of canonical.
+    part = lambda r, i: (r.split("-")[i] if len(r.split("-")) > i else None)
+    for env, idx, keep in (("FAMILIES", 1, True), ("SHAPES", 2, True),
+                           ("EXCLUDE_FAMILIES", 1, False), ("EXCLUDE_SHAPES", 2, False)):
+        v = os.environ.get(env)
+        if v:
+            s = set(v.split(","))
+            ids = [r for r in ids if (part(r, idx) in s) == keep]
     return ids
 
 
-def done_ids():
-    """run_ids with an ok row in any fleet_results ndjson — reused, never recomputed."""
-    have = set()
-    for f in glob.glob(os.path.join(RESULTS_DIR, "*.jsonl")):
-        try:
-            for line in open(f):
-                j = json.loads(line)
-                if j.get("ok") and j.get("run_id"):
-                    have.add(j["run_id"])
-        except Exception:
-            pass
-    return have
-
-
-mqar_job = Job(
-    name="canonical-mqar-grid",
-    image=IMAGE,
-    # 4090 default (cheap, fits square/heads); override for the wide / Based cells that OOM at
-    # batch 128 on a 4090: OFFER_QUERY="gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97".
-    offer_query=os.environ.get(
-        "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
-    results_path=os.path.join(RESULTS_DIR, "canonical.jsonl"),
-    ckpt_dir=CKPT_DIR,
-    work_list=work_list,
-    done_ids=done_ids,
-    env={"GRID_TIERS": GRID_TIERS},
-    bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
-    idle_timeout=1200,
-    batch=1,                  # one cell per batch: the slowest high-nc square/heads cells take ~3.6h for
-                              # 40 epochs; batched 5-at-a-time (5 LRs of one config) they'd need ~18h and
-                              # never fit any timeout. batch=1 lets each slow cell finish inside per_batch_timeout.
-    per_batch_timeout=18000,  # 5h: comfortably exceeds the slowest single cell (~3.6h at ~4 it/s on nc256 square)
-)
+def mqar_job(config):
+    knobs = _fleet_knobs(config)
+    tiers = knobs.get("env", {}).get("GRID_TIERS")
+    run_cmd = f"python run_rla_sweep.py --config {config} --results $FLEET_RESULTS"
+    return make_job("mqar", config, lambda: _filtered_ids(config, tiers), run_cmd, knobs)
