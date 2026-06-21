@@ -63,7 +63,7 @@ mqar_job = Job(
     # batch 128 on a 4090: OFFER_QUERY="gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97".
     offer_query=os.environ.get(
         "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
-    results_path=os.path.join(RESULTS_DIR, "results_dispatch.jsonl"),
+    results_path=os.path.join(RESULTS_DIR, "canonical.jsonl"),
     ckpt_dir=CKPT_DIR,
     work_list=work_list,
     done_ids=done_ids,

@@ -18,7 +18,8 @@ tiers:
   # T1: routed RoLA ladders + same-kernel wide-RLA control
   "12":
     - {build: routed, instance: rola-rla-kappa-asym, tag: rla, d_qk: 12, d_v: 12, n_heads: 4}
-    - {build: routed, instance: rola-gla-scalar-sym, tag: gla, d_qk: 12, d_v: 12, n_heads: 4}
+    - {build: routed, instance: rola-gla-scalar-sym, tag: gla, d_qk: 12, d_v: 12, n_heads: 4}        # unnormalized (v1)
+    - {build: routed, instance: rola-gla-kappa-asym, tag: glakappa, d_qk: 12, d_v: 12, n_heads: 4}   # normalized (paper)
     - {build: baselines, methods: [rla], shapes: [wide]}
     # T2: Based + SSE (nearest prior method) + RLA square/heads
     - {build: baselines, methods: [based], shapes: [wide]}
