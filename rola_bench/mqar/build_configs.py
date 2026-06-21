@@ -28,7 +28,7 @@ from zoology.config import TrainConfig, ModelConfig, ModuleConfig, LoggerConfig
 from rola_bench.mqar import common as C
 from rola_bench.mqar.experiments import canonical_baselines as _cb
 from rola_bench.mqar.experiments.canonical_baselines import baseline_cell, REF
-from rola import rola_instance
+from rola_bench.mqar.instances import rola_instance
 
 _ROUTED_RUNID = "grid-routed-{tag}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"
 

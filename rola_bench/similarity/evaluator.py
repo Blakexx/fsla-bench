@@ -661,11 +661,11 @@ def _rola_features(mixer: torch.nn.Module, x: torch.Tensor):
     state_norm = getattr(mixer, "state_norm", "global")
     if state_norm in ("kappa", "per_state"):
         if mixer.kernel == "gla_scalar":                      # decayed mass
-            from rola import _rola_gla_perstate_den
+            from rola_bench.similarity.dens import _rola_gla_perstate_den
             ld = mixer._log_decay(x, write_gates)
             d = _rola_gla_perstate_den(qf, kf, write_gates, ld)
         else:                                                 # RLA — undecayed
-            from rola import _rola_perstate_den
+            from rola_bench.similarity.dens import _rola_perstate_den
             d = _rola_perstate_den(qf, kf, write_gates)
         if state_norm == "kappa":
             kap = torch.sigmoid(mixer.w_kappa(x)).view(B, L, H, 1)
