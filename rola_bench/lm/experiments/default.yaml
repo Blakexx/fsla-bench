@@ -3,7 +3,8 @@
 arms:  [rola-rla-kappa-sym, rola-rla-kappa-asym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, attn]
 seeds: [1337, 2024]
 backbone: {hidden: 512, layers: 12, max_pos: 2048}
-geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8, qk_norm: true}
+geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8,
+           qk_norm: true, router_zloss_coef: 0.001}
 budget:
   lr: 3e-4
   max_steps: 20000

@@ -49,6 +49,7 @@ _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads 
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (TinyStories/ListOps)
 _QKNORM  = str(_os.environ.get("LM_QK_NORM", "0")).lower() in ("1", "true", "yes")  # qk-rmsnorm (RoLA + attn)
+_ZLOSS   = float(_os.environ.get("LM_ROUTER_ZLOSS_COEF", "0"))      # ST-MoE router z-loss (RoLA; 0 = off)
 
 # --- shared backbone (the part that must be IDENTICAL across all arms) -------------------------
 BACKBONE = dict(
@@ -68,7 +69,8 @@ BACKBONE = dict(
 # RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
-ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM)
+ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
+                 router_zloss_coef=_ZLOSS)
 GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=256, expand_v=2.0)   # 8*256*512 = 1048576 (canonical expand_v)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
 MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
