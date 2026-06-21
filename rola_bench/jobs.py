@@ -1,11 +1,16 @@
 """Global config-driven job factory — one builder for every benchmark.
 
 A fleet `Job` is almost entirely boilerplate; the only real per-experiment knobs are the work-list
-(run_ids), the box-side run command, and a few fleet settings (batch / timeout / extra env). This
-assembles the Job from those three, so benchmarks don't each hand-roll a `*_job.py`.
+(run_ids), the box-side run command, and a few fleet settings. This assembles the Job from those,
+so benchmarks don't each hand-roll a `*_job.py`.
 
 Result store is uniform: results/<bench>/<config>/<run_id>.jsonl (the fleet dispatcher writes that
 dir/run_id format; `done_ids` reads it back for resume).
+
+`fleet` (a dict, usually a spec's `fleet:` block) supplies simple knobs: image / offer_query / batch
+/ per_batch_timeout / idle_timeout / env, plus any other plain fleet.Job field (no_kill,
+pull_in_progress, live_pull_every, post_timeout, ...). `**job_kwargs` is for bench callables that
+can't live in a yaml (payload_for) or path overrides (ckpt_dir, state_path).
 """
 import os
 
@@ -20,23 +25,25 @@ DEFAULT_IMAGE = "blakeresearch/rola-bench:v17"
 DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"
 
 
-def make_job(bench, config, work_list, run_cmd, fleet=None):
-    """Build a fleet.Job for (bench, config). `fleet` is the experiment's launch knobs
-    (image / offer_query / batch / per_batch_timeout / idle_timeout / env), all optional."""
-    fleet = fleet or {}
+def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
+    fleet = dict(fleet or {})
     cfg_dir = os.path.join(RESULTS_ROOT, bench, config)            # results store (dir/run_id)
     runtime = os.path.join(RUNTIME_ROOT, f"{bench}-{config}")
-    return Job(
-        name=f"{bench}-{config}",
-        image=os.environ.get("ROLA_BENCH_IMAGE", fleet.get("image", DEFAULT_IMAGE)),
-        offer_query=os.environ.get("OFFER_QUERY", fleet.get("offer_query", DEFAULT_OFFER)),
+    spec = dict(
+        name=fleet.pop("name", f"{bench}-{config}"),
+        image=os.environ.get("ROLA_BENCH_IMAGE", fleet.pop("image", DEFAULT_IMAGE)),
+        offer_query=os.environ.get("OFFER_QUERY", fleet.pop("offer_query", DEFAULT_OFFER)),
         results_path=cfg_dir,
-        ckpt_dir=CKPT_DIR,
+        ckpt_dir=job_kwargs.pop("ckpt_dir", CKPT_DIR),
         work_list=work_list,
         done_ids=lambda: R.done_ids(cfg_dir),
-        env={"FLEET_RUN_CMD": run_cmd, **fleet.get("env", {})},
+        env={"FLEET_RUN_CMD": run_cmd, **fleet.pop("env", {})},
         bad_hosts=os.path.join(runtime, "bad_hosts.txt"),
-        idle_timeout=fleet.get("idle_timeout", 1200),
-        batch=fleet.get("batch", 1),
-        per_batch_timeout=fleet.get("per_batch_timeout", 18000),
+        state_path=os.path.join(runtime, "hosts.json"),
+        idle_timeout=fleet.pop("idle_timeout", 1200),
+        batch=fleet.pop("batch", 1),
+        per_batch_timeout=fleet.pop("per_batch_timeout", 18000),
     )
+    spec.update(fleet)         # remaining plain fleet.Job fields (no_kill, pull_in_progress, ...)
+    spec.update(job_kwargs)    # bench callables / path overrides (payload_for, ckpt_dir already popped)
+    return Job(**spec)

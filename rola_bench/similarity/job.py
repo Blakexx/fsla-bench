@@ -1,28 +1,22 @@
-"""Post-hoc SIMILARITY-matrix evaluation as a `fleet` Job (formerly "rank").
+"""Similarity-matrix eval job builder, on the global layer (formerly "rank").
 
-Measures properties of each trained model's final attention/similarity matrix — rank (how many
-unique selection blends) AND sharpness/diffuseness (how peaked each blend is), pre- and
-post-causal-mask. See similarity/evaluator.py.
+Measures each trained model's attention/similarity matrix — rank + sharpness/diffuseness, pre/post
+causal mask (see similarity/evaluator.py). Selection: per CELL (= kernel, nc-rung) take the
+best-accuracy run's checkpoint from the MQAR store and score that one (dedups the LR axis, ~5x
+cheaper). Each cell's .pt ships to the box via the payload channel. SSE has no faithful extractor.
 
-Selection strategy: we do NOT score every checkpoint. For each CELL (= run_id minus its LR token,
-i.e. one (kernel, shape, state) point) we take the **best-accuracy** run's checkpoint and score
-that one. This dedups the 5-LR axis to the model that actually learned the task — the similarity
-structure of the *best* model per cell is the scientifically meaningful object — and cuts the eval
-~5x. Each cell's .pt is shipped to the box via the generic base64 payload channel
-(fleet.Job.payload_for -> $FLEET_PAYLOAD_DIR/<run_id>). SSE has no faithful extractor -> excluded.
+Results: results/similarity/<config>/<run_id>.jsonl. Launch: launch.py similarity main
 """
-import glob, json, os, re
-from fleet import Job
+import glob
+import json
+import os
+import re
+
+from rola_bench.jobs import make_job, RESULTS_ROOT
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-MQAR_RESULTS_DIR = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results/mqar")  # unified results/<bench>/
-# Both routed-GLA variants live here as DISTINCT cells (run_ids differ): grid-routed-gla-* (scalar-sym)
-# and grid-routed-glakappa-* (kappa). similarity probes BOTH — they are separate data points.
-RESULTS_DIR = os.environ.get("ROLA_BENCH_SIM_RESULTS", "/home/blake/rola-bench/results/similarity")  # scientific output
-RUNTIME_DIR = os.environ.get("ROLA_BENCH_SIM_RUNTIME", "/home/blake/rola-bench/runtime/similarity")  # fleet ops state — gitignored
-IMAGE = os.environ.get("ROLA_BENCH_IMAGE", "blakeresearch/rola-bench:v10")  # v10 = + reproducible make_mqar_eval, relative sign-tol, head-count chunk probe (v9 was stale)
-
-_NO_EXTRACTOR_PREFIXES = ("grid-sse-",)            # SSE has no faithful extractor
+MQAR_DIR = os.path.join(RESULTS_ROOT, "mqar")            # the unified MQAR store (dir/run_id)
+_NO_EXTRACTOR_PREFIXES = ("grid-sse-",)                  # SSE has no faithful extractor
 
 
 def _has_extractor(run_id):
@@ -30,29 +24,25 @@ def _has_extractor(run_id):
 
 
 def _cell_key(run_id):
-    """Grouping key = (KERNEL, nc-RUNG) -- shape, LR, exact-st and seed all collapsed.
-
-    We pick the single best-accuracy checkpoint per (kernel, state-rung) regardless of how it spent
-    the state (wide/square/heads) -- we just want the best model at that kernel+state. Key on the nc
-    RUNG (the RoLA-matched n_s level), not the realized `st` float (which differs by dim rounding
-    across shapes). The RoLA method (routed-rla/gla) stays distinct from the rla/gla MONOLITH
-    baselines -- those are different kernels we compare."""
+    """Grouping key = (KERNEL, nc-RUNG); shape, LR, exact-st, seed collapsed. Best model per kernel+
+    state, keyed on the nc rung (not the realized st float). routed-rla/gla stay distinct from the
+    rla/gla MONOLITH baselines."""
     nc = re.search(r'-nc(\d+)', run_id)
     nc = nc.group(1) if nc else "na"
     p = run_id.split("-")
     if run_id.startswith("grid-routed-"):
-        kernel = "routed-" + p[2]            # routed-rla / routed-gla (the proposed method)
+        kernel = "routed-" + p[2]
     elif run_id.startswith("grid-mha"):
         kernel = "mha"
     else:
-        kernel = p[1]                        # rla / gla / based / hedgehog (monolith); shape p[2] dropped
+        kernel = p[1]
     return f"{kernel}-nc{nc}"
 
 
 def _mqar_accuracy():
-    """run_id -> best accuracy, from the unified MQAR result ndjson (incl. the kappa-GLA re-run rows)."""
+    """run_id -> best accuracy, from the unified MQAR store (results/mqar/<config>/<run_id>.jsonl)."""
     acc = {}
-    for f in glob.glob(os.path.join(MQAR_RESULTS_DIR, "*.jsonl")):
+    for f in glob.glob(os.path.join(MQAR_DIR, "**", "*.jsonl"), recursive=True):
         try:
             for line in open(f):
                 j = json.loads(line)
@@ -64,16 +54,16 @@ def _mqar_accuracy():
     return acc
 
 
-def work_list():
-    """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to the SIM_RUNGS nc rungs
-    (default 16,64,256 — the rank-vs-state sample) + mha (rung-independent)."""
+def _work_list():
+    """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to SIM_RUNGS (default
+    16,64,256) + mha (rung-independent)."""
     rungs = set(os.environ.get("SIM_RUNGS", "16,64,256").split(","))
     have_pt = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(CKPT_DIR, "*.pt"))}
-    best = {}                                       # cell_key -> (acc, run_id)
+    best = {}
     for rid, a in _mqar_accuracy().items():
         if rid not in have_pt or not _has_extractor(rid):
             continue
-        k = _cell_key(rid)                          # e.g. routed-rla-nc256, rla-nc16, mha-ncna
+        k = _cell_key(rid)
         nc = k.rsplit("-nc", 1)[-1]
         if nc not in rungs and not k.startswith("mha"):
             continue
@@ -82,22 +72,7 @@ def work_list():
     return [rid for _, rid in best.values()]
 
 
-def done_ids():
-    """run_ids with an ok similarity row already recorded."""
-    have = set()
-    for f in glob.glob(os.path.join(RESULTS_DIR, "*.jsonl")):
-        try:
-            for line in open(f):
-                j = json.loads(line)
-                if j.get("ok") and j.get("run_id"):
-                    have.add(j["run_id"])
-        except Exception:
-            pass
-    return have
-
-
-def payload_for(run_id):
-    """Raw bytes of this cell's best checkpoint, shipped (base64) in the /run payload."""
+def _payload_for(run_id):
     p = os.path.join(CKPT_DIR, run_id + ".pt")
     if not os.path.exists(p):
         return None
@@ -105,25 +80,15 @@ def payload_for(run_id):
         return fh.read()
 
 
-sim_job = Job(
-    name="rola-similarity",
-    image=IMAGE,
-    offer_query=os.environ.get(
-        "OFFER_QUERY", "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"),
-    results_path=os.path.join(RESULTS_DIR, "similarity_dispatch.jsonl"),
-    ckpt_dir=os.path.join(RUNTIME_DIR, "_unused_ckpts"),    # similarity produces no checkpoints
-    work_list=work_list,
-    done_ids=done_ids,
-    payload_for=payload_for,                                # ships the best .pt per cell to the box
-    env={"FLEET_RUN_CMD": "python -u -m rola_bench.similarity.run_sim",
-         "GRID_TIERS": "all",                               # so every cell's config is reconstructable
-         "RANK_FRAC": os.environ.get("RANK_FRAC", "0.25"),  # 25% of each MQAR test slice's examples
-         "SIM_RUNGS": os.environ.get("SIM_RUNGS", "16,64,256")},
-    bad_hosts=os.path.join(RUNTIME_DIR, "bad_hosts.txt"),
-    idle_timeout=900,
-    batch=1,                  # one checkpoint per POST /run body (~42MB base64) — smaller, faster
-                              # uploads, less uplink contention than batching 30MB+ ckpts together.
-    per_batch_timeout=3600,
-    post_timeout=int(os.environ.get("SIM_POST_TIMEOUT", "1800")),  # POST /run base64's the cell's
-    # 30MB+ checkpoint; a 120s POST timeout blows up over a home uplink to many concurrent boxes.
-)
+def sim_job(config="main"):
+    fleet = {
+        "idle_timeout": 900,
+        "batch": 1,                  # one ckpt per POST body (~42MB base64) — less uplink contention
+        "per_batch_timeout": 3600,
+        "post_timeout": int(os.environ.get("SIM_POST_TIMEOUT", "1800")),
+        "env": {"GRID_TIERS": "all",      # every cell's config must be reconstructable
+                "RANK_FRAC": os.environ.get("RANK_FRAC", "0.25"),
+                "SIM_RUNGS": os.environ.get("SIM_RUNGS", "16,64,256")},
+    }
+    return make_job("similarity", config, _work_list, "python -u -m rola_bench.similarity.run_sim",
+                    fleet, payload_for=_payload_for)

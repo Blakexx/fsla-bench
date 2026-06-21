@@ -1,0 +1,1 @@
+{"run_id": "rola-rla-kappa-asym_s1337", "ok": true, "arm": "rola-rla-kappa-asym", "seed": 1337, "params_m": 100.28, "state_floats": 1048576, "hidden_size": 512, "num_hidden_layers": 12, "tokens": 7864320, "eval_loss": 7.2589, "ppl": 1420.636, "train_tok_per_s": 10856.4, "peak_mib": 15900, "ckpt": "/workspace/ckpts/rola-rla-kappa-asym_s1337.pt"}
