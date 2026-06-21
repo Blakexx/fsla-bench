@@ -18,10 +18,10 @@ ncs: [16, 64, 256]
 tiers:
   all:
     - {build: routed, instance: rola-rla-kappa-asym, tag: rlaqk, d_qk: 12, d_v: 12, n_heads: 4,
-       kwargs: {qk_norm: true, router_zloss_coef: 0.001}, run_id: "grid-routed-rlaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+       kwargs: {qk_norm: true}, run_id: "grid-routed-rlaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
     - {build: routed, instance: rola-gla-kappa-asym, tag: glakappaqk, d_qk: 12, d_v: 12, n_heads: 4,
-       kwargs: {qk_norm: true, router_zloss_coef: 0.001}, run_id: "grid-routed-glakappaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+       kwargs: {qk_norm: true}, run_id: "grid-routed-glakappaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
     # small experiment: GLOBAL-norm RLA (vs kappa) at nc256 with qk-norm — does global suffice here?
     - {build: routed, instance: rola-rla-asym, tag: rlaglobqk, d_qk: 12, d_v: 12, n_heads: 4,
-       ncs: [256], kwargs: {qk_norm: true, router_zloss_coef: 0.001}, run_id: "grid-routed-rlaglobqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+       ncs: [256], kwargs: {qk_norm: true}, run_id: "grid-routed-rlaglobqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
 fleet: {batch: 1, per_batch_timeout: 18000}
