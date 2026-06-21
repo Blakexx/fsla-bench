@@ -24,7 +24,7 @@ budget:
   grad_ckpt: 0
   save_steps: 1500
 fleet:
-  image: blakeresearch/rola-lm:v4
+  image: blakeresearch/rola-lm:v5
   idle_timeout: 1800
   batch: 1
   per_batch_timeout: 10800   # 3h hang-backstop (normal cell ~40-60min); close monitoring is primary

@@ -161,8 +161,10 @@ def main():
     # --arm selects from the 5-arm iso-backbone registry (arms.ARMS): the canonical RoLA-vs-attention
     # LM comparison. When set, it OVERRIDES the legacy --rola_instance/geometry flags below (those
     # remain for ad-hoc single-RoLA runs). Fleet contract: --arm + --results + --ckpt_dir.
-    p.add_argument("--arm", default=None, choices=(None, *arms.ARMS),
-                   help="registry arm (rola-rla-kappa-{sym,asym} / rola-gla-kappa-asym / gdn / attn)")
+    # No choices=: structure-suffix arms ("rola-...__nhX_dvY") are valid but dynamic, so arm_config
+    # does the validation (and raises loud on a genuinely unknown arm) — a fixed choices list rejected them.
+    p.add_argument("--arm", default=None,
+                   help="registry arm (rola-rla-kappa-{sym,asym} / rola-gla-kappa-asym / gdn[-isostate] / gla[-isostate] / attn / <base>__nhX_dvY)")
     p.add_argument("--seed", type=int, default=1337)
     p.add_argument("--results", default=None, help="fleet result ndjson to append {run_id, ok, ...}")
     p.add_argument("--ckpt_dir", default=os.environ.get("FLEET_CKPT_DIR"), help="dir to save_pretrained into")
@@ -297,7 +299,6 @@ def main():
                    tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
                    eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3), bpc=bpc,
                    dataset=a.dataset, block_size=a.block_size,
-                   answer_acc=(round(answer_acc, 4) if answer_acc is not None else None),
                    train_tok_per_s=tok_per_s, peak_mib=peak_mib, ckpt=ckpt_pt)
         with open(a.results, "a") as fh:
             fh.write(json.dumps(row) + "\n"); fh.flush()
