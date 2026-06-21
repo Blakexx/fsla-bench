@@ -112,11 +112,30 @@ ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
 ARMS = ROLA_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
 
 
+# Optional RoLA STRUCTURE override via arm-name suffix "<base>__nhX_dvY_ncZ_dqkW" (structure-ablation
+# spec): overrides num_heads/d_v/states_per_head/d_qk on top of ROLA_GEOM; base must be in ROLA_ARMS.
+# e.g. "rola-rla-kappa-asym__nh4_dv64" -> nh4/dv64 (head vs d_v split sweep at fixed nh*d_v=out_dim).
+_STRUCT_KEYS = {"nh": "num_heads", "dv": "d_v", "dqk": "d_qk", "nc": "states_per_head"}
+
+
+def _parse_rola(arm: str):
+    if "__" not in arm:
+        return arm, {}
+    base, ov = arm.split("__", 1)
+    over = {}
+    for tok in ov.split("_"):
+        for k, full in _STRUCT_KEYS.items():
+            if tok.startswith(k) and tok[len(k):].isdigit():
+                over[full] = int(tok[len(k):]); break
+    return base, over
+
+
 def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_id: int = 50256):
     """Build the HF config for `arm` on the shared backbone. Raises on an unknown arm (fail loud)."""
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
-    if arm in ROLA_ARMS:
-        return RoLAConfig(rola_instance=arm, **ROLA_GEOM, **common)
+    _base, _struct = _parse_rola(arm)
+    if _base in ROLA_ARMS:
+        return RoLAConfig(rola_instance=_base, **{**ROLA_GEOM, **_struct}, **common)
     if arm == "gdn":
         from fla.models.gated_deltanet import GatedDeltaNetConfig
         return GatedDeltaNetConfig(use_short_conv=USE_SHORT_CONV, use_gate=True, **GDN_GEOM, **common)
@@ -145,8 +164,10 @@ def build_arm(arm: str, vocab_size: int, **kw):
 def recurrent_state_floats(arm: str) -> int | None:
     """Nominal recurrent-state floats/layer for the bounded arms (matched target); None for attn
     (unbounded KV cache). Realized state is read back from the built layer in the result row."""
-    if arm in ROLA_ARMS:
-        return MATCHED_STATE
+    _base, _struct = _parse_rola(arm)
+    if _base in ROLA_ARMS:
+        g = {**ROLA_GEOM, **_struct}
+        return g["num_heads"] * g["states_per_head"] * g["d_qk"] * g["d_v"]
     if arm == "gdn":
         return GDN_GEOM["num_heads"] * GDN_GEOM["head_dim"] * int(GDN_GEOM["head_dim"] * GDN_GEOM["expand_v"])
     if arm == "gla":  # nh * key_head * value_head = key_dim*value_dim/nh (canonical, NOT matched to RoLA)
