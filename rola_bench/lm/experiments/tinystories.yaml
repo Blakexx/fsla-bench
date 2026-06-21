@@ -1,0 +1,26 @@
+# Small-scale LM — TinyStories (synthetic, short stories; fast + easy, the qk-norm stability check).
+# Reuses the iso-backbone config (same arms/seeds/backbone/geometry/budget as default.yaml).
+# launch.py lm tinystories
+arms:  [rola-rla-kappa-sym, rola-rla-kappa-asym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, attn]
+seeds: [1337, 2024]
+backbone: {hidden: 512, layers: 12, max_pos: 2048}
+geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8,
+           qk_norm: true, router_zloss_coef: 0.0}
+budget:
+  lr: 3e-4
+  max_steps: 20000
+  block_size: 2048
+  batch_size: 8
+  grad_accum: 4
+  dataset: tinystories
+  dataset_config: ""
+  grad_ckpt: 0
+  save_steps: 500
+fleet:
+  image: blakeresearch/rola-lm:v3
+  idle_timeout: 1800
+  batch: 1
+  per_batch_timeout: 43200
+  no_kill: true
+  pull_in_progress: true
+  live_pull_every: 900

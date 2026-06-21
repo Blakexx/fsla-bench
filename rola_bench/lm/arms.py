@@ -47,7 +47,7 @@ _NH      = int(_os.environ.get("LM_ROLA_NH", "8"))         # shared head count
 _GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y: 8 -> canonical-8h, state matches RoLA)
 _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
-_LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (TinyStories/ListOps)
+_LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
 _QKNORM  = str(_os.environ.get("LM_QK_NORM", "0")).lower() in ("1", "true", "yes")  # qk-rmsnorm (RoLA + attn)
 _ZLOSS   = float(_os.environ.get("LM_ROUTER_ZLOSS_COEF", "0"))      # ST-MoE router z-loss (RoLA; 0 = off)
 

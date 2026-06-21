@@ -40,11 +40,6 @@ def build_dataset(name, config, block_size, tokenizer, num_proc=8, max_train_sam
     'no space left' failure: sample-10BT is ~10B tokens). Tokenize + group into block_size on the
     fly; carve a small validation head from the stream (FineWeb-Edu ships train-only). Small datasets
     (WikiText) keep the simple materialized path."""
-    if name == "listops":                                # synthetic non-reciprocal task (asym vs sym)
-        from listops import listops_dataset
-        n_train = int(max_train_samples) if max_train_samples else 100000
-        return listops_dataset(tokenizer, n_train=n_train, n_val=2000, max_len=block_size)
-
     fineweb = name in ("fineweb", "fineweb-edu") or (name or "").startswith("HuggingFaceFW")
     if name in ("fineweb", "fineweb-edu"):
         name = FINEWEB
@@ -261,24 +256,13 @@ def main():
         # RoLA-sym ties the router via read_router=None, so there's a single router weight, NOT two
         # state_dict keys sharing one tensor; embeddings are untied -> no shared-tensor save crash.)
         report_to="none", dataloader_num_workers=4)
-    # ListOps pre-builds answer-only labels (-100 except the answer token); the LM collator would
-    # OVERWRITE them with full-sequence next-token labels -> use a passthrough collator so the eval
-    # loss is the ANSWER NLL it's meant to be, and report answer-token exact-match accuracy (the
-    # headline metric — NLL alone is gameable by the per-op answer prior).
-    is_listops = (a.dataset == "listops")
-    pre_grouped = is_listops or is_char          # both ship fixed-length input_ids+labels -> passthrough collator
-    def _answer_acc(eval_pred):
-        preds, labels = eval_pred                     # preds = argmax ids [N,L] (preprocess fn below)
-        labels, preds = labels[:, 1:], preds[:, :-1]  # causal shift: preds[t] predicts labels[t+1]
-        m = labels != -100
-        return {"answer_acc": float((preds[m] == labels[m]).mean()) if m.any() else 0.0}
+    # The char (text8) path pre-builds fixed-length input_ids+labels; the LM collator would overwrite
+    # them with full-sequence next-token labels -> use a passthrough collator for that pre-grouped path.
+    pre_grouped = is_char
     trainer = Trainer(model=model, args=args, train_dataset=ds["train"],
                       eval_dataset=ds["validation"],
                       data_collator=(default_data_collator if pre_grouped
                                      else DataCollatorForLanguageModeling(tok, mlm=False)),
-                      compute_metrics=_answer_acc if is_listops else None,
-                      preprocess_logits_for_metrics=((lambda logits, lab: logits.argmax(-1))
-                                                     if is_listops else None),
                       callbacks=[CkptTarCallback(out, ckpt_pt)])   # tar each checkpoint -> box-served <run_id>.pt
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -289,10 +273,8 @@ def main():
     # Resource profile (the cost axes RoLA actually spends on — reported alongside quality):
     tok_per_s = round(tr.metrics.get("train_samples_per_second", 0.0) * a.block_size, 1)
     peak_mib = round(torch.cuda.max_memory_allocated() / 2**20) if torch.cuda.is_available() else None
-    answer_acc = metrics.get("eval_answer_acc")           # listops only (None otherwise)
     print(f"DONE {run_id} eval_loss={metrics['eval_loss']:.4f} ppl={ppl:.2f} "
           f"{'bpc=%.4f ' % bpc if bpc is not None else ''}"
-          f"{'answer_acc=%.4f ' % answer_acc if answer_acc is not None else ''}"
           f"tok/s={tok_per_s} peak_mib={peak_mib}", flush=True)
     # Final EVAL artifact: a clean save_pretrained dir (model+config+tokenizer, no optimizer/checkpoints)
     # → tar to the box-served <run_id>.pt, overwriting the last resume tar. from_pretrained-able for the
