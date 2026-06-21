@@ -101,8 +101,8 @@ def parse_stdout(stdout):
     for m in re.finditer(r'STATE_FLOATS_JSON (\{.*?\})', stdout):
         try:
             state_records.append(json.loads(m.group(1)))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARN: STATE_FLOATS_JSON parse failed: {e}", flush=True)
     state_floats = state_records[0]['state_floats'] if state_records else None
     state_per_layer = [r['state_floats'] for r in state_records] if state_records else []
 
@@ -115,8 +115,8 @@ def parse_stdout(stdout):
             ms = json.loads(m.group(1))
             n_params = ms.get('num_parameters')
             model_state_total = ms.get('state_size')
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARN: MODEL_STATS_JSON parse failed: {e}", flush=True)
 
     # FLOPS_JSON line (also from logger.py) — forward FLOPs at training batch
     # × seq_len, with disk-backed caching per unique cell config.
@@ -151,8 +151,8 @@ def parse_stdout(stdout):
     if m:
         try:
             peakiness = json.loads(m.group(1))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARN: PEAKINESS_JSON parse failed: {e}", flush=True)
 
     # RANK_JSON: realized effective-attention rank (num_rank, eff_rank) emitted per
     # eval forward per kernel layer (ROLA_MEASURE_RANK=1). Group by epoch, mean over
@@ -161,8 +161,8 @@ def parse_stdout(stdout):
     for mm in re.finditer(r'RANK_JSON (\{.*?\})\s*$', stdout, re.MULTILINE):
         try:
             rank_recs.append(json.loads(mm.group(1)))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARN: RANK_JSON parse failed: {e}", flush=True)
     rank_curve, rank_final = [], None
     if rank_recs:
         # The diagnostic now emits multi-tolerance numerical rank (rank_1e-01..rank_1e-04)
