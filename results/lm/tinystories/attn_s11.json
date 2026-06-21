@@ -1,0 +1,1 @@
+{"run_id": "attn_s11", "ok": true, "arm": "attn", "seed": 11, "params_m": 30.85, "state_floats": null, "hidden_size": 256, "num_hidden_layers": 6, "tokens": 245760000, "eval_loss": 1.6436, "ppl": 5.174, "bpc": null, "dataset": "roneneldan/TinyStories", "block_size": 512, "answer_acc": null, "train_tok_per_s": 290325.0, "peak_mib": 6155, "ckpt": "/workspace/ckpts/attn_s11.pt"}

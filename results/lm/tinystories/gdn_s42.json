@@ -1,0 +1,1 @@
+{"run_id": "gdn_s42", "ok": true, "arm": "gdn", "seed": 42, "params_m": 41.87, "state_floats": 524288, "hidden_size": 256, "num_hidden_layers": 6, "tokens": 245760000, "eval_loss": 1.5142, "ppl": 4.546, "bpc": null, "dataset": "roneneldan/TinyStories", "block_size": 512, "answer_acc": null, "train_tok_per_s": 143676.9, "peak_mib": 8853, "ckpt": "/workspace/ckpts/gdn_s42.pt"}
