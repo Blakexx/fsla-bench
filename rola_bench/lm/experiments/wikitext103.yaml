@@ -1,21 +1,21 @@
-# Small-scale LM — WikiText-103 (word-level, perplexity). Reuses the established iso-backbone
-# RoLA-vs-attention config (same arms/seeds/backbone/geometry/budget as default.yaml); only the
-# corpus changes. launch.py lm wikitext103
-arms:  [rola-rla-kappa-sym, rola-rla-kappa-asym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, attn]
-seeds: [1337, 2024]
-backbone: {hidden: 512, layers: 12, max_pos: 2048}
-geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8,
+# Small-scale LM — WikiText-103 (word-level, perplexity). Restores run_corpus_suite.sh: ~30M backbone
+# (hidden 256, 6 layers), 15k steps, 5 arms (4 RoLA + attn, no GDN). qk-norm on, z-loss off.
+# launch.py lm wikitext103
+arms:  [rola-rla-kappa-asym, rola-rla-kappa-sym, rola-gla-kappa-asym, rola-gla-kappa-sym, attn]
+seeds: [1337, 2024, 11]
+backbone: {hidden: 256, layers: 6, max_pos: 2048}
+geometry: {rola_nc: 64, rola_dqk: 16, rola_dv: 32, rola_nh: 8, attn_heads: 4,
            qk_norm: true, router_zloss_coef: 0.0}
 budget:
   lr: 3e-4
-  max_steps: 20000
-  block_size: 2048
-  batch_size: 8
-  grad_accum: 4
-  dataset: wikitext
+  max_steps: 15000
+  block_size: 1024
+  batch_size: 16
+  grad_accum: 1
+  dataset: Salesforce/wikitext
   dataset_config: wikitext-103-raw-v1
   grad_ckpt: 0
-  save_steps: 500
+  save_steps: 1500
 fleet:
   image: blakeresearch/rola-lm:v3
   idle_timeout: 1800
