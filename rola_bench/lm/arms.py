@@ -48,8 +48,16 @@ _GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y@512: 8
 _GDN_HEAD_DIM = int(_os.environ.get("LM_GDN_HEAD_DIM", "256"))    # GDN key head_dim (Y@512: 256; small backbone -> 64)
 _GDN_EXPAND_V = float(_os.environ.get("LM_GDN_EXPAND_V", "2.0"))  # GDN value expansion (canonical 2)
 _GLA_NH  = int(_os.environ.get("LM_GLA_NH", "4"))          # GLA heads
-_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "0.5"))     # GLA expand_k (fla default)
-_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "1.0"))     # GLA expand_v (fla default)
+_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "1.0"))     # GLA expand_k: ek1.0 -> head_k=64 (ek0.5 gave
+_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "1.0"))     #   head_k=32 which the fla GLA kernel rejected)
+# iso-STATE baselines (2nd control): size GDN/GLA to MATCH RoLA's recurrent state, report the param
+# cost. State is nc-dependent so the spec sets these per corpus (wiki 262144, tiny 131072).
+_GDNISO_NH = int(_os.environ.get("LM_GDNISO_NH", "8"))
+_GDNISO_HEAD_DIM = int(_os.environ.get("LM_GDNISO_HEAD_DIM", "128"))   # nh8 hd128 ev2 -> 262144 (=RoLA wiki)
+_GDNISO_EXPAND_V = float(_os.environ.get("LM_GDNISO_EXPAND_V", "2.0"))
+_GLAISO_NH = int(_os.environ.get("LM_GLAISO_NH", "4"))
+_GLAISO_EK = float(_os.environ.get("LM_GLAISO_EK", "4.0"))             # nh4 ek4 ev4 -> 262144 (=RoLA wiki)
+_GLAISO_EV = float(_os.environ.get("LM_GLAISO_EV", "4.0"))
 _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
@@ -81,6 +89,9 @@ GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_
 # config (defaults expand_k=0.5, expand_v=1) — NOT forced to RoLA's routed state, which it can't reach
 # without unnatural width. iso-PARAM + iso-backbone; each arm's realized recurrent state is reported.
 GLA_GEOM = dict(num_heads=_GLA_NH, expand_k=_GLA_EK, expand_v=_GLA_EV, gate_logit_normalizer=16)
+# iso-STATE geometry (the 2nd control): sized to match RoLA's recurrent state (per-corpus via env).
+GDNISO_GEOM = dict(num_heads=_GDNISO_NH, head_dim=_GDNISO_HEAD_DIM, expand_v=_GDNISO_EXPAND_V)
+GLAISO_GEOM = dict(num_heads=_GLAISO_NH, expand_k=_GLAISO_EK, expand_v=_GLAISO_EV, gate_logit_normalizer=16)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
 MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
 ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
@@ -98,7 +109,7 @@ USE_SHORT_CONV = False
 # on the kappa variant too, #112.)
 ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
              "rola-gla-kappa-asym", "rola-gla-kappa-sym")   # both kernels' asym/sym pair (asym>sym test)
-ARMS = ROLA_ARMS + ("gdn", "gla", "attn")
+ARMS = ROLA_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
 
 
 def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_id: int = 50256):
@@ -112,6 +123,12 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if arm == "gla":
         from fla.models.gla import GLAConfig
         return GLAConfig(use_short_conv=USE_SHORT_CONV, **GLA_GEOM, **common)
+    if arm == "gdn-isostate":
+        from fla.models.gated_deltanet import GatedDeltaNetConfig
+        return GatedDeltaNetConfig(use_short_conv=USE_SHORT_CONV, use_gate=True, **GDNISO_GEOM, **common)
+    if arm == "gla-isostate":
+        from fla.models.gla import GLAConfig
+        return GLAConfig(use_short_conv=USE_SHORT_CONV, **GLAISO_GEOM, **common)
     if arm == "attn":
         from fla.models.transformer import TransformerConfig
         # Softmax-attention ceiling: full causal attention (window_size=None), RoPE positions.
@@ -134,4 +151,8 @@ def recurrent_state_floats(arm: str) -> int | None:
         return GDN_GEOM["num_heads"] * GDN_GEOM["head_dim"] * int(GDN_GEOM["head_dim"] * GDN_GEOM["expand_v"])
     if arm == "gla":  # nh * key_head * value_head = key_dim*value_dim/nh (canonical, NOT matched to RoLA)
         return int(_HID * GLA_GEOM["expand_k"]) * int(_HID * GLA_GEOM["expand_v"]) // GLA_GEOM["num_heads"]
+    if arm == "gdn-isostate":
+        return GDNISO_GEOM["num_heads"] * GDNISO_GEOM["head_dim"] * int(GDNISO_GEOM["head_dim"] * GDNISO_GEOM["expand_v"])
+    if arm == "gla-isostate":
+        return int(_HID * GLAISO_GEOM["expand_k"]) * int(_HID * GLAISO_GEOM["expand_v"]) // GLAISO_GEOM["num_heads"]
     return None  # attn: unbounded

@@ -1,13 +1,17 @@
 # Small-scale LM — TinyStories. Restores the run_corpus_suite.sh config: ~30M backbone (hidden 256,
 # 6 layers), per-corpus L/nc/batch/seeds, 15k steps, 5 arms (4 RoLA + attn, no GDN). qk-norm now on,
 # z-loss off. launch.py lm tinystories
-arms:  [rola-rla-kappa-asym, rola-rla-kappa-sym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, gla, attn]
+arms:  [rola-rla-kappa-asym, rola-rla-kappa-sym, rola-gla-kappa-asym, rola-gla-kappa-sym,
+        gdn, gdn-isostate, gla, gla-isostate, attn]
 seeds: [1337, 2024, 11, 42, 7]
 backbone: {hidden: 256, layers: 6, max_pos: 2048}
-# iso-param baselines at their CANONICAL small-backbone config (NOT matched to RoLA's routed state —
-# they can't reach it without unnatural width); each arm's realized recurrent state is reported.
+# DUAL control vs RoLA: gdn/gla = iso-PARAM (~32M, less state); gdn-isostate/gla-isostate = iso-STATE
+# (match RoLA's content state 131072 here, pay the param cost). gla_ek=1.0 -> head_k 64 (ek0.5/head_k32
+# was rejected by the fla GLA kernel). iso-state tiny: gdn nh8/hd128/ev1=131072; gla nh4/ek4/ev2=131072.
 geometry: {rola_nc: 32, rola_dqk: 16, rola_dv: 32, rola_nh: 8, attn_heads: 4,
-           gdn_nh: 4, gdn_head_dim: 64, gdn_expand_v: 2.0, gla_nh: 4, gla_ek: 0.5, gla_ev: 1.0,
+           gdn_nh: 4, gdn_head_dim: 64, gdn_expand_v: 2.0, gla_nh: 4, gla_ek: 1.0, gla_ev: 1.0,
+           gdniso_nh: 8, gdniso_head_dim: 128, gdniso_expand_v: 1.0,
+           glaiso_nh: 4, glaiso_ek: 4.0, glaiso_ev: 2.0,
            qk_norm: true, router_zloss_coef: 0.0}
 budget:
   lr: 3e-4
@@ -20,10 +24,10 @@ budget:
   grad_ckpt: 0
   save_steps: 1500
 fleet:
-  image: blakeresearch/rola-lm:v3
+  image: blakeresearch/rola-lm:v4
   idle_timeout: 1800
   batch: 1
-  per_batch_timeout: 43200
+  per_batch_timeout: 10800   # 3h hang-backstop (normal cell ~40-60min); close monitoring is primary
   no_kill: true
   pull_in_progress: true
   live_pull_every: 900
