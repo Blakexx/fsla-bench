@@ -47,6 +47,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+import importlib
+
 import fla.ops.simple_gla as fla_sg
 import fla_rola.ops.simple_gla as fork_sg
 from fla_rola.ops.rola import chunk_rola
@@ -54,6 +56,10 @@ from fla_rola.ops.based import fused_chunk_based
 from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
 from fla_rola.ops.linear_attn import chunk_linear_attn
 from fla_rola.modules.feature_map import HedgehogFeatureMap
+
+from zoology.mixers.rola import RoLAMixer
+from rola_bench.mqar.instances import rola_instance
+import rola_bench.mqar.experiments.canonical_baselines as cb
 
 from . import _common as C
 
@@ -291,54 +297,77 @@ PROJ_FALLBACK = {"vh": "rola", "kappa": "rola"}
 
 
 # --------------------------------------------------------------------------------------------
-# END-TO-END: the FUSED layer cost = in_proj(d_model -> q/k/v/routers) -> kernel -> out_proj,
-# timed as ONE region (fwd, and fwd+bwd). This is the real per-layer wall-clock, comparable to
-# the kernel+projection SUM but capturing launch overlap. Built generically by projecting each
-# kernel input from x at the SAME realized dims the decomposition uses (so e2e ⟷ sum is apples-
-# to-apples). Uses the same run-fn as the kernel arm; routers get a softmax; out_proj maps the
-# kernel output (H·d_v) back to d_model.
+# END-TO-END: the FUSED layer cost, timed as ONE region (fwd, and fwd+bwd). This is the real
+# per-layer wall-clock for the ACTUAL published module — no hand-assembled op-on-synthetic-tensor
+# scaffold. Each arm instantiates its CANONICAL nn.Module at d_model=DM and runs `module(x)`:
+#
+#   rola      - the zoology RoLAMixer (= fla_rola.layers.RoLA), routed inner kernel RLA or GLA,
+#               via rola_instance('rola-{rla,gla}-kappa-asym') at the perf base (H, d_qk, d_v).
+#   monolith  - the dense RLA/GLA lower bound, dispatched by the gla flag to the SAME canonical
+#               baseline cell the accuracy grid uses: RLA -> fla_rola LinearAttention (elu map),
+#               GLA -> zoology GatedLinearAttention. Shaped wide/square/heads.
+#   gdn       - fla.layers.GatedDeltaNet (canonical baseline_cell('gdn', ...)).
+#   based     - zoology Based (canonical baseline_cell('based', ...), wide only).
+#   hedgehog  - fla_rola LinearAttention w/ hedgehog feature map (baseline_cell('hedgehog', ...)).
+#
+# params_m now comes from sum(p.numel()) over the REAL module's parameters (in/out projections,
+# routers, feature maps, norms — everything the layer owns), not a geometry formula. The shaped
+# dims, infeasible-cell skips (gdn head_dim>256, head-scaling at nc>32), and matched-state solve
+# are owned by canonical_baselines.baseline_cell, so the perf cells are identical to the MQAR grid.
+# NOTE: the op-level decomposition bench (bench_kernel / bench_projections, ARMS) is UNCHANGED and
+# still uses the synthetic makers — only this e2e path was repointed to the canonical modules.
 # --------------------------------------------------------------------------------------------
+def _instantiate(kernel_cfg, DM):
+    """Build the canonical baseline module from a baseline_cell kernel dict. `name` is a dotted
+    import path; kwargs already carry hidden_size for the fla classes, so d_model is injected only
+    for the zoology mixers (which take d_model= and have neither key in their kwargs)."""
+    mod_path, cls_name = kernel_cfg["name"].rsplit(".", 1)
+    cls = getattr(importlib.import_module(mod_path), cls_name)
+    kwargs = dict(kernel_cfg["kwargs"])
+    if "hidden_size" not in kwargs and "d_model" not in kwargs:
+        kwargs["d_model"] = DM
+    return cls(**kwargs).to(C.DEV, C.DT)
+
+
+# E2E arm registry. method: the canonical baseline method ('rla'/'gla'/'gdn'/'based'/'hedgehog'),
+# or None for the routed RoLA arm (its own RoLAMixer path). monolith's method is chosen from the
+# gla flag at build time. variants: 'rla_gla' runs both inner kernels, 'own' runs once.
+E2E_ARMS = [
+    dict(name="rola", method=None, variants="rla_gla", shapes=["native"]),
+    dict(name="monolith", method="dispatch", variants="rla_gla", shapes=["wide", "square", "heads"]),
+    dict(name="gdn", method="gdn", variants="own", shapes=["wide", "square", "heads"]),
+    dict(name="based", method="based", variants="own", shapes=["wide"]),
+    dict(name="hedgehog", method="hedgehog", variants="own", shapes=["wide", "square", "heads"]),
+]
+
+
 def build_e2e(arm, shape, nc, gla, DM):
-    """Return (forward_fn(leaves)->out, module_list, n_params) or None if the cell is infeasible."""
-    t_ref = arm["make_inputs"](shape, nc, gla)
-    if t_ref is None:
-        return None
-    B, L = C.B, C.L
-    in_proj, shp = nn.ModuleDict(), {}
-    for k, vv in t_ref.items():
-        if torch.is_tensor(vv):
-            in_proj[k] = nn.Linear(DM, vv[0, 0].numel(), bias=False)   # d_model -> per-token features
-            shp[k] = tuple(vv.shape[2:])
-    out_proj = nn.Linear(t_ref["v"][0, 0].numel(), DM, bias=False)     # kernel out (H·d_v) -> d_model
-    passthru = {k: v for k, v in t_ref.items() if not torch.is_tensor(v)}  # e.g. Hedgehog feature map
-    # Learnable passthru sub-modules (Hedgehog's feature-map Linear) ARE part of the layer: fold them
-    # into `mods` so their params count toward params_m and their grads are cleared each rep.
-    passthru_mods = [v for v in passthru.values() if isinstance(v, nn.Module)]
-    mods = nn.ModuleList(list(in_proj.values()) + [out_proj] + passthru_mods).to(C.DEV, C.DT)
+    """Return (forward_fn(leaves)->out, module, n_params) or None if the cell is infeasible.
+
+    Instantiates the arm's CANONICAL module at d_model=DM and times `module(x)`; n_params is the
+    real parameter count (sum of p.numel()). For baseline arms the shaped dims + matched-state
+    solve + infeasible-cell skip are delegated to canonical_baselines.baseline_cell at DMODEL=DM."""
+    if arm["name"] == "rola":
+        kw = rola_instance("rola-gla-kappa-asym" if gla else "rola-rla-kappa-asym",
+                           d_qk=C.DQK, d_v=C.DV, num_chunks=nc, n_heads=C.H)
+        module = RoLAMixer(d_model=DM, **kw).to(C.DEV, C.DT)
+    else:
+        method = ("gla" if gla else "rla") if arm["method"] == "dispatch" else arm["method"]
+        cb.DMODEL = DM                                    # baseline_cell solves projections at DM
+        cell = cb.baseline_cell(method, shape, nc)
+        if cell is None:                                  # shaped_dims declared this cell infeasible
+            return None
+        kernel_cfg, _state = cell
+        module = _instantiate(kernel_cfg, DM)
 
     def forward(leaves):
-        x = leaves["x"]
-        t = dict(passthru)
-        for k, lin in in_proj.items():
-            y = lin(x).view(B, L, *shp[k])
-            # Apply each input's REAL gate transform so the kernel sees a valid gate (a raw Linear
-            # output would feed e.g. positive/garbage "log-decay" → NaN/unfaithful cost). Matches the
-            # maker transforms: routers→softmax, log-decay gates→logsigmoid, GDN beta→sigmoid;
-            # q/k/v features pass through raw.
-            if k in ("r", "w"):
-                y = torch.softmax(y.float(), -1).to(C.DT)              # routers are simplex weights
-            elif k in ("ld", "ldg", "mg"):
-                y = torch.nn.functional.logsigmoid(y.float()).to(C.DT)  # log-decay (negative) gates
-            elif k == "beta":
-                y = y.float().sigmoid().to(C.DT)                       # GDN beta in (0,1)
-            t[k] = y
-        o = arm["run"](t, gla)
-        return out_proj(o.reshape(B, L, -1))
+        o = module(leaves["x"])
+        return o[0] if isinstance(o, tuple) else o        # fla layers return (o, …); unwrap
 
-    return forward, mods, sum(p.numel() for p in mods.parameters())
+    return forward, module, sum(p.numel() for p in module.parameters())
 
 
-def _e2e_rep(forward, leaves, mods):
+def _e2e_rep(forward, leaves, module):
     """One fused fwd+bwd rep -> (fwd_ms, fwd_bwd_ms, peak_mib). Clears x AND param grads per rep."""
     torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
     base = torch.cuda.memory_allocated()
@@ -347,16 +376,16 @@ def _e2e_rep(forward, leaves, mods):
     o.float().sum().backward(); e2.record(); torch.cuda.synchronize()
     peak = (torch.cuda.max_memory_allocated() - base) / 2 ** 20
     leaves["x"].grad = None
-    for p in mods.parameters():
-        p.grad = None
+    module.zero_grad(set_to_none=True)
     return e0.elapsed_time(e1), e0.elapsed_time(e2), peak
 
 
 def bench_e2e(reps, rows):
-    """Fused end-to-end fwd + fwd+bwd for every arm × shape × nc, at d_model=DM. Same in-process
-    run as bench_kernel so Triton autotuning is shared (no extra tuning cost)."""
+    """Fused end-to-end fwd + fwd+bwd for every CANONICAL arm × shape × nc, at d_model=DM. Same
+    in-process run as bench_kernel so Triton autotuning is shared (no extra tuning cost).
+    params_m is the real module parameter count (sum of p.numel())."""
     DM = 512
-    for arm in ARMS:
+    for arm in E2E_ARMS:
         variants = [(False, "RLA"), (True, "GLA")] if arm["variants"] == "rla_gla" else [(False, "own")]
         for gla, var in variants:
             for shape in arm["shapes"]:
@@ -366,14 +395,14 @@ def bench_e2e(reps, rows):
                         built = build_e2e(arm, shape, nc, gla, DM)
                         if built is None:
                             continue
-                        forward, mods, npar = built
+                        forward, module, npar = built
                         torch.manual_seed(0)
                         x = torch.randn(C.B, C.L, DM, device=C.DEV, dtype=C.DT)
                         leaves = {"x": x.detach().requires_grad_()}
                         with warnings.catch_warnings():
                             warnings.filterwarnings("ignore", message=".*format mismatch.*")
                             data = C.round_robin([(name, None)],
-                                                 lambda nm, _p: _e2e_rep(forward, leaves, mods), reps=reps)
+                                                 lambda nm, _p: _e2e_rep(forward, leaves, module), reps=reps)
                         f, fb, pk = zip(*data[name])
                         row = dict(variant=var, nc=nc, shape=shape, impl=name,
                                    e2e_fwd_ms=round(C.median(f), 3), e2e_fwd_iqr=round(C.iqr(f), 3),

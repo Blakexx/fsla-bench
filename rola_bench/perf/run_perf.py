@@ -33,23 +33,16 @@ def _read_csv(path):
 
 
 def run_chunked(out_dir):
-    """Full chunked fwd+bwd sweep (kernel efficiency + projection cost), round-robin in-process."""
+    """End-to-end fwd + fwd/bwd of each CANONICAL layer (RoLA + baselines), round-robin in-process.
+    This is the only perf measurement now — the op-level kernel/projection decomposition was removed
+    (it scaffolded synthetic tensors that diverged from the real modules; #117/#120)."""
     from rola_bench.perf import chunked as ch
     import rola_bench.perf._common as C
-    rows, proj, e2e = [], [], []
-    ch.bench_kernel(REPS, rows)            # stage-2 kernel (isolated)
-    ch.bench_projections(REPS, proj)       # stage-1 projections (isolated)
-    ch.bench_e2e(REPS, e2e)                # FUSED end-to-end layer (fwd + fwd+bwd)
-    # also write the canonical CSV/TeX (paper artifacts) next to the dispatch jsonl
-    if rows:
-        C.write_csv(Path(out_dir) / "kernel_efficiency.csv", rows)
-    if proj:
-        C.write_csv(Path(out_dir) / "projection_cost.csv", proj)
+    e2e = []
+    ch.bench_e2e(REPS, e2e)                # canonical layer e2e (fwd + fwd+bwd), real sum(p.numel())
     if e2e:
         C.write_csv(Path(out_dir) / "kernel_e2e.csv", e2e)
-    if rows and proj:
-        ch.write_tex(Path(out_dir), rows, proj, REPS)
-    return {"kernel": rows, "projection": proj, "e2e": e2e}
+    return {"e2e": e2e}
 
 
 def run_recurrent(out_dir):

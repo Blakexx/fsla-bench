@@ -1,6 +1,6 @@
 # Kernel-efficiency perf. One run_id = one whole bench module (round-robin interleaving lives inside
 # the run). benches -> work-list; the rest are the runner's knobs.
-benches: [chunked, recurrent]
+benches: [chunked]               # recurrent (decode) dropped — perf is e2e fwd/bwd of canonical layers only
 reps: 15
 ncs: "16,64,256"
 decode_steps: 200
