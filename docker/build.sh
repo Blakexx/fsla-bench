@@ -36,10 +36,8 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 RS=(rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' --exclude='build')
 
-echo "staging rola (model; kernels now live in fla-rola)…"
-mkdir -p "$STAGE/rola"
-cp "$CLA/rola.py" "$CLA/pyproject.toml" "$CLA/README.md" "$STAGE/rola/"
-
+# rola.py is deleted — the model is fla-rola, its helpers moved into rola-bench. Nothing imports
+# `rola`, so it's no longer staged/installed in the image.
 echo "staging fla-rola (fork)…"
 "${RS[@]}" "$FLA/" "$STAGE/fla-rola/"
 

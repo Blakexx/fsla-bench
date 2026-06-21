@@ -21,7 +21,7 @@ from rola_bench import results as R
 RESULTS_ROOT = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results")
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-DEFAULT_IMAGE = "blakeresearch/rola-bench:v17"
+DEFAULT_IMAGE = "blakeresearch/rola-bench:v18"   # v18 = post-migration: fla SoT, qk-norm, z-loss, elu-only, spec system
 DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"
 
 

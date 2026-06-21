@@ -20,18 +20,16 @@ RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
 RUN pip install --no-cache-dir flash-attn --no-build-isolation || \
     echo "WARN: flash-attn not installed — the attn ceiling arm will be unavailable on this image"
 
-COPY rola       /opt/rola
 COPY fla-rola   /opt/fla-rola
 COPY rola-bench /opt/rola-bench
 # --no-build-isolation: build against the image's torch (some setup.py's import torch at build).
-RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola \
- && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
+RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
 # Verify the BOX-side path only (run_lm -> train_lm -> arms + deps incl. flash-attn for the attn arm).
 # NOT rola_bench.lm.job — that's DISPATCHER-side (constructs fleet.Job with fields the box's baked
 # fleet-base fleet may predate); the box runs run_lm and never imports the Job.
-RUN python -c "import torch, fla.layers, fla_rola, rola, fleet, flash_attn; \
+RUN python -c "import torch, fla.layers, fla_rola, fleet, flash_attn; \
 import sys; sys.path.insert(0, '/opt/rola-bench/rola_bench/lm'); import arms, run_lm; \
 print('rola-bench lm image OK; torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'arms', len(arms.ARMS))"
 
