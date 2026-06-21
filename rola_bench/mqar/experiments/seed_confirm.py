@@ -22,7 +22,7 @@ import sys
 from rola_bench.mqar.build_configs import build_configs, load_spec
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_RESULTS_DEFAULT = os.path.normpath(os.path.join(_HERE, "..", "..", "..", "results", "mqar", "**", "*.jsonl"))
+_RESULTS_DEFAULT = os.path.normpath(os.path.join(_HERE, "..", "..", "..", "results", "mqar", "**", "*.json"))
 
 BASE = os.environ.get("SEED_CONFIRM_BASE", "canonical")
 SEEDS = [int(s) for s in os.environ.get("SEED_CONFIRM_SEEDS", "2024,777").split(",") if s]
@@ -49,26 +49,21 @@ def pick_winners(results_glob, valid_ids=None):
     best = {}
     for f in glob.glob(results_glob, recursive=True):
         try:
-            lines = open(f).read().splitlines()
+            j = json.load(open(f))                       # one cell object per file
         except Exception:
             continue
-        for line in lines:
-            try:
-                j = json.loads(line)
-            except Exception:
-                continue
-            if not j.get("ok") or not j.get("run_id"):
-                continue
-            if valid_ids is not None and j["run_id"] not in valid_ids:
-                continue
-            k = _kernel(j["run_id"])
-            if k == "sse":
-                continue
-            ncm = re.search(r"nc(\d+)", j["run_id"])
-            nc = int(ncm.group(1)) if ncm else -1
-            acc = j.get("max_acc") or 0.0
-            if acc > best.get((k, nc), (-1.0, None))[0]:
-                best[(k, nc)] = (acc, j["run_id"])
+        if not j.get("ok") or not j.get("run_id"):
+            continue
+        if valid_ids is not None and j["run_id"] not in valid_ids:
+            continue
+        k = _kernel(j["run_id"])
+        if k == "sse":
+            continue
+        ncm = re.search(r"nc(\d+)", j["run_id"])
+        nc = int(ncm.group(1)) if ncm else -1
+        acc = j.get("max_acc") or 0.0
+        if acc > best.get((k, nc), (-1.0, None))[0]:
+            best[(k, nc)] = (acc, j["run_id"])
     return {rid for _, rid in best.values()}
 
 

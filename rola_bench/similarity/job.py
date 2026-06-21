@@ -42,13 +42,12 @@ def _cell_key(run_id):
 def _mqar_accuracy():
     """run_id -> best accuracy, from the unified MQAR store (results/mqar/<config>/<run_id>.jsonl)."""
     acc = {}
-    for f in glob.glob(os.path.join(MQAR_DIR, "**", "*.jsonl"), recursive=True):
+    for f in glob.glob(os.path.join(MQAR_DIR, "**", "*.json"), recursive=True):
         try:
-            for line in open(f):
-                j = json.loads(line)
-                if j.get("ok") and j.get("run_id"):
-                    a = j.get("max_acc") or j.get("best_overall") or j.get("final_overall") or 0.0
-                    acc[j["run_id"]] = max(acc.get(j["run_id"], -1.0), a)
+            j = json.load(open(f))                       # one cell object per file
+            if j.get("ok") and j.get("run_id"):
+                a = j.get("max_acc") or j.get("best_overall") or j.get("final_overall") or 0.0
+                acc[j["run_id"]] = max(acc.get(j["run_id"], -1.0), a)
         except Exception:
             pass
     return acc
