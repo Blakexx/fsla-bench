@@ -13,7 +13,9 @@ train:
   early_stopping_metric: valid/accuracy
   slice_keys: [num_kv_pairs]
   eval_every: 10
-lrs: [0.001, 0.003, 0.01]            # bracket the optimum (cheaper than the full 5-LR grid)
+lrs: [0.001, 0.003, 0.01, 0.03]      # canonical-grid subset; +3e-2 (the canonical top LR) to un-clip
+                                     # the high edge — nc16/64 were still climbing at 1e-2 (2e-2 was
+                                     # NOT in the canonical grid [3e-4,1e-3,3e-3,1e-2,3e-2], so use 3e-2)
 ncs: [16, 64, 256]
 tiers:
   all:
