@@ -13,17 +13,7 @@ import os
 from rola_bench.jobs import make_job
 from rola_bench.spec import load, env_from
 
-CKPT_DIR = os.environ.get("ROLA_LM_CKPTS", "/mnt/d/rola_data/lm_ckpts")
-
-
-def _payload_for(run_id):
-    """Resume payload = the last in-progress checkpoint tar pulled for this cell (untarred + resumed
-    on the box). None on first run."""
-    p = os.path.join(CKPT_DIR, run_id + ".pt")
-    if not os.path.exists(p):
-        return None
-    with open(p, "rb") as fh:
-        return fh.read()
+CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/d/rola_data/lm_ckpts")
 
 
 def lm_job(config="default"):
@@ -32,5 +22,17 @@ def lm_job(config="default"):
     box_env = env_from("LM", spec.get("backbone"), spec.get("geometry"), spec.get("budget"))
     fleet = dict(spec.get("fleet", {}))
     fleet["env"] = {**box_env, **fleet.get("env", {})}
+    # PER-CONFIG ckpt dir: cell run_ids are <arm>_s<seed> with NO corpus, so two corpora share names
+    # (rola-rla-kappa-asym_s1337 …). Isolating by config prevents one corpus's resume checkpoint from
+    # overwriting another's in a shared dir (the run_corpus_suite.sh did this via ROLA_LM_CKPTS=…_$name).
+    ckpt_dir = os.path.join(CKPT_ROOT, config)
+
+    def _payload_for(run_id):  # resume payload = this cell's last in-progress ckpt tar; None on first run
+        p = os.path.join(ckpt_dir, run_id + ".pt")
+        if not os.path.exists(p):
+            return None
+        with open(p, "rb") as fh:
+            return fh.read()
+
     return make_job("lm", config, lambda: [f"{a}_s{s}" for a in arms for s in seeds],
-                    "python run_lm.py", fleet, ckpt_dir=CKPT_DIR, payload_for=_payload_for)
+                    "python run_lm.py", fleet, ckpt_dir=ckpt_dir, payload_for=_payload_for)
