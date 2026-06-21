@@ -1,0 +1,12 @@
+# Kernel-efficiency perf. One run_id = one whole bench module (round-robin interleaving lives inside
+# the run). benches -> work-list; the rest are the runner's knobs.
+benches: [chunked, recurrent]
+reps: 15
+ncs: "16,64,256"
+decode_steps: 200
+decode_warmup: 50
+fleet:
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500"
+  idle_timeout: 900
+  batch: 1
+  per_batch_timeout: 3600

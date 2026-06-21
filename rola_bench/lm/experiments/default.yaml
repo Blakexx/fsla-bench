@@ -1,0 +1,24 @@
+# LM benchmark — iso-backbone RoLA-vs-attention comparison. Arms × seeds on a shared backbone +
+# budget. Every knob the runner reads is here (was shell env / arms.py constants).
+arms:  [rola-rla-kappa-sym, rola-rla-kappa-asym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, attn]
+seeds: [1337, 2024]
+backbone: {hidden: 512, layers: 12, max_pos: 2048}
+geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8}
+budget:
+  lr: 3e-4
+  max_steps: 20000
+  block_size: 2048
+  batch_size: 8
+  grad_accum: 4
+  dataset: fineweb-edu
+  dataset_config: sample-10BT
+  grad_ckpt: 0
+  save_steps: 500
+fleet:
+  image: blakeresearch/rola-lm:v2
+  idle_timeout: 1800
+  batch: 1                       # one arm×seed per box (a full LM training)
+  per_batch_timeout: 43200       # 12h; under no_kill a longer run keeps going
+  no_kill: true                  # pause+reattach, never destroy live work
+  pull_in_progress: true         # preemption-safe in-progress ckpt pulls
+  live_pull_every: 900

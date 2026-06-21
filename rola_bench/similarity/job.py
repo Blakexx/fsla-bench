@@ -13,6 +13,7 @@ import os
 import re
 
 from rola_bench.jobs import make_job, RESULTS_ROOT
+from rola_bench.spec import load
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
 MQAR_DIR = os.path.join(RESULTS_ROOT, "mqar")            # the unified MQAR store (dir/run_id)
@@ -53,10 +54,10 @@ def _mqar_accuracy():
     return acc
 
 
-def _work_list():
-    """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to SIM_RUNGS (default
-    16,64,256) + mha (rung-independent)."""
-    rungs = set(os.environ.get("SIM_RUNGS", "16,64,256").split(","))
+def _work_list(rungs):
+    """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to `rungs` (e.g. 16,64,256)
+    + mha (rung-independent)."""
+    rungs = set(str(rungs).split(","))
     have_pt = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(CKPT_DIR, "*.pt"))}
     best = {}
     for rid, a in _mqar_accuracy().items():
@@ -80,14 +81,12 @@ def _payload_for(run_id):
 
 
 def sim_job(config="main"):
-    fleet = {
-        "idle_timeout": 900,
-        "batch": 1,                  # one ckpt per POST body (~42MB base64) — less uplink contention
-        "per_batch_timeout": 3600,
-        "post_timeout": int(os.environ.get("SIM_POST_TIMEOUT", "1800")),
-        "env": {"GRID_TIERS": "all",      # every cell's config must be reconstructable
-                "RANK_FRAC": os.environ.get("RANK_FRAC", "0.25"),
-                "SIM_RUNGS": os.environ.get("SIM_RUNGS", "16,64,256")},
-    }
-    return make_job("similarity", config, _work_list, "python -u -m rola_bench.similarity.run_sim",
-                    fleet, payload_for=_payload_for)
+    spec = load("similarity", config)
+    rungs = spec.get("rungs", "16,64,256")
+    box_env = {"SIM_RUNGS": str(rungs),
+               "RANK_FRAC": str(spec.get("rank_frac", 0.25)),
+               "GRID_TIERS": str(spec.get("grid_tiers", "all"))}   # cell configs reconstructable
+    fleet = dict(spec.get("fleet", {}))
+    fleet["env"] = {**box_env, **fleet.get("env", {})}
+    return make_job("similarity", config, lambda: _work_list(rungs),
+                    "python -u -m rola_bench.similarity.run_sim", fleet, payload_for=_payload_for)
