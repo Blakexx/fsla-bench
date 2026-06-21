@@ -21,7 +21,7 @@ from rola_bench import results as R
 RESULTS_ROOT = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results")
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-DEFAULT_IMAGE = "blakeresearch/rola-bench:v20"   # v20: perf canonical-layer e2e rewrite + #92 den tiling + #87/#126/#127/#129 consistency fixes
+DEFAULT_IMAGE = "blakeresearch/rola-bench:v21"   # v21: perf matched-state baseline fix + act_mib + scaling (L-axis + attn arm); v20 = canonical e2e rewrite
 DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"
 
 

@@ -27,11 +27,15 @@ import torch
 # These are module globals so the arms (chunked.mk / mk_gdn / ...) read them at call time; the
 # per-cell loop overrides them via set_shape() to time at each MQAR cell's exact dims (task #98 —
 # cost-vs-accuracy), with no arm-signature changes. nc is passed explicitly (not a global).
-B, H, L, DQK, DV = 8, 8, 1024, 16, 16
+B = int(os.environ.get("PERF_B", "8"))       # batch; drop (e.g. 2) for the long-L scaling sweep so big L fits
+H, L, DQK, DV = 8, 1024, 16, 16
 # nc rungs to bench. DEFAULT = {16,64,256} (the similarity-rung sample) — each (nc,shape) is its own
 # Triton autotune, so 3 rungs instead of the full 8 cuts ~2.6x of the autotune cost. Override with
 # PERF_NCS (e.g. "2,4,8,16,32,64,128,256") for the full state scan. NOT a silent cap — explicit env.
 NCS = tuple(int(x) for x in os.environ.get("PERF_NCS", "16,64,256").split(",") if x.strip())
+# Sequence-length scan for the SCALING sweep (RoLA O(L) vs attention O(L^2) + nc sublinearity).
+# DEFAULT = [L] (single length -> the matched-state table is unchanged). Override with PERF_LENS.
+LENS = tuple(int(x) for x in os.environ.get("PERF_LENS", str(L)).split(",") if x.strip())
 DEV, DT = "cuda", torch.bfloat16
 
 

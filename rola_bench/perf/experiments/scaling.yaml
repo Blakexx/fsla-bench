@@ -1,0 +1,17 @@
+# Perf SCALING sweep — does RoLA's latency explode as we scale states (nc) and sequence length (L)?
+# Sweeps L × nc for the routed RoLA cell + the matched-state baselines, plus a softmax-attention
+# reference (PERF_ATTN) to find the O(L) (RoLA) vs O(L^2) (attn) crossover. Smaller batch (PERF_B=2)
+# so the long-L cells fit; OOM cells at the (large nc, large L) corner are the expected frontier
+# (sentinel rows, not failures). launch.py perf scaling
+benches: [chunked]
+reps: 10
+ncs: "64,256,1024"
+fleet:
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500"
+  idle_timeout: 900
+  batch: 1
+  per_batch_timeout: 10800        # 3h — the long-L attn (O(L^2)) cells are slow by design
+  env:
+    PERF_LENS: "1024,4096,16384,65536"
+    PERF_ATTN: "1"
+    PERF_B: "2"
