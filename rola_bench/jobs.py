@@ -22,7 +22,7 @@ RESULTS_ROOT = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/resu
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
 DEFAULT_IMAGE = "blakeresearch/rola-bench:v21"   # v21: perf matched-state baseline fix + act_mib + scaling (L-axis + attn arm); v20 = canonical e2e rewrite
-DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500"
+DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"  # cap bandwidth $/GB — we pull a big image + checkpoints
 
 
 def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
