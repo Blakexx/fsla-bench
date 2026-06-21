@@ -1,10 +1,12 @@
 # Small-scale LM — WikiText-103 (word-level, perplexity). Restores run_corpus_suite.sh: ~30M backbone
 # (hidden 256, 6 layers), 15k steps, 5 arms (4 RoLA + attn, no GDN). qk-norm on, z-loss off.
 # launch.py lm wikitext103
-arms:  [rola-rla-kappa-asym, rola-rla-kappa-sym, rola-gla-kappa-asym, rola-gla-kappa-sym, attn]
+arms:  [rola-rla-kappa-asym, rola-rla-kappa-sym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, gla, attn]
 seeds: [1337, 2024, 11]
 backbone: {hidden: 256, layers: 6, max_pos: 2048}
+# iso-param baselines at CANONICAL small-backbone config (not matched to RoLA's routed state); realized state reported.
 geometry: {rola_nc: 64, rola_dqk: 16, rola_dv: 32, rola_nh: 8, attn_heads: 4,
+           gdn_nh: 4, gdn_head_dim: 64, gdn_expand_v: 2.0, gla_nh: 4, gla_ek: 0.5, gla_ev: 1.0,
            qk_norm: true, router_zloss_coef: 0.0}
 budget:
   lr: 3e-4

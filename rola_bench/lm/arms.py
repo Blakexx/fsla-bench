@@ -44,7 +44,12 @@ _NC      = int(_os.environ.get("LM_ROLA_NC", "128"))       # RoLA routed states 
 _DQK     = int(_os.environ.get("LM_ROLA_DQK", "16"))
 _DV      = int(_os.environ.get("LM_ROLA_DV", "64"))        # Y: 64 -> n_h*d_v = 512 = d_model (no bottleneck)
 _NH      = int(_os.environ.get("LM_ROLA_NH", "8"))         # shared head count
-_GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y: 8 -> canonical-8h, state matches RoLA)
+_GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y@512: 8 -> canonical-8h, state matches RoLA)
+_GDN_HEAD_DIM = int(_os.environ.get("LM_GDN_HEAD_DIM", "256"))    # GDN key head_dim (Y@512: 256; small backbone -> 64)
+_GDN_EXPAND_V = float(_os.environ.get("LM_GDN_EXPAND_V", "2.0"))  # GDN value expansion (canonical 2)
+_GLA_NH  = int(_os.environ.get("LM_GLA_NH", "4"))          # GLA heads
+_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "0.5"))     # GLA expand_k (fla default)
+_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "1.0"))     # GLA expand_v (fla default)
 _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
@@ -71,7 +76,11 @@ BACKBONE = dict(
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
 ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
                  router_zloss_coef=_ZLOSS)
-GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=256, expand_v=2.0)   # 8*256*512 = 1048576 (canonical expand_v)
+GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)  # @512: 8*256*512=1048576
+# GLA baseline geometry (fla GatedLinearAttention). At the small backbone it runs at its CANONICAL
+# config (defaults expand_k=0.5, expand_v=1) — NOT forced to RoLA's routed state, which it can't reach
+# without unnatural width. iso-PARAM + iso-backbone; each arm's realized recurrent state is reported.
+GLA_GEOM = dict(num_heads=_GLA_NH, expand_k=_GLA_EK, expand_v=_GLA_EV, gate_logit_normalizer=16)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
 MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
 ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
@@ -89,7 +98,7 @@ USE_SHORT_CONV = False
 # on the kappa variant too, #112.)
 ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
              "rola-gla-kappa-asym", "rola-gla-kappa-sym")   # both kernels' asym/sym pair (asym>sym test)
-ARMS = ROLA_ARMS + ("gdn", "attn")
+ARMS = ROLA_ARMS + ("gdn", "gla", "attn")
 
 
 def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_id: int = 50256):
@@ -100,6 +109,9 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if arm == "gdn":
         from fla.models.gated_deltanet import GatedDeltaNetConfig
         return GatedDeltaNetConfig(use_short_conv=USE_SHORT_CONV, use_gate=True, **GDN_GEOM, **common)
+    if arm == "gla":
+        from fla.models.gla import GLAConfig
+        return GLAConfig(use_short_conv=USE_SHORT_CONV, **GLA_GEOM, **common)
     if arm == "attn":
         from fla.models.transformer import TransformerConfig
         # Softmax-attention ceiling: full causal attention (window_size=None), RoPE positions.
@@ -120,4 +132,6 @@ def recurrent_state_floats(arm: str) -> int | None:
         return MATCHED_STATE
     if arm == "gdn":
         return GDN_GEOM["num_heads"] * GDN_GEOM["head_dim"] * int(GDN_GEOM["head_dim"] * GDN_GEOM["expand_v"])
+    if arm == "gla":  # nh * key_head * value_head = key_dim*value_dim/nh (canonical, NOT matched to RoLA)
+        return int(_HID * GLA_GEOM["expand_k"]) * int(_HID * GLA_GEOM["expand_v"]) // GLA_GEOM["num_heads"]
     return None  # attn: unbounded
