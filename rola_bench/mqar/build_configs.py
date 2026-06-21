@@ -81,17 +81,23 @@ def build_configs(spec):
     def baselines(arm):
         rid = arm.get("run_id", "grid-{method}-{shape}-nc{nc}_st{st}_lr{lr:.0e}_s{seed}")
         a_lrs, a_ncs = arm.get("lrs", def_lrs), arm.get("ncs", ncs)
+        dropped = []
         for seed in seeds:
             for method in arm["methods"]:
                 for shape in arm["shapes"]:
                     for nc in a_ncs:
                         cell = baseline_cell(method, shape, nc)
                         if cell is None:
+                            if seed == seeds[0]:        # log infeasible cells once — never drop silently (#129)
+                                dropped.append(f"{method}/{shape}/nc{nc}")
                             continue
                         kernel, st = cell
                         for lr in a_lrs:
                             add(kernel, rid.format(method=method, shape=shape, nc=nc, st=st, lr=lr,
                                                    seed=seed, d_model=bb["d_model"]), lr, seed)
+        if dropped:
+            print(f"[build_configs] {len(dropped)} baseline cell(s) omitted — matched-state "
+                  f"undefined / capped (NOT a run failure): {dropped}", flush=True)
 
     def sse_ladder(arm):
         # SSE scaled the way it is strongest: NATIVE (few big partitions) + PARALLEL (N~nc small).

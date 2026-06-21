@@ -15,6 +15,7 @@ Device: uses CUDA if present, else CPU. On CPU the routed RoLA path uses its eag
 fla Triton baselines (gla/based/attention) cannot run a kernel on CPU — for those we still REQUIRE a
 clean import+construction (which is what catches missing modules) and report fwd+bwd as skipped.
 """
+import os
 import sys
 import torch
 
@@ -51,7 +52,7 @@ def main():
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"cell families: {len(fams)} | device: {dev}")
-    bad = []
+    bad, skipped = [], []
     for key, (_, c) in sorted(fams.items(), key=lambda x: str(x[0])):
         label = f"{key[0]} kernel={key[1]} phi={key[2]} norm={key[3]}"
         try:
@@ -77,10 +78,16 @@ def main():
                 if not ok:
                     bad.append(label)
             except (NotImplementedError, RuntimeError) as e:
-                # On CPU, fla Triton baselines can't run a kernel — construction already passed
-                # (the missing-module catch), so treat fwd as skipped on CPU but FAIL on GPU.
-                if dev == "cpu" and "cuda" in (str(e) + repr(e)).lower() or "triton" in repr(e).lower():
-                    print(f"  PASS  {label}  (constructed; fwd skipped — needs GPU on CPU host)")
+                # fla Triton baselines can't run a kernel on a CPU host. Construction already passed
+                # (the missing-module catch), so the family is BUILDABLE — but its kernel was NOT
+                # exercised. Record it as SKIPPED (not PASS) so a CPU-only CI host can't silently
+                # greenlight unrun kernels (#87). A Triton/CUDA RuntimeError on a GPU host is a real
+                # FAIL. (Parenthesized condition — the old `A and B or C` mis-classified GPU Triton
+                # errors as skips.)
+                msg = (str(e) + repr(e)).lower()
+                if dev == "cpu" and ("cuda" in msg or "triton" in msg):
+                    print(f"  SKIP  {label}  (constructed; kernel NOT exercised — needs GPU)")
+                    skipped.append(label)
                 else:
                     print(f"  FAIL  {label} -> {type(e).__name__}: {e}")
                     bad.append(label)
@@ -91,7 +98,14 @@ def main():
     if bad:
         print(f"CELL-CHECK FAILED: {len(bad)}/{len(fams)} families broken: {bad}")
         return 1
-    print(f"CELL-CHECK OK: all {len(fams)} families on {dev}")
+    if skipped and not os.environ.get("CI_ALLOW_CPU_SKIP"):
+        print(f"CELL-CHECK INCOMPLETE: {len(skipped)}/{len(fams)} families were NOT exercised on this "
+              f"{dev} host (their kernels need a GPU): {skipped}. This gate must run on a GPU builder "
+              f"to validate them — a CPU host only checks construction. Set CI_ALLOW_CPU_SKIP=1 to "
+              f"accept construction-only validation. Failing loud (#87).")
+        return 1
+    extra = f"  ({len(skipped)} construction-only — CI_ALLOW_CPU_SKIP set)" if skipped else ""
+    print(f"CELL-CHECK OK: all {len(fams)} families on {dev}{extra}")
     return 0
 
 

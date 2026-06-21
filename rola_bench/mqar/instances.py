@@ -10,10 +10,12 @@ def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4):
     """RoLAMixer kwargs for a named instance."""
     common = dict(d_qk=d_qk, d_v=d_v, num_chunks=num_chunks, n_heads=n_heads, use_short_conv=False)
     # RLA family (phi = feature map; global/per_state/kappa norm).
-    if name == 'rola-rla-asym':
-        return dict(kernel='rla', phi='elu', tie_routers=False, **common)
+    if name == 'rola-rla-asym':                              # global-norm RLA (explicit; was default)
+        return dict(kernel='rla', phi='elu', tie_routers=False,
+                    kernel_kwargs={'state_norm': 'global'}, **common)
     if name == 'rola-rla-sym':
-        return dict(kernel='rla', phi='elu', tie_routers=True, **common)
+        return dict(kernel='rla', phi='elu', tie_routers=True,
+                    kernel_kwargs={'state_norm': 'global'}, **common)
     if name == 'rola-rla-asym-ps':
         return dict(kernel='rla', phi='elu', tie_routers=False,
                     kernel_kwargs={'state_norm': 'per_state'}, **common)
@@ -27,7 +29,8 @@ def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4):
         return dict(kernel='rla', phi='elu', tie_routers=True,
                     kernel_kwargs={'state_norm': 'kappa'}, **common)
     if name == 'rola-rla-asym-tieinit':
-        return dict(kernel='rla', phi='elu', tie_routers=False, tie_router_init=True, **common)
+        return dict(kernel='rla', phi='elu', tie_routers=False, tie_router_init=True,
+                    kernel_kwargs={'state_norm': 'global'}, **common)
     # scalar-GLA family (optimized shared-gram).
     if name.startswith('rola-gla-scalar'):
         return dict(kernel='gla_scalar', tie_routers=name.endswith('-sym'),
