@@ -105,6 +105,9 @@ def parse_stdout(stdout):
             print(f"WARN: STATE_FLOATS_JSON parse failed: {e}", flush=True)
     state_floats = state_records[0]['state_floats'] if state_records else None
     state_per_layer = [r['state_floats'] for r in state_records] if state_records else []
+    # Resolved RoLA config from the actual instantiation (self-documenting provenance: kernel /
+    # state_norm / qk_norm / tie_routers / dims) — so a cell isn't decoded from the run_id tag alone.
+    rola_config = state_records[0].get('config') if state_records else None
 
     # MODEL_STATS_JSON line emitted by zoology/logger.py.
     n_params = None
@@ -219,6 +222,7 @@ def parse_stdout(stdout):
         best_overall=best_overall,
         best_ep_idx=best_ep_idx,
         state_floats=state_floats, state_per_layer=state_per_layer,
+        rola_config=rola_config,
         model_state_total=model_state_total,
         n_params=n_params,
         fwd_flops=fwd_flops,
