@@ -16,7 +16,7 @@ budget:
   grad_ckpt: 0
   save_steps: 500
 fleet:
-  image: blakeresearch/rola-lm:v2
+  image: blakeresearch/rola-lm:v3   # v3: qk-norm + z-loss-off + fla SoT
   idle_timeout: 1800
   batch: 1                       # one arm×seed per box (a full LM training)
   per_batch_timeout: 43200       # 12h; under no_kill a longer run keeps going
