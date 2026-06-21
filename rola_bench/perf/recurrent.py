@@ -23,6 +23,7 @@ import torch
 
 from fla_rola.ops.simple_gla import chunk_simple_gla
 from fla_rola.ops.simple_gla.fused_recurrent import fused_recurrent_simple_gla
+from fla_rola.ops.rola import fused_recurrent_rola   # canonical first-class RoLA decode op (the layer's)
 from fla_rola.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
 from fla_rola.ops.linear_attn import fused_recurrent_linear_attn
 from fla_rola.modules.feature_map import HedgehogFeatureMap
@@ -52,8 +53,10 @@ def vh_expand(q, k, v, w, ld, nc):
     return qv, kv, vv, gv
 
 
-def vh_combine(o_aug, r, nc, norm, kappa=0.5, eps=1e-5):
-    """o_aug:[B,L,H*nc,DV+1] per-state (num | den) readouts -> combined [B,L,H,DV]."""
+def vh_combine(o_aug, r, nc, norm, kappa=1.0, eps=1e-5):
+    """o_aug:[B,L,H*nc,DV+1] per-state (num | den) readouts -> combined [B,L,H,DV].
+    kappa default 1.0 matches the canonical fused_recurrent_rola op (kappa=None -> exponent 1.0); the
+    real kappa is a per-token tensor, so this default only governs the --check reference."""
     Bq, L = o_aug.shape[0], o_aug.shape[1]
     o = o_aug.view(Bq, L, C.H, nc, C.DV + 1)
     num, den = o[..., :C.DV], o[..., C.DV]
@@ -67,11 +70,13 @@ def vh_combine(o_aug, r, nc, norm, kappa=0.5, eps=1e-5):
 
 
 def decode_routed_step(qt, kt, vt, rt, wt, ldt, state, nc, norm):
-    """One decode step (L=1), canonical fused_recurrent under the hood."""
-    qv, kv, vv, gv = vh_expand(qt, kt, vt, wt, ldt, nc)
-    o, state = fused_recurrent_simple_gla(qv, kv, vv, g=gv, scale=1.0,
-                                          initial_state=state, output_final_state=True)
-    return vh_combine(o.float(), rt, nc, norm), state
+    """One decode step (L=1) via the canonical first-class `fused_recurrent_rola` op — the same op
+    the RoLA layer auto-switches to for decode. (It does vh_expand -> fused_recurrent_simple_gla ->
+    vh_combine internally; nc is inferred from r.) Replaces the bench-local vh dance so recurrent perf
+    measures the shipped decode path, not a reimplementation."""
+    o, state = fused_recurrent_rola(qt, kt, vt, r=rt, w=wt, g=ldt, norm=norm, scale=1.0,
+                                    initial_state=state, output_final_state=True)
+    return o, state
 
 
 def decode_monolith_step(qt, kt, vt, state, g=None):
