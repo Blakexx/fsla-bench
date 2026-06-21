@@ -1,0 +1,27 @@
+# qk-RMSNorm impact ablation (#125): does the LM stabilizer change the MQAR recall story?
+# Re-runs a representative RoLA subset WITH qk_norm=True (kwargs passthrough -> RoLA.__init__, same
+# mechanism router_bias uses) and compares to the qk-norm-OFF canonical rows (grid-routed-rla-* /
+# grid-routed-glakappa-*) at matched nc/lr. Distinct run_id tags (rlaqk/glakappaqk) -> no collision.
+project_name: rola-qknorm-ablation
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 1024}
+data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seed: 1337
+  early_stopping_threshold: 2.0
+  early_stopping_metric: valid/accuracy
+  slice_keys: [num_kv_pairs]
+  eval_every: 10
+lrs: [0.001, 0.003, 0.01]            # bracket the optimum (cheaper than the full 5-LR grid)
+ncs: [16, 64, 256]
+tiers:
+  all:
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rlaqk, d_qk: 12, d_v: 12, n_heads: 4,
+       kwargs: {qk_norm: true}, run_id: "grid-routed-rlaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+    - {build: routed, instance: rola-gla-kappa-asym, tag: glakappaqk, d_qk: 12, d_v: 12, n_heads: 4,
+       kwargs: {qk_norm: true}, run_id: "grid-routed-glakappaqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+    # small experiment: GLOBAL-norm RLA (vs kappa) at nc256 with qk-norm — does global suffice here?
+    - {build: routed, instance: rola-rla-asym, tag: rlaglobqk, d_qk: 12, d_v: 12, n_heads: 4,
+       ncs: [256], kwargs: {qk_norm: true}, run_id: "grid-routed-rlaglobqk-nc{nc}_st{st}_lr{lr:.0e}_s{seed}"}
+fleet: {batch: 1, per_batch_timeout: 18000}

@@ -28,12 +28,6 @@ def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4):
                     kernel_kwargs={'state_norm': 'kappa'}, **common)
     if name == 'rola-rla-asym-tieinit':
         return dict(kernel='rla', phi='elu', tie_routers=False, tie_router_init=True, **common)
-    if name in ('rola-hedgehog-sym', 'rola-hedgehog-asym'):
-        return dict(kernel='rla', phi='hedgehog', tie_routers=(name.endswith('-sym')), **common)
-    if name in ('rola-based-sym', 'rola-based-asym'):
-        return dict(kernel='rla', phi='based', tie_routers=(name.endswith('-sym')), **common)
-    if name in ('rola-rebased-sym', 'rola-rebased-asym'):
-        return dict(kernel='rla', phi='rebased', tie_routers=(name.endswith('-sym')), **common)
     # scalar-GLA family (optimized shared-gram).
     if name.startswith('rola-gla-scalar'):
         return dict(kernel='gla_scalar', tie_routers=name.endswith('-sym'),
@@ -51,6 +45,4 @@ ROLA_INSTANCES = ('rola-rla-asym', 'rola-rla-sym', 'rola-rla-asym-ps', 'rola-rla
                   'rola-rla-kappa-asym', 'rola-rla-kappa-sym', 'rola-rla-asym-tieinit',
                   'rola-gla-scalar-sym', 'rola-gla-scalar-norm-sym',
                   'rola-gla-scalar-asym', 'rola-gla-scalar-norm-asym',
-                  'rola-gla-kappa-sym', 'rola-gla-kappa-asym',
-                  'rola-hedgehog-sym', 'rola-hedgehog-asym',
-                  'rola-based-sym', 'rola-based-asym', 'rola-rebased-sym', 'rola-rebased-asym')
+                  'rola-gla-kappa-sym', 'rola-gla-kappa-asym')
