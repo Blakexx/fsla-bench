@@ -21,7 +21,7 @@ from rola_bench import results as R
 RESULTS_ROOT = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results")
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
-DEFAULT_IMAGE = "blakeresearch/rola-bench:v22"   # v21: perf matched-state baseline fix + act_mib + scaling (L-axis + attn arm); v20 = canonical e2e rewrite
+DEFAULT_IMAGE = "blakeresearch/rola-bench:v23"   # v23: ood_recall spec + ar_ppl evaluator + scaling bench (RoLA+attn+monolith, frontier lens, per-bench dispatch); v22 = nb_tile perf + mqar +3e-2
 DEFAULT_OFFER = "gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"  # cap bandwidth $/GB — we pull a big image + checkpoints
 
 

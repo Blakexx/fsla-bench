@@ -1,0 +1,36 @@
+# OOD-RECALL thesis test — does RoLA's recall advantage WIDEN out-of-distribution?
+#
+# The `ext` data preset already TRAINS SHORT (seq<=256, kv<=64) and TESTS LONG (seq 512-4096,
+# kv 128-1024), so the per-slice accuracy by num_kv_pairs IS the recall-vs-OOD-distance curve:
+#   in-distribution anchor : kv 4 / 8 / 16 / 32 / 64   (seq <= 256, within training)
+#   OUT-of-distribution     : kv 128 / 256 / 512 / 1024 (seq 512-4096, beyond training)
+# Prediction (the falsifiable claim): RoLA-GLA's margin over GDN should GROW on the OOD slices, not
+# be a constant gap. RoLA-RLA (no forgetting) is the control we expect to fade at the long/over-
+# loaded end; MHA is the ceiling.
+#
+# Only the 4 CONTENDERS (RoLA-gla, RoLA-rla, GDN, MHA), single best LR per arm REUSED from the
+# canonical LR calibration (rla/gla 1e-2, gdn 1e-3; mha gets 2 to be safe) so there is NO LR axis
+# (~4x cheaper). Two healthy state rungs. Single seed (explore; multi-seed the winner after).
+# Routed shape matches the canonical MQAR cell (d_qk=d_v=12, n_heads=4, kappa-asym).
+#   launch.py mqar ood_recall
+project_name: ood-recall
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 1024}
+data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seed: 1337
+  early_stopping_threshold: 2.0          # never triggers — full training
+  early_stopping_metric: valid/accuracy
+  slice_keys: [num_kv_pairs]             # -> per-slice accuracy = the recall-vs-OOD-distance curve
+  eval_every: 10
+lrs: [0.01]                              # default (RoLA optimum); each arm overrides explicitly
+ncs: [64, 256]                           # two healthy state budgets
+tiers:
+  "main":
+    - {build: routed, instance: rola-gla-kappa-asym, tag: glakappa, d_qk: 12, d_v: 12, n_heads: 4, lrs: [0.01]}
+    - {build: routed, instance: rola-rla-kappa-asym, tag: rla,      d_qk: 12, d_v: 12, n_heads: 4, lrs: [0.01]}
+    - {build: baselines, methods: [gdn], shapes: [wide, square, heads], lrs: [0.001]}
+    - {build: attn, lrs: [0.001, 0.01]}
+fleet:
+  env: {GRID_TIERS: "main"}

@@ -56,7 +56,40 @@ def run_recurrent(out_dir):
             "e2e": _read_csv(Path(out_dir) / "recurrent_e2e.csv")}
 
 
-BENCHES = {"perf-chunked": run_chunked, "perf-recurrent": run_recurrent}
+def run_scaling(out_dir, which):
+    """One bench-TYPE of the RoLA-vs-attn scaling sweep (which ∈ {train,prefill,decode}). Split per
+    type so each is an independent fleet run_id (perf-scaling-<type>) — you can launch just one (e.g.
+    scaling-decode) by listing only it in the spec's `benches`. Axes from SCALE_* env."""
+    from rola_bench.perf import scaling as sc
+    import rola_bench.perf._common as C
+    C.REPS = REPS
+    # Per-bench-type FRONTIER ceilings — it's a timing bench (not training), so L can go far past any
+    # trainable length. decode reaches 1M (RoLA flat vs attn's linear-growing KV — the headline win
+    # plot); prefill to 128k (attn O(L^2) blowup vs RoLA O(L)); training caps at 64k (backward +
+    # nb_tile is memory-bound beyond that — graceful OOM sentinels handle overflow). Override with
+    # SCALE_LENS_<TYPE> or a blanket SCALE_LENS.
+    _DEFAULT_LENS = {"train": "1024,4096,16384,65536",
+                     "prefill": "1024,4096,16384,65536,131072",
+                     "decode": "1024,4096,16384,65536,262144,1048576"}
+    lens_env = (os.environ.get(f"SCALE_LENS_{which.upper()}")
+                or os.environ.get("SCALE_LENS") or _DEFAULT_LENS[which])
+    lens = [int(v) for v in lens_env.split(",") if v.strip()]
+    xs = [float(v) for v in os.environ.get("SCALE_XS", "10,25,50,100").split(",") if v.strip()]
+    dqks = [int(v) for v in os.environ.get("SCALE_DQKS", "16,64,128").split(",") if v.strip()]
+    rows = []
+    sc.sweep([which], lens, xs, dqks, rows)
+    if rows:
+        C.write_csv(Path(out_dir) / f"scaling_{which}.csv", rows)
+    return {"scaling": rows, "bench": which}
+
+
+BENCHES = {
+    "perf-chunked": run_chunked,
+    "perf-recurrent": run_recurrent,
+    "perf-scaling-train": lambda o: run_scaling(o, "train"),
+    "perf-scaling-prefill": lambda o: run_scaling(o, "prefill"),
+    "perf-scaling-decode": lambda o: run_scaling(o, "decode"),
+}
 
 
 def main():
