@@ -28,7 +28,7 @@ from fla_rola.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
 from fla_rola.ops.linear_attn import fused_recurrent_linear_attn
 from fla_rola.modules.feature_map import HedgehogFeatureMap
 
-from . import _common as C
+from .. import _common as C
 
 
 def make_inputs(L, nc, gla, seed=0):

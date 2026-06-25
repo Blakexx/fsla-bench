@@ -50,7 +50,7 @@ from zoology.mixers.rola import RoLAMixer
 from rola_bench.mqar.instances import rola_instance
 import rola_bench.mqar.experiments.canonical_baselines as cb
 
-from . import _common as C
+from .. import _common as C
 
 
 # --------------------------------------------------------------------------------------------

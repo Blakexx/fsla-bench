@@ -34,9 +34,9 @@ def _read_csv(path):
 
 def run_chunked(out_dir):
     """End-to-end fwd + fwd/bwd of each CANONICAL layer (RoLA + baselines), round-robin in-process.
-    This is the only perf measurement now — the op-level kernel/projection decomposition was removed
-    (it scaffolded synthetic tensors that diverged from the real modules; #117/#120)."""
-    from rola_bench.perf import chunked as ch
+    ARCHIVED bench (moved to perf/scratch/ by #40 — superseded for the scaling story by run_scaling);
+    kept runnable for the matched-state comparison table."""
+    from rola_bench.perf.scratch import chunked as ch
     import rola_bench.perf._common as C
     e2e = []
     ch.bench_e2e(REPS, e2e)                # canonical layer e2e (fwd + fwd+bwd), real sum(p.numel())
@@ -46,8 +46,9 @@ def run_chunked(out_dir):
 
 
 def run_recurrent(out_dir):
-    """Full recurrent (decode, forward-only) sweep."""
-    from rola_bench.perf import recurrent as rc
+    """Full recurrent (decode, forward-only) sweep. ARCHIVED bench (moved to perf/scratch/ by #40 —
+    the scaling decode arm is now LAYER-LEVEL); kept runnable for provenance."""
+    from rola_bench.perf.scratch import recurrent as rc
     steps = int(os.environ.get("PERF_DECODE_STEPS", "200"))
     warm = int(os.environ.get("PERF_DECODE_WARMUP", "50"))
     rc.bench(steps=steps, warmup=warm, out=out_dir)        # decode decomposition (kernel only)
@@ -76,8 +77,11 @@ def run_scaling(out_dir, which):
     lens = [int(v) for v in lens_env.split(",") if v.strip()]
     xs = [float(v) for v in os.environ.get("SCALE_XS", "10,25,50,100").split(",") if v.strip()]
     dqks = [int(v) for v in os.environ.get("SCALE_DQKS", "16,64,128").split(",") if v.strip()]
+    routings = [r for r in os.environ.get("SCALE_ROUTINGS", "flat,square,tree").split(",") if r.strip()]
+    if os.environ.get("PERF_NO_WARM", "") not in ("1", "true", "True"):
+        sc.warm(lens, xs, dqks)            # pre-warm chunk_rola_routed so cells run warm
     rows = []
-    sc.sweep([which], lens, xs, dqks, rows)
+    sc.sweep([which], lens, xs, dqks, rows, routings=routings)
     if rows:
         C.write_csv(Path(out_dir) / f"scaling_{which}.csv", rows)
     return {"scaling": rows, "bench": which}

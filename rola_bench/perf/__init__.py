@@ -1,11 +1,14 @@
 """Canonical kernel-efficiency benchmarks for RoLA (rola-bench).
 
-Two regimes, both at MATCHED total state (nc states x d_qk x d_v per head):
-  - chunked   : training-time chunk-parallel attention, forward + backward
-                (`python -m rola_bench.perf.chunked`)
-  - recurrent : autoregressive decode, forward only
-                (`python -m rola_bench.perf.recurrent --bench` / `--check`)
+PRIMARY (the scaling story — RoLA vs attention, per-architecture curves, everything LAYER-vs-LAYER):
+  - scaling   : L × X% × d_qk × routing{flat,square,tree} over train (fwd+bwd) | prefill (fwd) |
+                decode (RoLA.forward(use_cache) recurrent vs the attention KV-cache decode).
+                (`python -m rola_bench.perf.scaling`)
 
-Both compare the routed fla_rola kernel against virtual-head and matched-state monolith
-baselines on the canonical fla kernels. See README.md for protocol + provenance.
+ARCHIVED (moved to perf/scratch/ by #40 — superseded for scaling, kept for provenance + the
+matched-state comparison table; out of the scaling sweep's dependency graph):
+  - scratch/chunked   : the original matched-state e2e fwd+bwd table (RoLA vs GDN/GLA/Based/Hedgehog).
+  - scratch/recurrent : the original op-level decode bench (vh_expand / decode_routed_step).
+
+See README.md for protocol + provenance.
 """

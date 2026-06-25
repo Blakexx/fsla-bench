@@ -1,12 +1,34 @@
 # RoLA kernel-efficiency benchmarks
 
-Canonical, reproducible perf benchmarks for the RoLA kernels at **matched total state**
-(nc states × d_qk × d_v per head). Two regimes:
+Canonical, reproducible perf benchmarks for the RoLA kernels.
+
+## PRIMARY — `scaling.py` (the scaling story; everything LAYER-vs-LAYER)
+
+RoLA (rla + gla, swept over routing `{flat,square,tree}`) vs **attention** (the only baseline that
+scales differently in L), with RoLA's matched-state **wide-monolith** as the routed-vs-not ablation.
+Per-architecture curves over `L × X% (state as % of attn KV cache → nc) × d_qk × routing`, for three
+benches: `train` (fwd+bwd), `prefill` (fwd-only), `decode` (RoLA `forward(use_cache)` recurrent vs the
+attention KV-cache decode — no op-level call; every arm is the real `nn.Module`). A `warm_gate`
+pre-warm (`fla_rola.precompile`, the `chunk_rola_routed` autotune) runs before the sweep so cells are
+warm. Output → `results/perf/scaling.csv`.
+
+```
+python -m rola_bench.perf.scaling [--benches train,prefill,decode] [--lens …] [--xs …] \
+        [--dqks …] [--routings flat,square,tree] [--reps N] [--no-warm] [--out DIR]
+```
+
+Fleet axes via env: `SCALE_LENS[_TYPE]`, `SCALE_XS`, `SCALE_DQKS`, `SCALE_ROUTINGS`, `PERF_B`,
+`PERF_NO_WARM`. Each bench-type is its own run_id (`perf-scaling-{train,prefill,decode}`).
+
+## ARCHIVED — `scratch/` (matched-state comparison table; out of the scaling path)
+
+Moved to `rola_bench/perf/scratch/` (kept for provenance, NOT deleted). The scaling path no longer
+imports them — it owns its copies of the shared helpers (`_CausalMHA / _instantiate / _e2e_rep`).
 
 | module | regime | measures | run |
 |---|---|---|---|
-| `chunked.py`   | training-time chunk-parallel | **fwd + bwd** ms (median+IQR), peak/activation MiB, + projection cost & params | `python -m rola_bench.perf.chunked [--reps N] [--out DIR]` |
-| `recurrent.py` | autoregressive decode | **fwd only** ms/token, recurrent-state MiB | `python -m rola_bench.perf.recurrent --bench [--out DIR]` / `--check` |
+| `scratch/chunked.py`   | training-time chunk-parallel | **fwd + bwd** ms (median+IQR), peak/activation MiB, + params | `python -m rola_bench.perf.scratch.chunked [--reps N] [--out DIR]` |
+| `scratch/recurrent.py` | autoregressive decode (op-level) | **fwd only** ms/token, recurrent-state MiB | `python -m rola_bench.perf.scratch.recurrent --bench [--out DIR]` / `--check` |
 
 Default config (mirrors LM training): `B=8, H=8, L=1024, d_qk=d_v=16, bf16`, `nc ∈ {16,64,256}`.
 Output → `rola-bench/results/perf/` (`kernel_efficiency.{csv,tex}`, `projection_cost.csv`,

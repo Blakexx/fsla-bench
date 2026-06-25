@@ -8,7 +8,7 @@ Run with the project venv (no GPU needed):
 These assert the e2e registry is well-formed. They do NOT instantiate any module or run any CUDA
 kernel (build_e2e needs a GPU; it is exercised by the real bench run, not here).
 """
-from rola_bench.perf import chunked as ch
+from rola_bench.perf.scratch import chunked as ch
 
 
 def test_e2e_registry_wellformed():
