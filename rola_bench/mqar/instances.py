@@ -6,9 +6,11 @@ kernel (rla / gla_scalar) is the only parameterized axis; tie_routers => symmetr
 """
 
 
-def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4):
-    """RoLAMixer kwargs for a named instance."""
-    common = dict(d_qk=d_qk, d_v=d_v, num_chunks=num_chunks, n_heads=n_heads, use_short_conv=False)
+def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4, routing='flat'):
+    """RoLAMixer kwargs for a named instance. `routing` ∈ {flat,square,tree} selects the per-head
+    factor topology (default 'flat' = the dense router, backward-compatible)."""
+    common = dict(d_qk=d_qk, d_v=d_v, num_chunks=num_chunks, n_heads=n_heads, routing=routing,
+                  use_short_conv=False)
     # RLA family (phi = feature map; global/per_state/kappa norm).
     if name == 'rola-rla-asym':                              # global-norm RLA (explicit; was default)
         return dict(kernel='rla', phi='elu', tie_routers=False,
