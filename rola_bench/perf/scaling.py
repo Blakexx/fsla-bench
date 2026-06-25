@@ -198,20 +198,33 @@ def _new_cache():
     return Cache()
 
 
+_SEED_PREFILL = 256   # tokens used to SEED the recurrent state (fixed-size; seeding doesn't need full L)
+
+
 def _decode_layer_step(module, L):
-    """LAYER-LEVEL decode: seed the layer's recurrent state from an L-token prefill, then time the
-    single-token decode step `module.forward(x1, past_key_values=cache, use_cache=True)` — the shipped
-    recurrent decode path (RoLA auto-selects fused_recurrent for L<=64). The recurrent state is
-    FIXED-SIZE (it does NOT grow with steps — that's the whole point vs attention's growing KV), so
-    each timed step runs into the SAME persisted cache: a faithful, drift-free steady-state decode
-    (no per-step cache clone, no op-level decode call). Returns ms/token."""
+    """LAYER-LEVEL decode: SEED the layer's recurrent state from a prefill, then time the single-token
+    decode step `module.forward(x1, past_key_values=cache, use_cache=True)` — the shipped recurrent
+    decode path (RoLA auto-selects fused_recurrent for L<=64). The recurrent state is FIXED-SIZE (it
+    does NOT grow with steps nor with the prefill length — that's the whole point vs attention's
+    growing KV), so seeding from a bounded prefill is faithful and each timed step runs into the SAME
+    persisted cache: a drift-free steady-state seeded decode (no per-step clone, no op-level call).
+
+    ASSERTS the cache is actually seeded after the prefill (len>0) — a fail-loud guard against a
+    silently-dropped cache kwarg (the zoology wrapper used to swallow it, which secretly measured a
+    COLD un-seeded step; #40 gate-B). Returns ms/token."""
     if getattr(module, "layer_idx", None) is None:
         module.layer_idx = 0
-    x_pre = torch.randn(C.B, max(1, L), DM, device=C.DEV, dtype=C.DT)
+    seed_len = min(max(1, L), _SEED_PREFILL)
+    x_pre = torch.randn(C.B, seed_len, DM, device=C.DEV, dtype=C.DT)
     x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
     with torch.inference_mode():
         cache = _new_cache()
         module(x_pre, past_key_values=cache, use_cache=True)        # prefill -> seeds recurrent_state
+        if len(cache) == 0:
+            raise RuntimeError(
+                "decode arm: cache NOT seeded after prefill (len==0) — the layer dropped the "
+                "past_key_values/use_cache kwargs, so this would measure a COLD un-seeded step. "
+                "Check the module's forward threads the cache (zoology RoLAMixer wrapper).")
         step = lambda: module(x1, past_key_values=cache, use_cache=True)
         return round(C.time_forward(step, steps=100, warmup=20), 4)
 
