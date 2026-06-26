@@ -78,8 +78,6 @@ def run_scaling(out_dir, which):
     xs = [float(v) for v in os.environ.get("SCALE_XS", "10,25,50,100").split(",") if v.strip()]
     dqks = [int(v) for v in os.environ.get("SCALE_DQKS", "16,64,128").split(",") if v.strip()]
     routings = [r for r in os.environ.get("SCALE_ROUTINGS", "flat,square,tree").split(",") if r.strip()]
-    if os.environ.get("PERF_NO_WARM", "") not in ("1", "true", "True"):
-        sc.warm(lens, xs, dqks)            # pre-warm chunk_rola_routed so cells run warm
     rows = []
     sc.sweep([which], lens, xs, dqks, rows, routings=routings)
     if rows:

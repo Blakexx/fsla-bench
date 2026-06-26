@@ -8,17 +8,17 @@ RoLA (rla + gla, swept over routing `{flat,square,tree}`) vs **attention** (the 
 scales differently in L), with RoLA's matched-state **wide-monolith** as the routed-vs-not ablation.
 Per-architecture curves over `L × X% (state as % of attn KV cache → nc) × d_qk × routing`, for three
 benches: `train` (fwd+bwd), `prefill` (fwd-only), `decode` (RoLA `forward(use_cache)` recurrent vs the
-attention KV-cache decode — no op-level call; every arm is the real `nn.Module`). A `warm_gate`
-pre-warm (`fla_rola.precompile`, the `chunk_rola_routed` autotune) runs before the sweep so cells are
-warm. Output → `results/perf/scaling.csv`.
+attention KV-cache decode — no op-level call; every arm is the real `nn.Module`). Each cell's WARMUP
+reps absorb its first-touch Triton cold-compile, so cells time warm with no separate pre-sweep
+cache-warm pass. Output → `results/perf/scaling.csv`.
 
 ```
 python -m rola_bench.perf.scaling [--benches train,prefill,decode] [--lens …] [--xs …] \
-        [--dqks …] [--routings flat,square,tree] [--reps N] [--no-warm] [--out DIR]
+        [--dqks …] [--routings flat,square,tree] [--reps N] [--out DIR]
 ```
 
-Fleet axes via env: `SCALE_LENS[_TYPE]`, `SCALE_XS`, `SCALE_DQKS`, `SCALE_ROUTINGS`, `PERF_B`,
-`PERF_NO_WARM`. Each bench-type is its own run_id (`perf-scaling-{train,prefill,decode}`).
+Fleet axes via env: `SCALE_LENS[_TYPE]`, `SCALE_XS`, `SCALE_DQKS`, `SCALE_ROUTINGS`, `PERF_B`.
+Each bench-type is its own run_id (`perf-scaling-{train,prefill,decode}`).
 
 ## ARCHIVED — `scratch/` (matched-state comparison table; out of the scaling path)
 

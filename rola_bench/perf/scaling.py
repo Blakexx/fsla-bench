@@ -38,9 +38,15 @@ _e2e_rep) — no import from the archived perf/scratch/{chunked,recurrent}.py.
 Run:  python -m rola_bench.perf.scaling [--benches train,prefill,decode]
             [--lens 1024,4096,16384,65536] [--xs 10,25,50,100] [--dqks 16,64,128]
             [--routings flat,square,tree] [--reps N] [--out DIR]
+
+WARMUP reps absorb each cell's first-touch Triton cold-compile, so cells time warm — no separate
+pre-sweep cache-warm pass (the old warm_gate was net-negative: its capture phase serialized the
+autotune in-process so the parallel phase only re-hit cache, and it warmed the raw-forward kernels
+while this bench fires the kappa-norm kernels — 0/4 overlap).
 """
 import argparse
 import importlib
+import math
 import os
 import warnings
 from pathlib import Path
@@ -57,9 +63,42 @@ DM = 512  # d_model backbone for the scaling layers
 ROUTINGS = ("flat", "square", "tree")  # the per-head factor topologies the RoLA layer supports
 
 
+def _nearest_even_pow2(n):
+    """Nearest nc that is BOTH a perfect square AND a power of two — i.e. an EVEN power of two
+    (1,4,16,64,256,1024,...) = 4^m. Such an nc is the one value valid for every routing topology at
+    once: flat (any), square (sqrt = 2^m is an integer), tree (2^(2m) is a power of two). So all three
+    routings in a cell run at the SAME matched state. Rounded in log space (geometric nearest)."""
+    if n <= 1:
+        return 1
+    m = round(math.log2(n) / 2.0)        # 4^m == 2^(2m)
+    return 1 << (2 * m)
+
+
 def nc_for(L, x_pct, d):
-    """RoLA states to hit X% of attention's KV cache at d_qk=d_v=d, from X = nc*d/(2L)."""
-    return max(1, round(2 * L * (x_pct / 100.0) / d))
+    """RoLA states to hit ~X% of attention's KV cache at d_qk=d_v=d (X = nc*d/(2L)), SNAPPED to the
+    nearest even-power-of-two so the single nc is valid for flat|square|tree alike (perfect-square AND
+    power-of-two — see _nearest_even_pow2). The snap rule is consistent across all cells; realized X =
+    nc*d/(2L) follows from the snapped nc (recorded via the row's nc field — no silent corruption)."""
+    raw = max(1, round(2 * L * (x_pct / 100.0) / d))
+    return _nearest_even_pow2(raw)
+
+
+def _infeasible_excs():
+    """(CUDA OOM, Triton OutOfResources) — the "this config can't run on THIS GPU" signals: out of
+    memory, or a kernel that won't fit the GPU's shared-mem/registers at this nc. A cell that raises
+    one is an infeasible-frontier SKIP (sentinel row), not a bug — matching the same rule warm uses.
+    Any OTHER exception is a real bug (still recorded per-cell, but as ERR, and printed loudly)."""
+    oor = ()
+    for m in ("triton.runtime.errors", "triton.compiler.errors"):
+        try:
+            oor = (__import__(m, fromlist=["OutOfResources"]).OutOfResources,)
+            break
+        except Exception:  # noqa: BLE001
+            pass
+    return (torch.cuda.OutOfMemoryError,) + oor
+
+
+_INFEASIBLE = _infeasible_excs()
 
 
 def _mib(*dims):
@@ -297,7 +336,7 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
                         rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms=fwd, peak_mib=pk))
                     del m
                 print(rows[-1], flush=True)
-            except torch.cuda.OutOfMemoryError:
+            except _INFEASIBLE:
                 rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms="OOM", decode_ms="OOM")); torch.cuda.empty_cache()
                 print(f"OOM attn {bench} L{L}", flush=True)
             except Exception as e:  # noqa: BLE001
@@ -338,7 +377,7 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
                                                          routing=routing, arm=arm, fwd_ms=fwd, peak_mib=pk))
                                     del m
                                     print(rows[-1], flush=True)
-                                except torch.cuda.OutOfMemoryError:
+                                except _INFEASIBLE:
                                     rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
                                                      routing=routing, arm=arm, fwd_ms="OOM"))
                                     torch.cuda.empty_cache()
@@ -352,33 +391,6 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
     return rows
 
 
-def warm(lens, xs, dqks, progress=True):
-    """Pre-warm the Triton cache (chunk_rola_routed forward autotune) for the RoLA shapes the sweep
-    will hit, BEFORE the timed cells, so they run WARM (no cold-compile time folded into a timing).
-    Integrates fla_rola.precompile.warm_gate (repointed to chunk_rola_routed by #44). Best-effort: a
-    warm failure prints and the sweep proceeds (cells just pay cold-compile on first touch)."""
-    try:
-        from fla_rola.precompile import warm_gate, ShapeSpec
-    except Exception as e:  # noqa: BLE001
-        print(f"# warm_gate unavailable ({type(e).__name__}: {e}); cells will cold-compile", flush=True)
-        return None
-    specs, seen = [], set()
-    for L in lens:
-        for d in dqks:
-            for x_pct in xs:
-                nc = nc_for(L, x_pct, d)
-                for path in ("rla", "gla"):
-                    key = (path, d, d, nc)
-                    if key not in seen:
-                        seen.add(key)
-                        specs.append(ShapeSpec(path=path, dqk=d, dv=d, nc=nc, norm="kappa"))
-    print(f"# warm_gate: {len(specs)} RoLA shapes", flush=True)
-    summary = warm_gate(specs, progress=progress)
-    print(f"# warm_gate done: {summary.get('n_warmed', '?')} warmed in "
-          f"{summary.get('total_wall_s', 0):.1f}s", flush=True)
-    return summary
-
-
 def main():
     ap = argparse.ArgumentParser(description="RoLA scaling benchmark (RoLA vs attention; per-arch curves).")
     ap.add_argument("--benches", default="train,prefill,decode", help="comma: train,prefill,decode")
@@ -388,7 +400,6 @@ def main():
     ap.add_argument("--routings", default=os.environ.get("SCALE_ROUTINGS", "flat,square,tree"),
                     help="comma: RoLA per-head factor topologies to sweep")
     ap.add_argument("--reps", type=int, default=C.REPS)
-    ap.add_argument("--no-warm", action="store_true", help="skip the pre-sweep warm_gate")
     ap.add_argument("--out", default=str(C.RESULTS_DIR))
     a = ap.parse_args()
     C.require_cuda()
@@ -400,8 +411,6 @@ def main():
     routings = [r for r in a.routings.split(",") if r.strip()]
     print(f"# scaling | {C.gpu_name()} | B={C.B} H={C.H} d_model={DM} bf16 | benches={benches} "
           f"| L={lens} X%={xs} d_qk={dqks} routing={routings} | RoLA(rla,gla) + attn", flush=True)
-    if not a.no_warm:
-        warm(lens, xs, dqks)
     rows = []
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     try:
