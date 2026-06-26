@@ -211,12 +211,16 @@ def _decode_layer_step(module, L):
 
     ASSERTS the cache is actually seeded after the prefill (len>0) — a fail-loud guard against a
     silently-dropped cache kwarg (the zoology wrapper used to swallow it, which secretly measured a
-    COLD un-seeded step; #40 gate-B). Returns ms/token."""
+    COLD un-seeded step; #40 gate-B). Returns (ms/token, peak_mib) — peak_mib is the MEASURED peak
+    allocated above the pre-cache baseline during the decode steps (resident state + per-step
+    transients); the chunked seed's spike is reset out so it reflects decode, not the prefill. Carried
+    alongside the analytic state size as an overhead/sanity cross-check (literature reports ms/token)."""
     if getattr(module, "layer_idx", None) is None:
         module.layer_idx = 0
     seed_len = min(max(1, L), _SEED_PREFILL)
     x_pre = torch.randn(C.B, seed_len, DM, device=C.DEV, dtype=C.DT)
     x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
+    torch.cuda.synchronize(); base = torch.cuda.memory_allocated()   # pre-cache baseline (params only)
     with torch.inference_mode():
         cache = _new_cache()
         module(x_pre, past_key_values=cache, use_cache=True)        # prefill -> seeds recurrent_state
@@ -226,33 +230,44 @@ def _decode_layer_step(module, L):
                 "past_key_values/use_cache kwargs, so this would measure a COLD un-seeded step. "
                 "Check the module's forward threads the cache (zoology RoLAMixer wrapper).")
         step = lambda: module(x1, past_key_values=cache, use_cache=True)
-        return round(C.time_forward(step, steps=100, warmup=20), 4)
+        torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()  # forget the chunked-seed spike
+        ms = round(C.time_forward(step, steps=100, warmup=20), 4)
+        peak = round((torch.cuda.max_memory_allocated() - base) / 2 ** 20, 1)
+    return ms, peak
 
 
 def _decode_rola_cell(module, L):
-    """RoLA layer decode -> (ms/token, state_mib). state_mib is the FIXED recurrent footprint."""
-    ms = _decode_layer_step(module, L)
+    """RoLA layer decode -> (ms/token, state_mib_analytic, peak_mib_measured). state_mib is the FIXED
+    recurrent footprint (the comparison axis); peak_mib is the measured decode-step peak."""
+    ms, peak = _decode_layer_step(module, L)
     floats = module.get_stats()["state_floats"]
-    return ms, round(C.B * floats * 4 / 2 ** 20, 1)
+    return ms, round(C.B * floats * 4 / 2 ** 20, 1), peak
 
 
 def _decode_monolith_cell(module, L):
-    """Matched-state monolith layer decode -> (ms/token, None) via its own use_cache path."""
-    return _decode_layer_step(module, L), None
+    """Matched-state monolith layer decode -> (ms/token, None, peak_mib_measured) via its own use_cache
+    path. No clean analytic state axis (the wide nc=1 state), so the analytic slot is None."""
+    ms, peak = _decode_layer_step(module, L)
+    return ms, None, peak
 
 
 def _decode_attn_cell(L):
     """LAYER-LEVEL attention decode: one query token through _CausalMHA attending to an L-long cached
-    KV (the O(L)-GROWING cache RoLA's bounded state is measured against). Reports (ms/token, cache_mib)."""
+    KV (the O(L)-GROWING cache RoLA's bounded state is measured against). Reports
+    (ms/token, cache_mib_analytic, peak_mib_measured) — cache_mib is the analytic K+V footprint (the
+    comparison axis), peak_mib the measured decode-step peak (cache + SDPA transient)."""
     hd = DM // C.H
     m = _CausalMHA(DM, C.H).to(C.DEV, C.DT)
+    x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
+    torch.cuda.synchronize(); base = torch.cuda.memory_allocated()   # pre-cache baseline (params only)
     kc = torch.randn(C.B, C.H, L, hd, device=C.DEV, dtype=C.DT)
     vc = torch.randn(C.B, C.H, L, hd, device=C.DEV, dtype=C.DT)
-    x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
     with torch.inference_mode():
         step = lambda: m(x1, cache=(kc, vc), use_cache=False)
+        torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
         ms = C.time_forward(step, steps=100, warmup=20)
-    return round(ms, 4), _mib(C.B, C.H, L, hd, 2)  # K+V cache (the O(L)-growing footprint)
+        peak = round((torch.cuda.max_memory_allocated() - base) / 2 ** 20, 1)
+    return round(ms, 4), _mib(C.B, C.H, L, hd, 2), peak  # analytic K+V cache + measured peak
 
 
 # ------------------------------------------------------------------ sweep
@@ -270,8 +285,8 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
             # ---- attention reference: depends only on L (no X / d_qk / routing axis) ----
             try:
                 if bench == "decode":
-                    ms, mib = _decode_attn_cell(L)
-                    rows.append(_row(bench=bench, L=L, arm="attn", decode_ms=ms, state_mib=mib))
+                    ms, mib, pk = _decode_attn_cell(L)
+                    rows.append(_row(bench=bench, L=L, arm="attn", decode_ms=ms, state_mib=mib, peak_mib=pk))
                 else:
                     m = _CausalMHA(DM, C.H).to(C.DEV, C.DT)
                     if bench == "train":
@@ -309,9 +324,9 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
                                         continue                   # baseline_cell declared it infeasible
                                     if bench == "decode":
                                         fn = _decode_rola_cell if kind == "rola" else _decode_monolith_cell
-                                        ms, mib = fn(m, L)
+                                        ms, mib, pk = fn(m, L)
                                         rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                         routing=routing, arm=arm, decode_ms=ms, state_mib=mib))
+                                                         routing=routing, arm=arm, decode_ms=ms, state_mib=mib, peak_mib=pk))
                                     elif bench == "train":
                                         fwd, fb, pk, ac = _train_cell(m, L)
                                         rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
