@@ -17,11 +17,11 @@ while [ "$(nboxes)" != "0" ]; do sleep 30; done
 run_corpus() {  # name dataset config L nc batch seeds
   local name=$1 dataset=$2 cfg=$3 L=$4 nc=$5 bs=$6 seeds=$7
   echo "[driver $(date +%H:%M)] === $name : L=$L nc=$nc batch=$bs seeds=$seeds (tok/step=$((L*bs))) ==="
-  mkdir -p "/mnt/d/rola_data/lm_ckpts_$name"
+  mkdir -p "/mnt/e/rola/rola_data/lm_ckpts_$name"
   env ROLA_LM_IMAGE=$IMG \
     ROLA_LM_RESULTS="/home/blake/rola-bench/results/$name" \
     ROLA_LM_RUNTIME="/home/blake/rola-bench/runtime/$name" \
-    ROLA_LM_CKPTS="/mnt/d/rola_data/lm_ckpts_$name" \
+    ROLA_LM_CKPTS="/mnt/e/rola/rola_data/lm_ckpts_$name" \
     LM_ARMS="$ARMS" LM_SEEDS="$seeds" LM_DATASET="$dataset" LM_DATASET_CONFIG="$cfg" \
     LM_HIDDEN=256 LM_LAYERS=6 LM_ROLA_NC=$nc LM_ROLA_DQK=16 LM_ROLA_DV=32 LM_ROLA_NH=8 LM_ATTN_HEADS=4 \
     LM_MAX_POS=2048 LM_BLOCK_SIZE=$L LM_BATCH_SIZE=$bs LM_GRAD_ACCUM=1 LM_LR=3e-4 \

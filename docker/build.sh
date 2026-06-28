@@ -12,6 +12,12 @@
 # locally after a successful push (the fleet base + CUDA base stay cached for the next build).
 set -euo pipefail
 
+# Fail loud if docker isn't reachable — a background/non-login shell can lack /usr/bin on PATH, and a
+# bare `docker build` then dies with "command not found" mid-script. (Bit us once: the failure got
+# masked by a `| tail` pipe, so the build "succeeded" with exit 0 and the image never got pushed.)
+command -v docker >/dev/null 2>&1 || { echo "FATAL: docker not on PATH (have you got /usr/bin?)" >&2; exit 3; }
+docker info >/dev/null 2>&1 || { echo "FATAL: docker daemon not reachable" >&2; exit 3; }
+
 TARGET="${1:?usage: build.sh <mqar|lm> [--push] [--prune]}"; shift || true
 PUSH=0; PRUNE=0
 for a in "$@"; do case "$a" in --push) PUSH=1;; --prune) PRUNE=1;; esac; done

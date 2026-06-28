@@ -13,7 +13,7 @@ import os
 from rola_bench.jobs import make_job
 from rola_bench.spec import load, env_from
 
-CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/d/rola_data/lm_ckpts")
+CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/e/rola/rola_data/lm_ckpts")
 
 
 def lm_job(config="default"):

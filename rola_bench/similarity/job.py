@@ -15,7 +15,7 @@ import re
 from rola_bench.jobs import make_job, RESULTS_ROOT
 from rola_bench.spec import load
 
-CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/d/rola_data/fleet_ckpts")
+CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
 MQAR_DIR = os.path.join(RESULTS_ROOT, "mqar")            # the unified MQAR store (dir/run_id)
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)                  # SSE has no faithful extractor
 
