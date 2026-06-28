@@ -316,22 +316,25 @@ def _decode_attn_cell(L):
 
 # ------------------------------------------------------------------ sweep
 def _row(**kw):
-    base = dict(bench=None, L=None, X_pct=None, d_qk=None, nc=None, routing=None, arm=None,
+    base = dict(bench=None, L=None, state_axis=None, X_pct=None, d_qk=None, nc=None, routing=None, arm=None,
                 fwd_ms=None, fb_ms=None, peak_mib=None, act_mib=None, decode_ms=None, state_mib=None)
     base.update(kw)
     return base
 
 
 def _arm_specs(routings):
+    idx = 0
     for kind in ("rola", "monolith"):
         kind_routings = routings if kind == "rola" else (None,)
         for routing in kind_routings:
             for gla, var in ((False, "rla"), (True, "gla")):
-                yield dict(kind=kind, routing=routing, gla=gla, arm=f"{kind}-{var}")
+                yield dict(idx=idx, kind=kind, routing=routing, gla=gla, arm=f"{kind}-{var}")
+                idx += 1
 
 
 def _append_error(rows, bench, L, x_pct, d, nc, spec, label):
-    row = _row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"])
+    row = _row(bench=bench, L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
+               routing=spec["routing"], arm=spec["arm"])
     if bench == "decode":
         row["decode_ms"] = label
     else:
@@ -351,7 +354,8 @@ def _build_scaling_arm(spec, L, d, nc):
 
 def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
     f, fb, pk, ac = zip(*recs)
-    row = _row(bench="train", L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"],
+    row = _row(bench="train", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
+               routing=spec["routing"], arm=spec["arm"],
                fwd_ms=round(C.median(f), 3), fb_ms=round(C.median(fb), 3),
                peak_mib=round(max(pk)), act_mib=round(max(ac)))
     rows.append(row); print(row, flush=True)
@@ -359,43 +363,41 @@ def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
 
 def _summarize_prefill(rows, L, x_pct, d, nc, spec, recs):
     f, pk = zip(*recs)
-    row = _row(bench="prefill", L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"],
+    row = _row(bench="prefill", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
+               routing=spec["routing"], arm=spec["arm"],
                fwd_ms=round(C.median(f), 3), peak_mib=round(max(pk)))
     rows.append(row); print(row, flush=True)
+
+
+def _timed_sample(bench, L, d, nc, spec):
+    """Run one isolated timing sample for an arm.
+
+    Modules are intentionally built per sample so each arm's peak/OOM reflects only that arm, while the
+    outer loop still cycles arms round-robin to share clock/thermal drift.
+    """
+    seed = 10_000 + L + d * 31 + nc * 17 + spec["idx"]
+    torch.manual_seed(seed)
+    module = _build_scaling_arm(spec, L, d, nc)
+    if module is None:
+        return None
+    torch.manual_seed(seed + 1)
+    x = torch.randn(C.B, L, DM, device=C.DEV, dtype=C.DT)
+    if bench == "train":
+        leaves = {"x": x.detach().requires_grad_()}
+        forward = lambda lv: _fwd(module, lv["x"])
+        return _e2e_rep(forward, leaves, module)
+    return _prefill_rep(module, x)
 
 
 def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     """Time comparable RoLA/monolith arms round-robin for one scaling cell.
 
-    Keeping the same `(bench,L,d,nc)` arms active together makes thermal/clock drift affect their ratios
-    similarly. If one arm OOMs/errors, only that arm is recorded as a sentinel and the rest continue.
+    Keeping the same `(bench,L,d,nc)` arms in round-robin order makes thermal/clock drift affect their
+    ratios similarly. Each sample builds and frees only that arm so peak memory and OOM sentinels remain
+    per-arm, matching the old one-arm-at-a-time memory semantics.
     """
-    active = []
-    for idx, spec in enumerate(_arm_specs(routings)):
-        try:
-            torch.manual_seed(idx)
-            module = _build_scaling_arm(spec, L, d, nc)
-            if module is None:
-                continue
-            torch.manual_seed(10_000 + L + d * 31 + nc)
-            x = torch.randn(C.B, L, DM, device=C.DEV, dtype=C.DT)
-            rec = dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, module=module, data=[])
-            if bench == "train":
-                rec["leaves"] = {"x": x.detach().requires_grad_()}
-                rec["forward"] = lambda lv, m=module: _fwd(m, lv["x"])
-            else:
-                rec["x"] = x
-            active.append(rec)
-        except _INFEASIBLE:
-            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
-            torch.cuda.empty_cache(); print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
-            print(row, flush=True)
-        except Exception as e:  # noqa: BLE001
-            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
-            torch.cuda.empty_cache()
-            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
-                  f"{type(e).__name__}: {e}", flush=True)
-            print(row, flush=True)
+    active = [dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[])
+              for spec in _arm_specs(routings)]
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*format mismatch.*")
@@ -404,10 +406,9 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
             for rec in active:
                 spec = rec["spec"]
                 try:
-                    if bench == "train":
-                        sample = _e2e_rep(rec["forward"], rec["leaves"], rec["module"])
-                    else:
-                        sample = _prefill_rep(rec["module"], rec["x"])
+                    sample = _timed_sample(bench, L, d, nc, spec)
+                    if sample is None:
+                        continue
                     if r >= C.WARMUP:
                         rec["data"].append(sample)
                     still_active.append(rec)
@@ -422,6 +423,8 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
                     print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
                           f"{type(e).__name__}: {e}", flush=True)
                     print(row, flush=True)
+                finally:
+                    torch.cuda.empty_cache()
             active = still_active
             if not active:
                 break
@@ -482,7 +485,7 @@ def sweep(benches, lens, ncs, dqks, rows, routings=ROUTINGS):
                                 continue                   # baseline_cell declared this cell infeasible
                             fn = _decode_rola_cell if spec["kind"] == "rola" else _decode_monolith_cell
                             ms, mib, pk = fn(m, L)
-                            rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
+                            rows.append(_row(bench=bench, L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                                              routing=spec["routing"], arm=spec["arm"],
                                              decode_ms=ms, state_mib=mib, peak_mib=pk))
                             del m

@@ -5,8 +5,9 @@
 #
 # Each bench-TYPE is its OWN fleet run_id (perf-scaling-train / -prefill / -decode), so you can launch
 # ANY SUBSET by editing the `benches` list — e.g. `benches: [scaling-decode]` runs just the
-# recurrent/decode curves on ONE box. Axes: L × X% (state as % of attn KV cache -> nc) × d_qk,
-# square d_qk=d_v. PERF_B=2 so long L fits; OOM at the (large nc, large L) corner is expected
+# recurrent/decode curves on ONE box. Axes: L × nc (states per head, recorded as realized X% of
+# attn KV cache) × d_qk, square d_qk=d_v. PERF_B=2 so long L fits; OOM at the large-nc/large-L
+# corner is expected
 # frontier (sentinel rows, not failures).  launch.py perf scaling_curves
 benches: [scaling-train, scaling-prefill, scaling-decode]
 reps: 10
@@ -23,6 +24,6 @@ fleet:
     #   prefill -> 128k (attn O(L^2) blowup vs RoLA O(L))
     #   train   -> 64k  (backward + nb_tile memory-bound; OOM sentinels past it)
     # Override per type with SCALE_LENS_DECODE / _PREFILL / _TRAIN, or a blanket SCALE_LENS.
-    SCALE_XS: "10,25,50,100"
+    SCALE_NCS: "16,64,256,1024"
     SCALE_DQKS: "16,64,128"
     PERF_B: "2"

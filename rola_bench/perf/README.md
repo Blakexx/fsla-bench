@@ -6,18 +6,19 @@ Canonical, reproducible perf benchmarks for the RoLA kernels.
 
 RoLA (rla + gla, swept over routing `{flat,square,tree}`) vs **attention** (the only baseline that
 scales differently in L), with RoLA's matched-state **wide-monolith** as the routed-vs-not ablation.
-Per-architecture curves over `L × X% (state as % of attn KV cache → nc) × d_qk × routing`, for three
-benches: `train` (fwd+bwd), `prefill` (fwd-only), `decode` (RoLA `forward(use_cache)` recurrent vs the
-attention KV-cache decode — no op-level call; every arm is the real `nn.Module`). Each cell's WARMUP
-reps absorb its first-touch Triton cold-compile, so cells time warm with no separate pre-sweep
-cache-warm pass. Output → `results/perf/scaling.csv`.
+Per-architecture curves over `L × nc × d_qk × routing`, with `X_pct` recorded as the realized RoLA
+state fraction of attention's KV cache. The three benches are `train` (fwd+bwd), `prefill`
+(fwd-only), and `decode` (RoLA `forward(use_cache)` recurrent vs the attention KV-cache decode — no
+op-level call; every arm is the real `nn.Module`). Each cell's WARMUP reps absorb its first-touch
+Triton cold-compile, so cells time warm with no separate pre-sweep cache-warm pass. Output →
+`results/perf/scaling.csv`.
 
 ```
-python -m rola_bench.perf.scaling [--benches train,prefill,decode] [--lens …] [--xs …] \
+python -m rola_bench.perf.scaling [--benches train,prefill,decode] [--lens …] [--ncs …] \
         [--dqks …] [--routings flat,square,tree] [--reps N] [--out DIR]
 ```
 
-Fleet axes via env: `SCALE_LENS[_TYPE]`, `SCALE_XS`, `SCALE_DQKS`, `SCALE_ROUTINGS`, `PERF_B`.
+Fleet axes via env: `SCALE_LENS[_TYPE]`, `SCALE_NCS`, `SCALE_DQKS`, `SCALE_ROUTINGS`, `PERF_B`.
 Each bench-type is its own run_id (`perf-scaling-{train,prefill,decode}`).
 
 ## ARCHIVED — `scratch/` (matched-state comparison table; out of the scaling path)
@@ -65,8 +66,9 @@ sizing principle is reused from `rola_bench/mqar/experiments/canonical_baselines
   `d_v=16`. Normalized readout (`normalize=True`, the published linear-attn form).
 
 ## Protocol (why the numbers are trustworthy)
-- **Round-robin interleaving**: every timing round cycles through all impls before the next, so
-  clock/thermal drift biases each impl equally — between-impl *ratios* (the headline) are drift-free.
+- **Round-robin interleaving**: every timing round cycles through comparable impls before the next,
+  so clock/thermal drift biases each impl equally. Each timing sample still builds/runs/frees one arm
+  at a time, so peak memory and OOM sentinels remain per-arm rather than group-residency artifacts.
 - **median + IQR** over `--reps` rounds (default 15), warmup excluded.
 - **Activation memory** = bytes retained for backward (saved tensors, deduped by storage
   `data_ptr`) via `saved_tensors_hooks`, read *before* `.backward()`. **Peak** via
