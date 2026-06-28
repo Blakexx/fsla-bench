@@ -45,6 +45,7 @@ autotune in-process so the parallel phase only re-hit cache, and it warmed the r
 while this bench fires the kappa-norm kernels — 0/4 overlap).
 """
 import argparse
+import contextlib
 import importlib
 import math
 import os
@@ -61,6 +62,9 @@ import rola_bench.mqar.experiments.canonical_baselines as cb
 
 DM = 512  # d_model backbone for the scaling layers
 ROUTINGS = ("flat", "square", "tree")  # the per-head factor topologies the RoLA layer supports
+DECODE_STEPS = 100
+DECODE_WARMUP = 20
+ROLA_STATE_DTYPE = torch.float32  # recurrent/final-state cache is physically fp32 today
 
 
 def _nearest_even_pow2(n):
@@ -101,11 +105,87 @@ def _infeasible_excs():
 _INFEASIBLE = _infeasible_excs()
 
 
-def _mib(*dims):
+def _dtype_bytes(dtype):
+    return torch.empty((), dtype=dtype).element_size()
+
+
+def _mib(*dims, dtype=C.DT):
     n = 1
     for x in dims:
         n *= x
-    return round(n * 4 / 2 ** 20, 1)
+    return round(n * _dtype_bytes(dtype) / 2 ** 20, 1)
+
+
+def _mib_elems(n, dtype=C.DT):
+    return round(n * _dtype_bytes(dtype) / 2 ** 20, 1)
+
+
+def _attn_cache_mib(L):
+    return _mib(C.B, C.H, L, DM // C.H, 2, dtype=C.DT)
+
+
+def _rola_state_elems_per_batch(nc, d):
+    # scaling.py builds kappa-normalized RoLA, whose recurrent state carries value + denominator columns.
+    return C.H * nc * d * (d + 1)
+
+
+def _rola_state_mib(nc, d):
+    return _mib_elems(C.B * _rola_state_elems_per_batch(nc, d), dtype=ROLA_STATE_DTYPE)
+
+
+def _module_state_mib(module):
+    return _mib_elems(C.B * module.get_stats()["state_floats"], dtype=ROLA_STATE_DTYPE)
+
+
+def _state_x_pct(nc, d, L):
+    rola_bytes = _rola_state_elems_per_batch(nc, d) * _dtype_bytes(ROLA_STATE_DTYPE)
+    attn_bytes = (2 * L * DM) * _dtype_bytes(C.DT)
+    return round(100.0 * rola_bytes / attn_bytes, 1)
+
+
+def _round_ms(x, digits=3):
+    return round(float(x), digits)
+
+
+def _sdpa_flags():
+    """Record the SDPA policy knobs PyTorch will use for the attention baseline.
+
+    PyTorch does not expose a stable public "which backend was selected for this exact call" return
+    value, so reportable runs should either stamp these enabled flags or force one backend with
+    SCALE_ATTN_BACKEND={flash,efficient,math,cudnn}.
+    """
+    return {
+        "flash": bool(torch.backends.cuda.flash_sdp_enabled()),
+        "efficient": bool(torch.backends.cuda.mem_efficient_sdp_enabled()),
+        "math": bool(torch.backends.cuda.math_sdp_enabled()),
+        "cudnn": bool(getattr(torch.backends.cuda, "cudnn_sdp_enabled", lambda: False)()),
+    }
+
+
+def _sdpa_backend_label():
+    forced = os.environ.get("SCALE_ATTN_BACKEND", "").strip().lower()
+    if forced:
+        return f"forced:{forced}"
+    flags = _sdpa_flags()
+    enabled = [name for name, ok in flags.items() if ok]
+    return "auto:" + "+".join(enabled)
+
+
+def _sdpa_context():
+    forced = os.environ.get("SCALE_ATTN_BACKEND", "").strip().lower()
+    if not forced:
+        return contextlib.nullcontext()
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    aliases = {
+        "flash": SDPBackend.FLASH_ATTENTION,
+        "efficient": SDPBackend.EFFICIENT_ATTENTION,
+        "mem_efficient": SDPBackend.EFFICIENT_ATTENTION,
+        "math": SDPBackend.MATH,
+        "cudnn": SDPBackend.CUDNN_ATTENTION,
+    }
+    if forced not in aliases:
+        raise ValueError(f"unknown SCALE_ATTN_BACKEND={forced!r}; expected one of {sorted(aliases)}")
+    return sdpa_kernel(aliases[forced])
 
 
 # ------------------------------------------------------------------ shared helpers (own copies)
@@ -210,7 +290,9 @@ def _train_cell(module, L):
             if r >= C.WARMUP:
                 recs.append(rec)
     f, fb, pk, ac = zip(*recs)
-    return round(C.median(f), 3), round(C.median(fb), 3), round(max(pk)), round(max(ac))
+    return (_round_ms(C.median(f)), _round_ms(C.iqr(f)),
+            _round_ms(C.median(fb)), _round_ms(C.iqr(fb)),
+            round(max(pk)), round(max(ac)))
 
 
 def _prefill_cell(module, L):
@@ -225,8 +307,7 @@ def _prefill_cell(module, L):
             t, p = _prefill_rep(module, x)
             times.append(t)
             peak = max(peak, p)
-    times.sort()
-    return round(times[len(times) // 2], 3), round(peak)
+    return _round_ms(C.median(times)), _round_ms(C.iqr(times)), round(peak)
 
 
 def _prefill_rep(module, x):
@@ -245,20 +326,13 @@ def _new_cache():
 _SEED_PREFILL = 256   # tokens used to SEED the recurrent state (fixed-size; seeding doesn't need full L)
 
 
-def _decode_layer_step(module, L):
-    """LAYER-LEVEL decode: SEED the layer's recurrent state from a prefill, then time the single-token
-    decode step `module.forward(x1, past_key_values=cache, use_cache=True)` — the shipped recurrent
-    decode path (RoLA auto-selects fused_recurrent for L<=64). The recurrent state is FIXED-SIZE (it
-    does NOT grow with steps nor with the prefill length — that's the whole point vs attention's
-    growing KV), so seeding from a bounded prefill is faithful and each timed step runs into the SAME
-    persisted cache: a drift-free steady-state seeded decode (no per-step clone, no op-level call).
+def _decode_layer_sample(module, L):
+    """One isolated LAYER-LEVEL decode sample: seed recurrent state, then time one single-token step.
 
-    ASSERTS the cache is actually seeded after the prefill (len>0) — a fail-loud guard against a
-    silently-dropped cache kwarg (the zoology wrapper used to swallow it, which secretly measured a
-    COLD un-seeded step; #40 gate-B). Returns (ms/token, peak_mib) — peak_mib is the MEASURED peak
-    allocated above the pre-cache baseline during the decode steps (resident state + per-step
-    transients); the chunked seed's spike is reset out so it reflects decode, not the prefill. Carried
-    alongside the analytic state size as an overhead/sanity cross-check (literature reports ms/token)."""
+    Samples are intentionally one-step so decode arms can be scheduled round-robin across comparable
+    RoLA/monolith implementations while preserving the train/prefill memory semantics: each sample
+    builds, seeds, times, and frees only one arm.
+    """
     if getattr(module, "layer_idx", None) is None:
         module.layer_idx = 0
     seed_len = min(max(1, L), _SEED_PREFILL)
@@ -273,26 +347,50 @@ def _decode_layer_step(module, L):
                 "decode arm: cache NOT seeded after prefill (len==0) — the layer dropped the "
                 "past_key_values/use_cache kwargs, so this would measure a COLD un-seeded step. "
                 "Check the module's forward threads the cache (zoology RoLAMixer wrapper).")
-        step = lambda: module(x1, past_key_values=cache, use_cache=True)
         torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()  # forget the chunked-seed spike
-        ms = round(C.time_forward(step, steps=100, warmup=20), 4)
+        t0 = torch.cuda.Event(enable_timing=True)
+        t1 = torch.cuda.Event(enable_timing=True)
+        t0.record(); module(x1, past_key_values=cache, use_cache=True); t1.record(); torch.cuda.synchronize()
+        ms = t0.elapsed_time(t1)
         peak = round((torch.cuda.max_memory_allocated() - base) / 2 ** 20, 1)
     return ms, peak
+
+
+def _decode_layer_step(module, L):
+    """LAYER-LEVEL decode: SEED the layer's recurrent state from a prefill, then time the single-token
+    decode step `module.forward(x1, past_key_values=cache, use_cache=True)` — the shipped recurrent
+    decode path (RoLA auto-selects fused_recurrent for L<=64). The recurrent state is FIXED-SIZE (it
+    does NOT grow with steps nor with the prefill length — that's the whole point vs attention's
+    growing KV), so seeding from a bounded prefill is faithful and each timed step runs into the SAME
+    persisted cache: a drift-free steady-state seeded decode (no per-step clone, no op-level call).
+
+    ASSERTS the cache is actually seeded after the prefill (len>0) — a fail-loud guard against a
+    silently-dropped cache kwarg (the zoology wrapper used to swallow it, which secretly measured a
+    COLD un-seeded step; #40 gate-B). Returns (ms/token, peak_mib) — peak_mib is the MEASURED peak
+    allocated above the pre-cache baseline during the decode steps (resident state + per-step
+    transients); the chunked seed's spike is reset out so it reflects decode, not the prefill. Carried
+    alongside the analytic state size as an overhead/sanity cross-check (literature reports ms/token)."""
+    times, peak = [], 0
+    for r in range(DECODE_WARMUP + DECODE_STEPS):
+        ms, pk = _decode_layer_sample(module, L)
+        peak = max(peak, pk)
+        if r >= DECODE_WARMUP:
+            times.append(ms)
+    return _round_ms(C.median(times), 4), _round_ms(C.iqr(times), 4), peak
 
 
 def _decode_rola_cell(module, L):
     """RoLA layer decode -> (ms/token, state_mib_analytic, peak_mib_measured). state_mib is the FIXED
     recurrent footprint (the comparison axis); peak_mib is the measured decode-step peak."""
-    ms, peak = _decode_layer_step(module, L)
-    floats = module.get_stats()["state_floats"]
-    return ms, round(C.B * floats * 4 / 2 ** 20, 1), peak
+    ms, iqr_ms, peak = _decode_layer_step(module, L)
+    return ms, iqr_ms, _module_state_mib(module), peak
 
 
 def _decode_monolith_cell(module, L):
     """Matched-state monolith layer decode -> (ms/token, None, peak_mib_measured) via its own use_cache
     path. No clean analytic state axis (the wide nc=1 state), so the analytic slot is None."""
-    ms, peak = _decode_layer_step(module, L)
-    return ms, None, peak
+    ms, iqr_ms, peak = _decode_layer_step(module, L)
+    return ms, iqr_ms, None, peak
 
 
 def _decode_attn_cell(L):
@@ -300,30 +398,48 @@ def _decode_attn_cell(L):
     KV (the O(L)-GROWING cache RoLA's bounded state is measured against). Reports
     (ms/token, cache_mib_analytic, peak_mib_measured) — cache_mib is the analytic K+V footprint (the
     comparison axis), peak_mib the measured decode-step peak (cache + SDPA transient)."""
+    times, peak = [], 0
+    for r in range(DECODE_WARMUP + DECODE_STEPS):
+        ms, pk = _decode_attn_sample(L)
+        peak = max(peak, pk)
+        if r >= DECODE_WARMUP:
+            times.append(ms)
+    hd = DM // C.H
+    ms, iqr_ms = C.median(times), C.iqr(times)
+    return _round_ms(ms, 4), _round_ms(iqr_ms, 4), _attn_cache_mib(L), peak
+
+
+def _decode_attn_sample(L):
     hd = DM // C.H
     m = _CausalMHA(DM, C.H).to(C.DEV, C.DT)
     x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
     torch.cuda.synchronize(); base = torch.cuda.memory_allocated()   # pre-cache baseline (params only)
     kc = torch.randn(C.B, C.H, L, hd, device=C.DEV, dtype=C.DT)
     vc = torch.randn(C.B, C.H, L, hd, device=C.DEV, dtype=C.DT)
-    with torch.inference_mode():
-        step = lambda: m(x1, cache=(kc, vc), use_cache=False)
+    with torch.inference_mode(), _sdpa_context():
         torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
-        ms = C.time_forward(step, steps=100, warmup=20)
+        t0 = torch.cuda.Event(enable_timing=True)
+        t1 = torch.cuda.Event(enable_timing=True)
+        t0.record(); m(x1, cache=(kc, vc), use_cache=False); t1.record(); torch.cuda.synchronize()
+        ms = t0.elapsed_time(t1)
         peak = round((torch.cuda.max_memory_allocated() - base) / 2 ** 20, 1)
-    return round(ms, 4), _mib(C.B, C.H, L, hd, 2), peak  # analytic K+V cache + measured peak
+    return ms, peak
 
 
 # ------------------------------------------------------------------ sweep
 def _row(**kw):
     base = dict(bench=None, L=None, state_axis=None, X_pct=None, d_qk=None, nc=None, routing=None, arm=None,
-                fwd_ms=None, fb_ms=None, peak_mib=None, act_mib=None, decode_ms=None, state_mib=None)
+                fwd_ms=None, fwd_iqr_ms=None, fb_ms=None, fb_iqr_ms=None, peak_mib=None, act_mib=None,
+                decode_ms=None, decode_iqr_ms=None, state_mib=None, attn_backend=None, sdpa_flags=None)
     base.update(kw)
     return base
 
 
-def _arm_specs(routings):
+def _arm_specs(routings, include_attention=False):
     idx = 0
+    if include_attention:
+        yield dict(idx=idx, kind="attn", routing=None, gla=None, arm="attn")
+        idx += 1
     for kind in ("rola", "monolith"):
         kind_routings = routings if kind == "rola" else (None,)
         for routing in kind_routings:
@@ -347,6 +463,8 @@ def _append_error(rows, bench, L, x_pct, d, nc, spec, label):
 
 def _build_scaling_arm(spec, L, d, nc):
     C.set_shape(L=L, DQK=d, DV=d)
+    if spec["kind"] == "attn":
+        return _CausalMHA(DM, C.H).to(C.DEV, C.DT)
     if spec["kind"] == "rola":
         return build_rola(spec["gla"], nc, d, routing=spec["routing"])
     return build_monolith(spec["gla"], nc, d)
@@ -356,8 +474,11 @@ def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
     f, fb, pk, ac = zip(*recs)
     row = _row(bench="train", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"],
-               fwd_ms=round(C.median(f), 3), fb_ms=round(C.median(fb), 3),
-               peak_mib=round(max(pk)), act_mib=round(max(ac)))
+               fwd_ms=_round_ms(C.median(f)), fwd_iqr_ms=_round_ms(C.iqr(f)),
+               fb_ms=_round_ms(C.median(fb)), fb_iqr_ms=_round_ms(C.iqr(fb)),
+               peak_mib=round(max(pk)), act_mib=round(max(ac)),
+               attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
+               sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
     rows.append(row); print(row, flush=True)
 
 
@@ -365,7 +486,9 @@ def _summarize_prefill(rows, L, x_pct, d, nc, spec, recs):
     f, pk = zip(*recs)
     row = _row(bench="prefill", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"],
-               fwd_ms=round(C.median(f), 3), peak_mib=round(max(pk)))
+               fwd_ms=_round_ms(C.median(f)), fwd_iqr_ms=_round_ms(C.iqr(f)), peak_mib=round(max(pk)),
+               attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
+               sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
     rows.append(row); print(row, flush=True)
 
 
@@ -385,8 +508,33 @@ def _timed_sample(bench, L, d, nc, spec):
     if bench == "train":
         leaves = {"x": x.detach().requires_grad_()}
         forward = lambda lv: _fwd(module, lv["x"])
+        if spec["kind"] == "attn":
+            with _sdpa_context():
+                return _e2e_rep(forward, leaves, module)
         return _e2e_rep(forward, leaves, module)
+    if spec["kind"] == "attn":
+        with _sdpa_context():
+            return _prefill_rep(module, x)
     return _prefill_rep(module, x)
+
+
+def _timed_decode_sample(L, d, nc, spec):
+    """Run one isolated seeded decode sample for a RoLA/monolith scaling arm."""
+    seed = 20_000 + L + d * 31 + nc * 17 + spec["idx"]
+    torch.manual_seed(seed)
+    if spec["kind"] == "attn":
+        torch.manual_seed(seed + 1)
+        ms, peak = _decode_attn_sample(L)
+        return ms, _attn_cache_mib(L), peak
+    module = _build_scaling_arm(spec, L, d, nc)
+    if module is None:
+        return None
+    torch.manual_seed(seed + 1)
+    ms, peak = _decode_layer_sample(module, L)
+    state_mib = None
+    if spec["kind"] == "rola":
+        state_mib = _module_state_mib(module)
+    return ms, state_mib, peak
 
 
 def _timed_group(bench, L, x_pct, d, nc, routings, rows):
@@ -397,7 +545,7 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     per-arm, matching the old one-arm-at-a-time memory semantics.
     """
     active = [dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[])
-              for spec in _arm_specs(routings)]
+              for spec in _arm_specs(routings, include_attention=True)]
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*format mismatch.*")
@@ -438,69 +586,73 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
             _summarize_prefill(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
 
 
+def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
+    ms, state_mib, pk = zip(*recs)
+    row = _row(bench="decode", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
+               routing=spec["routing"], arm=spec["arm"],
+               decode_ms=_round_ms(C.median(ms), 4), decode_iqr_ms=_round_ms(C.iqr(ms), 4),
+               state_mib=next((m for m in state_mib if m is not None), None),
+               peak_mib=round(max(pk)),
+               attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
+               sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
+    rows.append(row); print(row, flush=True)
+
+
+def _timed_decode_group(L, x_pct, d, nc, routings, rows):
+    """Time comparable decode arms round-robin for one scaling cell."""
+    active = [dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[])
+              for spec in _arm_specs(routings, include_attention=True)]
+
+    for r in range(DECODE_WARMUP + DECODE_STEPS):
+        still_active = []
+        for rec in active:
+            spec = rec["spec"]
+            try:
+                sample = _timed_decode_sample(L, d, nc, spec)
+                if sample is None:
+                    continue
+                if r >= DECODE_WARMUP:
+                    rec["data"].append(sample)
+                still_active.append(rec)
+            except _INFEASIBLE:
+                row = _append_error(rows, "decode", L, x_pct, d, nc, spec, "OOM")
+                torch.cuda.empty_cache()
+                print(f"OOM {spec['arm']} decode L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+                print(row, flush=True)
+            except Exception as e:  # noqa: BLE001
+                row = _append_error(rows, "decode", L, x_pct, d, nc, spec, "ERR")
+                torch.cuda.empty_cache()
+                print(f"ERR {spec['arm']} decode L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                      f"{type(e).__name__}: {e}", flush=True)
+                print(row, flush=True)
+            finally:
+                torch.cuda.empty_cache()
+        active = still_active
+        if not active:
+            break
+
+    for rec in active:
+        if rec["data"]:
+            _summarize_decode(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
+
+
 def sweep(benches, lens, ncs, dqks, rows, routings=ROUTINGS):
     for bench in benches:
         for L in lens:
             C.set_shape(L=L)
-            # ---- attention reference: depends only on L (no X / d_qk / routing axis) ----
-            try:
-                if bench == "decode":
-                    ms, mib, pk = _decode_attn_cell(L)
-                    rows.append(_row(bench=bench, L=L, arm="attn", decode_ms=ms, state_mib=mib, peak_mib=pk))
-                else:
-                    m = _CausalMHA(DM, C.H).to(C.DEV, C.DT)
-                    if bench == "train":
-                        fwd, fb, pk, ac = _train_cell(m, L)
-                        rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms=fwd, fb_ms=fb, peak_mib=pk, act_mib=ac))
-                    else:  # prefill
-                        fwd, pk = _prefill_cell(m, L)
-                        rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms=fwd, peak_mib=pk))
-                    del m
-                print(rows[-1], flush=True)
-            except _INFEASIBLE:
-                rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms="OOM", decode_ms="OOM")); torch.cuda.empty_cache()
-                print(f"OOM attn {bench} L{L}", flush=True)
-            except Exception as e:  # noqa: BLE001
-                rows.append(_row(bench=bench, L=L, arm="attn", fwd_ms="ERR")); torch.cuda.empty_cache()
-                print(f"ERR attn {bench} L{L}: {type(e).__name__}: {e}", flush=True)
-
-            # ---- RoLA (routing sweep) + its matched-state wide-monolith ablation: (X%, d_qk) grid ----
+            # ---- Attention + RoLA (routing sweep) + matched-state wide-monolith: (X%, d_qk) grid ----
             for d in dqks:
                 for nc in ncs:
-                    # BOUNDED-STATE REGIME ONLY. RoLA content state (nc·d²) vs attention's KV cache
-                    # (2·L·d): include the cell ONLY while state < KV, i.e. nc·d < 2L. At/above that
-                    # (nc·d >= 2L) RoLA holds MORE than the full KV cache — the regime it isn't for —
-                    # so skip it. nc is a fixed sweep value (16/64/256/1024, each even-pow2 -> valid
-                    # for flat|square|tree); x_pct is the realized state-as-%-of-KV, recorded per row.
-                    if nc * d >= 2 * L:
+                    # BOUNDED-STATE REGIME ONLY. Compare PHYSICAL bytes: RoLA's fp32 recurrent state
+                    # H·nc·d·(d+1) vs attention's bf16 K+V cache 2·L·d_model. At/above 100% RoLA holds
+                    # more physical state than the full KV cache — the regime it is not for — so skip it.
+                    x_pct = _state_x_pct(nc, d, L)
+                    if x_pct >= 100.0:
                         continue
-                    x_pct = round(100.0 * nc * d / (2 * L), 1)
                     if bench in ("train", "prefill"):
                         _timed_group(bench, L, x_pct, d, nc, routings, rows)
                         continue
-                    for spec in _arm_specs(routings):
-                        try:
-                            m = _build_scaling_arm(spec, L, d, nc)
-                            if m is None:
-                                continue                   # baseline_cell declared this cell infeasible
-                            fn = _decode_rola_cell if spec["kind"] == "rola" else _decode_monolith_cell
-                            ms, mib, pk = fn(m, L)
-                            rows.append(_row(bench=bench, L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
-                                             routing=spec["routing"], arm=spec["arm"],
-                                             decode_ms=ms, state_mib=mib, peak_mib=pk))
-                            del m
-                            print(rows[-1], flush=True)
-                        except _INFEASIBLE:
-                            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
-                            torch.cuda.empty_cache()
-                            print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
-                            print(row, flush=True)
-                        except Exception as e:  # noqa: BLE001
-                            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
-                            torch.cuda.empty_cache()
-                            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
-                                  f"{type(e).__name__}: {e}", flush=True)
-                            print(row, flush=True)
+                    _timed_decode_group(L, x_pct, d, nc, routings, rows)
     return rows
 
 

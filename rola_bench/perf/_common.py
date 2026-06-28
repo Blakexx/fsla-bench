@@ -191,6 +191,12 @@ def write_csv(path, rows):
 
 def time_forward(fn, steps, warmup):
     """Median wall-clock ms over `steps` forward-only calls (decode/recurrent path)."""
+    med, _iqr = time_forward_stats(fn, steps, warmup)
+    return med
+
+
+def time_forward_stats(fn, steps, warmup):
+    """Median and IQR wall-clock ms over `steps` forward-only calls."""
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
@@ -199,6 +205,5 @@ def time_forward(fn, steps, warmup):
         t0 = time.perf_counter()
         fn()
         torch.cuda.synchronize()
-        ts.append(time.perf_counter() - t0)
-    ts.sort()
-    return ts[len(ts) // 2] * 1e3
+        ts.append((time.perf_counter() - t0) * 1e3)
+    return median(ts), iqr(ts)
