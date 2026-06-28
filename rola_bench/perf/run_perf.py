@@ -75,11 +75,11 @@ def run_scaling(out_dir, which):
     lens_env = (os.environ.get(f"SCALE_LENS_{which.upper()}")
                 or os.environ.get("SCALE_LENS") or _DEFAULT_LENS[which])
     lens = [int(v) for v in lens_env.split(",") if v.strip()]
-    xs = [float(v) for v in os.environ.get("SCALE_XS", "10,25,50,100").split(",") if v.strip()]
+    ncs = [int(v) for v in os.environ.get("SCALE_NCS", "16,64,256,1024").split(",") if v.strip()]
     dqks = [int(v) for v in os.environ.get("SCALE_DQKS", "16,64,128").split(",") if v.strip()]
     routings = [r for r in os.environ.get("SCALE_ROUTINGS", "flat,square,tree").split(",") if r.strip()]
     rows = []
-    sc.sweep([which], lens, xs, dqks, rows, routings=routings)
+    sc.sweep([which], lens, ncs, dqks, rows, routings=routings)
     if rows:
         C.write_csv(Path(out_dir) / f"scaling_{which}.csv", rows)
     return {"scaling": rows, "bench": which}

@@ -12,7 +12,9 @@ benches: [scaling-train, scaling-prefill, scaling-decode]
 reps: 10
 fleet:
   offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
-  idle_timeout: 900
+  idle_timeout: 1800              # 30m — warm of 78-114 shapes is a long SILENT codegen pass; 900s risked
+                                  # reaping the box mid-warm (a likely v24 train/prefill killer). v26's
+                                  # affinity-aware worker count makes warm much faster, but keep headroom.
   batch: 1
   per_batch_timeout: 10800        # 3h — long-L attn (O(L^2)) train cells are slow by design
   env:

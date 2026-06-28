@@ -22,7 +22,7 @@ KV-cache decode, both timed as one fused layer region.
 
 Axes:
   * L        sequence length (the primary scaling axis)
-  * X%       RoLA content state as a fraction of attention's KV cache -> nc = round(2*L*X/d), d_qk=d_v=d
+  * nc       RoLA states per head; X% is recorded as the realized fraction of attention's KV cache
   * d_qk     feature dim {16,64,128} -- the occupancy / operating-point knob (16 = the starved corner)
   * routing  the per-head factor topology {flat,square,tree} the RoLA layer routes through in-kernel
              (flat = dense router; square/tree = factored). RoLA-only axis (monolith/attn don't route).
@@ -36,7 +36,7 @@ This module STANDS ALONE: it owns its copies of the shared helpers (_CausalMHA /
 _e2e_rep) — no import from the archived perf/scratch/{chunked,recurrent}.py.
 
 Run:  python -m rola_bench.perf.scaling [--benches train,prefill,decode]
-            [--lens 1024,4096,16384,65536] [--xs 10,25,50,100] [--dqks 16,64,128]
+            [--lens 1024,4096,16384,65536] [--ncs 16,64,256,1024] [--dqks 16,64,128]
             [--routings flat,square,tree] [--reps N] [--out DIR]
 
 WARMUP reps absorb each cell's first-touch Triton cold-compile, so cells time warm — no separate
@@ -222,13 +222,18 @@ def _prefill_cell(module, L):
             _fwd(module, x)
         torch.cuda.synchronize()
         for _ in range(C.REPS):
-            torch.cuda.reset_peak_memory_stats(); base = torch.cuda.memory_allocated()
-            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-            e0.record(); _fwd(module, x); e1.record(); torch.cuda.synchronize()
-            times.append(e0.elapsed_time(e1))
-            peak = max(peak, (torch.cuda.max_memory_allocated() - base) / 2 ** 20)
+            t, p = _prefill_rep(module, x)
+            times.append(t)
+            peak = max(peak, p)
     times.sort()
     return round(times[len(times) // 2], 3), round(peak)
+
+
+def _prefill_rep(module, x):
+    torch.cuda.reset_peak_memory_stats(); base = torch.cuda.memory_allocated()
+    e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    e0.record(); _fwd(module, x); e1.record(); torch.cuda.synchronize()
+    return e0.elapsed_time(e1), (torch.cuda.max_memory_allocated() - base) / 2 ** 20
 
 
 def _new_cache():
@@ -317,7 +322,120 @@ def _row(**kw):
     return base
 
 
-def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
+def _arm_specs(routings):
+    for kind in ("rola", "monolith"):
+        kind_routings = routings if kind == "rola" else (None,)
+        for routing in kind_routings:
+            for gla, var in ((False, "rla"), (True, "gla")):
+                yield dict(kind=kind, routing=routing, gla=gla, arm=f"{kind}-{var}")
+
+
+def _append_error(rows, bench, L, x_pct, d, nc, spec, label):
+    row = _row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"])
+    if bench == "decode":
+        row["decode_ms"] = label
+    else:
+        row["fwd_ms"] = label
+        if bench == "train":
+            row["fb_ms"] = label
+    rows.append(row)
+    return row
+
+
+def _build_scaling_arm(spec, L, d, nc):
+    C.set_shape(L=L, DQK=d, DV=d)
+    if spec["kind"] == "rola":
+        return build_rola(spec["gla"], nc, d, routing=spec["routing"])
+    return build_monolith(spec["gla"], nc, d)
+
+
+def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
+    f, fb, pk, ac = zip(*recs)
+    row = _row(bench="train", L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"],
+               fwd_ms=round(C.median(f), 3), fb_ms=round(C.median(fb), 3),
+               peak_mib=round(max(pk)), act_mib=round(max(ac)))
+    rows.append(row); print(row, flush=True)
+
+
+def _summarize_prefill(rows, L, x_pct, d, nc, spec, recs):
+    f, pk = zip(*recs)
+    row = _row(bench="prefill", L=L, X_pct=x_pct, d_qk=d, nc=nc, routing=spec["routing"], arm=spec["arm"],
+               fwd_ms=round(C.median(f), 3), peak_mib=round(max(pk)))
+    rows.append(row); print(row, flush=True)
+
+
+def _timed_group(bench, L, x_pct, d, nc, routings, rows):
+    """Time comparable RoLA/monolith arms round-robin for one scaling cell.
+
+    Keeping the same `(bench,L,d,nc)` arms active together makes thermal/clock drift affect their ratios
+    similarly. If one arm OOMs/errors, only that arm is recorded as a sentinel and the rest continue.
+    """
+    active = []
+    for idx, spec in enumerate(_arm_specs(routings)):
+        try:
+            torch.manual_seed(idx)
+            module = _build_scaling_arm(spec, L, d, nc)
+            if module is None:
+                continue
+            torch.manual_seed(10_000 + L + d * 31 + nc)
+            x = torch.randn(C.B, L, DM, device=C.DEV, dtype=C.DT)
+            rec = dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, module=module, data=[])
+            if bench == "train":
+                rec["leaves"] = {"x": x.detach().requires_grad_()}
+                rec["forward"] = lambda lv, m=module: _fwd(m, lv["x"])
+            else:
+                rec["x"] = x
+            active.append(rec)
+        except _INFEASIBLE:
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
+            torch.cuda.empty_cache(); print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+            print(row, flush=True)
+        except Exception as e:  # noqa: BLE001
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
+            torch.cuda.empty_cache()
+            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            print(row, flush=True)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*format mismatch.*")
+        for r in range(C.WARMUP + C.REPS):
+            still_active = []
+            for rec in active:
+                spec = rec["spec"]
+                try:
+                    if bench == "train":
+                        sample = _e2e_rep(rec["forward"], rec["leaves"], rec["module"])
+                    else:
+                        sample = _prefill_rep(rec["module"], rec["x"])
+                    if r >= C.WARMUP:
+                        rec["data"].append(sample)
+                    still_active.append(rec)
+                except _INFEASIBLE:
+                    row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
+                    torch.cuda.empty_cache()
+                    print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+                    print(row, flush=True)
+                except Exception as e:  # noqa: BLE001
+                    row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
+                    torch.cuda.empty_cache()
+                    print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                          f"{type(e).__name__}: {e}", flush=True)
+                    print(row, flush=True)
+            active = still_active
+            if not active:
+                break
+
+    for rec in active:
+        if not rec["data"]:
+            continue
+        if bench == "train":
+            _summarize_train(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
+        else:
+            _summarize_prefill(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
+
+
+def sweep(benches, lens, ncs, dqks, rows, routings=ROUTINGS):
     for bench in benches:
         for L in lens:
             C.set_shape(L=L)
@@ -345,49 +463,41 @@ def sweep(benches, lens, xs, dqks, rows, routings=ROUTINGS):
 
             # ---- RoLA (routing sweep) + its matched-state wide-monolith ablation: (X%, d_qk) grid ----
             for d in dqks:
-                for x_pct in xs:
-                    nc = nc_for(L, x_pct, d)
-                    for kind in ("rola", "monolith"):
-                        # routing is a RoLA-ONLY axis; the monolith doesn't route -> a single None pass.
-                        kind_routings = routings if kind == "rola" else (None,)
-                        for routing in kind_routings:
-                            for gla, var in ((False, "rla"), (True, "gla")):
-                                arm = f"{kind}-{var}"
-                                try:
-                                    C.set_shape(L=L, DQK=d, DV=d)
-                                    if kind == "rola":
-                                        m = build_rola(gla, nc, d, routing=routing)
-                                    else:
-                                        m = build_monolith(gla, nc, d)
-                                    if m is None:
-                                        continue                   # baseline_cell declared it infeasible
-                                    if bench == "decode":
-                                        fn = _decode_rola_cell if kind == "rola" else _decode_monolith_cell
-                                        ms, mib, pk = fn(m, L)
-                                        rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                         routing=routing, arm=arm, decode_ms=ms, state_mib=mib, peak_mib=pk))
-                                    elif bench == "train":
-                                        fwd, fb, pk, ac = _train_cell(m, L)
-                                        rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                         routing=routing, arm=arm,
-                                                         fwd_ms=fwd, fb_ms=fb, peak_mib=pk, act_mib=ac))
-                                    else:
-                                        fwd, pk = _prefill_cell(m, L)
-                                        rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                         routing=routing, arm=arm, fwd_ms=fwd, peak_mib=pk))
-                                    del m
-                                    print(rows[-1], flush=True)
-                                except _INFEASIBLE:
-                                    rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                     routing=routing, arm=arm, fwd_ms="OOM"))
-                                    torch.cuda.empty_cache()
-                                    print(f"OOM {arm} {bench} L{L} X{x_pct} d{d} r{routing} nc{nc}", flush=True)
-                                except Exception as e:  # noqa: BLE001
-                                    rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
-                                                     routing=routing, arm=arm, fwd_ms="ERR"))
-                                    torch.cuda.empty_cache()
-                                    print(f"ERR {arm} {bench} L{L} X{x_pct} d{d} r{routing} nc{nc}: "
-                                          f"{type(e).__name__}: {e}", flush=True)
+                for nc in ncs:
+                    # BOUNDED-STATE REGIME ONLY. RoLA content state (nc·d²) vs attention's KV cache
+                    # (2·L·d): include the cell ONLY while state < KV, i.e. nc·d < 2L. At/above that
+                    # (nc·d >= 2L) RoLA holds MORE than the full KV cache — the regime it isn't for —
+                    # so skip it. nc is a fixed sweep value (16/64/256/1024, each even-pow2 -> valid
+                    # for flat|square|tree); x_pct is the realized state-as-%-of-KV, recorded per row.
+                    if nc * d >= 2 * L:
+                        continue
+                    x_pct = round(100.0 * nc * d / (2 * L), 1)
+                    if bench in ("train", "prefill"):
+                        _timed_group(bench, L, x_pct, d, nc, routings, rows)
+                        continue
+                    for spec in _arm_specs(routings):
+                        try:
+                            m = _build_scaling_arm(spec, L, d, nc)
+                            if m is None:
+                                continue                   # baseline_cell declared this cell infeasible
+                            fn = _decode_rola_cell if spec["kind"] == "rola" else _decode_monolith_cell
+                            ms, mib, pk = fn(m, L)
+                            rows.append(_row(bench=bench, L=L, X_pct=x_pct, d_qk=d, nc=nc,
+                                             routing=spec["routing"], arm=spec["arm"],
+                                             decode_ms=ms, state_mib=mib, peak_mib=pk))
+                            del m
+                            print(rows[-1], flush=True)
+                        except _INFEASIBLE:
+                            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
+                            torch.cuda.empty_cache()
+                            print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+                            print(row, flush=True)
+                        except Exception as e:  # noqa: BLE001
+                            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
+                            torch.cuda.empty_cache()
+                            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                                  f"{type(e).__name__}: {e}", flush=True)
+                            print(row, flush=True)
     return rows
 
 
@@ -395,7 +505,8 @@ def main():
     ap = argparse.ArgumentParser(description="RoLA scaling benchmark (RoLA vs attention; per-arch curves).")
     ap.add_argument("--benches", default="train,prefill,decode", help="comma: train,prefill,decode")
     ap.add_argument("--lens", default=os.environ.get("SCALE_LENS", "1024,4096,16384,65536"))
-    ap.add_argument("--xs", default=os.environ.get("SCALE_XS", "10,25,50,100"), help="state %% of KV cache")
+    ap.add_argument("--ncs", default=os.environ.get("SCALE_NCS", "16,64,256,1024"),
+                    help="fixed states_per_head to sweep (cells kept only while state<KV: nc*d<2L)")
     ap.add_argument("--dqks", default=os.environ.get("SCALE_DQKS", "16,64,128"))
     ap.add_argument("--routings", default=os.environ.get("SCALE_ROUTINGS", "flat,square,tree"),
                     help="comma: RoLA per-head factor topologies to sweep")
@@ -406,15 +517,15 @@ def main():
     C.REPS = a.reps
     benches = [b for b in a.benches.split(",") if b.strip()]
     lens = [int(v) for v in a.lens.split(",") if v.strip()]
-    xs = [float(v) for v in a.xs.split(",") if v.strip()]
+    ncs = [int(v) for v in a.ncs.split(",") if v.strip()]
     dqks = [int(v) for v in a.dqks.split(",") if v.strip()]
     routings = [r for r in a.routings.split(",") if r.strip()]
     print(f"# scaling | {C.gpu_name()} | B={C.B} H={C.H} d_model={DM} bf16 | benches={benches} "
-          f"| L={lens} X%={xs} d_qk={dqks} routing={routings} | RoLA(rla,gla) + attn", flush=True)
+          f"| L={lens} nc={ncs} d_qk={dqks} routing={routings} (cells: state<KV only) | RoLA(rla,gla) + attn", flush=True)
     rows = []
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     try:
-        sweep(benches, lens, xs, dqks, rows, routings=routings)
+        sweep(benches, lens, ncs, dqks, rows, routings=routings)
     finally:
         if rows:
             C.write_csv(out / "scaling.csv", rows)

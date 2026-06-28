@@ -1,0 +1,16 @@
+# v25 VALIDATION RE-RUN: one box, prefill only, so the A100 actually exercises the full fixed path:
+# the router-fixed cells cold-compile in their WARMUP reps + square/tree cells at snapped nc +
+# frontier cells OOM-sentinel cleanly. Default prefill frontier axes (run_perf._DEFAULT_LENS prefill
+# = 1024..131072). no_kill so /log + results survive for inspection. reps low (validation, not final
+# numbers — the full run uses reps=10).
+#   launch.py perf scaling_dbg --boxes 1
+benches: [scaling-prefill]
+reps: 3
+fleet:
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
+  no_kill: true
+  batch: 1
+  idle_timeout: 2400
+  per_batch_timeout: 7200      # a full prefill frontier on one box, cold-compiles included; generous
+  env:
+    PERF_B: "2"
