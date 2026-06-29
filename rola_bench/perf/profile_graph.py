@@ -384,6 +384,7 @@ def _deep_profile(args, out_dir: Path) -> dict[str, Any]:
             ("nsys",),
             (
                 "/opt/nvidia/nsight-systems/*/bin/nsys",
+                "/opt/nvidia/nsight-compute/*/host/target-linux-x64/nsys",
                 "/usr/local/cuda-*/bin/nsys",
             ),
         )

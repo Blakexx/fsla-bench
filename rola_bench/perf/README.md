@@ -71,6 +71,18 @@ Outputs:
 - Buffer ledger: `summary.json` includes `buffer_ledger` and `diagnostics.unattributed_routed_peak_mib`
   to separate known model-sized buffers from hidden allocator/kernel workspace.
 
+For Triton kernel internals, use the separate deep config:
+
+```bash
+python launch.py perf profile_graph_deep --boxes 1 --batch 1
+```
+
+`deep_profile: ncu` runs Nsight Compute against a child profile run and imports the `.ncu-rep` details
+back into `summary.json` under `deep_profile.tools.ncu.details_text`. `deep_ncu_set: basic` is the
+default cloud-safe pass; switch one profile to `full` only for a targeted source/stall investigation.
+The fleet base image already includes Nsight Compute, but host permissions may still decide whether
+hardware counters are available on a rented box.
+
 This diagnostic entrypoint is deliberately separate from the scaling launch configs. It is for root
 causing constants and memory walls, not for producing headline curves.
 
