@@ -32,31 +32,6 @@ def _read_csv(path):
         return list(csv.DictReader(fh))
 
 
-def run_chunked(out_dir):
-    """End-to-end fwd + fwd/bwd of each CANONICAL layer (RoLA + baselines), round-robin in-process.
-    ARCHIVED bench (moved to perf/scratch/ by #40 — superseded for the scaling story by run_scaling);
-    kept runnable for the matched-state comparison table."""
-    from rola_bench.perf.scratch import chunked as ch
-    import rola_bench.perf._common as C
-    e2e = []
-    ch.bench_e2e(REPS, e2e)                # canonical layer e2e (fwd + fwd+bwd), real sum(p.numel())
-    if e2e:
-        C.write_csv(Path(out_dir) / "kernel_e2e.csv", e2e)
-    return {"e2e": e2e}
-
-
-def run_recurrent(out_dir):
-    """Full recurrent (decode, forward-only) sweep. ARCHIVED bench (moved to perf/scratch/ by #40 —
-    the scaling decode arm is now LAYER-LEVEL); kept runnable for provenance."""
-    from rola_bench.perf.scratch import recurrent as rc
-    steps = int(os.environ.get("PERF_DECODE_STEPS", "200"))
-    warm = int(os.environ.get("PERF_DECODE_WARMUP", "50"))
-    rc.bench(steps=steps, warmup=warm, out=out_dir)        # decode decomposition (kernel only)
-    rc.bench_e2e(steps=steps, warmup=warm, out=out_dir)    # FUSED end-to-end decode (fwd only)
-    return {"decode": _read_csv(Path(out_dir) / "recurrent_decode.csv"),
-            "e2e": _read_csv(Path(out_dir) / "recurrent_e2e.csv")}
-
-
 def run_scaling(out_dir, which):
     """One bench-TYPE of the RoLA-vs-attn scaling sweep (which ∈ {train,prefill,decode}). Split per
     type so each is an independent fleet run_id (perf-scaling-<type>) — you can launch just one (e.g.
@@ -86,8 +61,6 @@ def run_scaling(out_dir, which):
 
 
 BENCHES = {
-    "perf-chunked": run_chunked,
-    "perf-recurrent": run_recurrent,
     "perf-scaling-train": lambda o: run_scaling(o, "train"),
     "perf-scaling-prefill": lambda o: run_scaling(o, "prefill"),
     "perf-scaling-decode": lambda o: run_scaling(o, "decode"),

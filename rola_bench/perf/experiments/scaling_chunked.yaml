@@ -1,8 +1,7 @@
 # Chunked forward scaling run.
 #
 # This is the prefill/chunked-forward arm of scaling.py: RoLA/monolith/attention layer forward,
-# swept over L x state fraction x d_qk x routing. It is separate from scaling_dbg so reportable
-# reruns do not rely on a debug/no_kill config.
+# swept over L x state fraction x d_qk x routing.
 #
 # Launch:
 #   python launch.py perf scaling_chunked --boxes 1
