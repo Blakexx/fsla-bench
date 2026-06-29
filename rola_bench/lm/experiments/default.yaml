@@ -3,7 +3,8 @@
 arms:  [rola-rla-kappa-sym, rola-rla-kappa-asym, rola-gla-kappa-asym, rola-gla-kappa-sym, gdn, attn]
 seeds: [1337, 2024]
 backbone: {hidden: 512, layers: 12, max_pos: 2048}
-geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, gdn_nh: 8, attn_heads: 8,
+geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 64, rola_nh: 8, attn_heads: 8,
+           gdn_nh: 8, gdn_head_dim: 256, gdn_expand_v: 2.0, gla_nh: 4, gla_ek: 2.0, gla_ev: 8.0,
            qk_norm: true, router_zloss_coef: 0.0}   # z-loss supported but OFF by default (optional)
 budget:
   lr: 3e-4

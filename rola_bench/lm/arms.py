@@ -6,18 +6,18 @@ Design (see TASKS #102):
     RMSNorm(eps=1e-6), untied embeddings, GPT-2 vocab. RoLAConfig mirrors fla GLAConfig's backbone
     fields byte-for-byte, and the fla baselines (GDN, Transformer) share the same fla backbone, so
     swapping arms changes ONLY the token mixer.
-  * The bounded-state arms (3 RoLA variants + GDN) are matched on RECURRENT STATE (the MQAR
-    matched-state principle carried into LM). Softmax attention is the unbounded-state CEILING
-    (no recurrent state to match) — the reference the bounded models try to approach.
+  * The bounded-state arms are matched on RECURRENT STATE. Each active LM spec sets bounded-state
+    floats/layer to half of the training-context attention KV cache:
+        target = block_size * hidden_size = 0.5 * (2 * block_size * hidden_size).
+    For RoLA this is the X=1 rule: states_per_head * d_qk = block_size, with num_heads * d_v =
+    hidden_size. GDN/GLA are sized to the same target in the YAML geometry.
+  * Softmax attention is the unbounded-state CEILING (no recurrent state to match) — the reference the
+    bounded models try to approach.
 
-Matched recurrent state (headline rung, Option Y) = 1,048,576 floats/layer, ALL ARMS AT 8 HEADS:
-    RoLA  n_h=8, nc=128, d_qk=16, d_v=64  ->  8*128*16*64 = 1048576   (output width n_h*d_v = 512 = d_model)
-    GDN   8 heads, head_dim=256, expand_v=2 (->head_v=512)  ->  8*256*512 = 1048576   (EXACT; canonical)
-  All three arms share num_heads=8 (head is the same primitive: an independent mixing channel), GDN
-  stays at its CANONICAL head shape (head_dim<=256 kernel cap never binds), and attn=8 (head_dim 64)
-  is the standard softmax config. State = 1/2 of attn's KV cache at L=2048 (2*L*d_model = 2097152),
-  a compression advantage that GROWS linearly with context (constant state vs attn's linear KV).
-  Attention has no recurrent state (unbounded-KV ceiling). [Option X = 524288 / GDN-4h, run later.]
+Default recurrent state (headline rung) = 1,048,576 floats/layer at block_size=2048, hidden=512:
+    RoLA  n_h=8, nc=128, d_qk=16, d_v=64  ->  8*128*16*64 = 1048576
+    GDN   n_h=8, head_dim=256, expand_v=2 ->  8*256*512 = 1048576
+    GLA   n_h=4, expand_k=2, expand_v=8   ->  (512*2)*(512*8)/4 = 1048576
 
   RoLA's d_v=64 (not 16) is deliberate: the mixer readout width is n_h*d_v, and w_o lifts it to
   d_model. At d_v=16 that readout is only 128-wide (d_model/4) -> the mixer could write at most a
@@ -48,16 +48,15 @@ _GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y@512: 8
 _GDN_HEAD_DIM = int(_os.environ.get("LM_GDN_HEAD_DIM", "256"))    # GDN key head_dim (Y@512: 256; small backbone -> 64)
 _GDN_EXPAND_V = float(_os.environ.get("LM_GDN_EXPAND_V", "2.0"))  # GDN value expansion (canonical 2)
 _GLA_NH  = int(_os.environ.get("LM_GLA_NH", "4"))          # GLA heads
-_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "1.0"))     # GLA expand_k: ek1.0 -> head_k=64 (ek0.5 gave
-_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "1.0"))     #   head_k=32 which the fla GLA kernel rejected)
-# iso-STATE baselines (2nd control): size GDN/GLA to MATCH RoLA's recurrent state, report the param
-# cost. State is nc-dependent so the spec sets these per corpus (wiki 262144, tiny 131072).
+_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "2.0"))      # default state matches half-KV at L=2048, hidden=512
+_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "8.0"))
+# Backward-compatible aliases for older specs; active LM YAMLs size gdn/gla directly to half-KV.
 _GDNISO_NH = int(_os.environ.get("LM_GDNISO_NH", "8"))
-_GDNISO_HEAD_DIM = int(_os.environ.get("LM_GDNISO_HEAD_DIM", "128"))   # nh8 hd128 ev2 -> 262144 (=RoLA wiki)
+_GDNISO_HEAD_DIM = int(_os.environ.get("LM_GDNISO_HEAD_DIM", "256"))
 _GDNISO_EXPAND_V = float(_os.environ.get("LM_GDNISO_EXPAND_V", "2.0"))
 _GLAISO_NH = int(_os.environ.get("LM_GLAISO_NH", "4"))
-_GLAISO_EK = float(_os.environ.get("LM_GLAISO_EK", "4.0"))             # nh4 ek4 ev4 -> 262144 (=RoLA wiki)
-_GLAISO_EV = float(_os.environ.get("LM_GLAISO_EV", "4.0"))
+_GLAISO_EK = float(_os.environ.get("LM_GLAISO_EK", "2.0"))
+_GLAISO_EV = float(_os.environ.get("LM_GLAISO_EV", "8.0"))
 _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
@@ -74,22 +73,18 @@ BACKBONE = dict(
     tie_word_embeddings=False,
     fuse_cross_entropy=True,
 )
-# --- matched recurrent-state geometry (Option Y: all 8 heads, state = 1,048,576) ---------------
+# --- matched recurrent-state geometry (default: half of attention KV at L=2048) ----------------
 # RoLA  n_h=8 * nc=128 * d_qk=16 * d_v=64 = 1048576 floats/layer; n_h*d_v = 512 = d_model (no output
-#   bottleneck — see module docstring). GDN matches EXACTLY at its CANONICAL 8-head shape
-#   (head_dim=256, expand_v=2 -> head_v=512): 8*256*512 = 1048576. expand_v=2 is the canonical value
-#   (flame gated_deltanet_*.json) — NOT a reverse-engineered fraction; head_dim<=256 cap never binds.
+#   bottleneck -- see module docstring). Active YAML specs override these per context length so
+#   every bounded arm lands on block_size * hidden_size.
 # RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
 ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
                  router_zloss_coef=_ZLOSS)
-GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)  # @512: 8*256*512=1048576
-# GLA baseline geometry (fla GatedLinearAttention). At the small backbone it runs at its CANONICAL
-# config (defaults expand_k=0.5, expand_v=1) — NOT forced to RoLA's routed state, which it can't reach
-# without unnatural width. iso-PARAM + iso-backbone; each arm's realized recurrent state is reported.
+GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)
 GLA_GEOM = dict(num_heads=_GLA_NH, expand_k=_GLA_EK, expand_v=_GLA_EV, gate_logit_normalizer=16)
-# iso-STATE geometry (the 2nd control): sized to match RoLA's recurrent state (per-corpus via env).
+# Alias geometry for older configs that still name gdn-isostate/gla-isostate.
 GDNISO_GEOM = dict(num_heads=_GDNISO_NH, head_dim=_GDNISO_HEAD_DIM, expand_v=_GDNISO_EXPAND_V)
 GLAISO_GEOM = dict(num_heads=_GLAISO_NH, expand_k=_GLAISO_EK, expand_v=_GLAISO_EV, gate_logit_normalizer=16)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)

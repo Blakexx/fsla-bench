@@ -9,6 +9,7 @@ LM keeps preemption-safe checkpoint resume (payload_for + pull_in_progress + no_
 Launch: launch.py lm default
 """
 import os
+import re
 
 from rola_bench.jobs import make_job
 from rola_bench.spec import load, env_from
@@ -16,8 +17,70 @@ from rola_bench.spec import load, env_from
 CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/e/rola/rola_data/lm_ckpts")
 
 
+def _rola_overrides(arm):
+    if "__" not in arm:
+        return {}
+    _, suffix = arm.split("__", 1)
+    out = {}
+    for tok in suffix.split("_"):
+        m = re.fullmatch(r"(nh|dv|dqk|nc)(\d+)", tok)
+        if m:
+            out[{"nh": "rola_nh", "dv": "rola_dv", "dqk": "rola_dqk", "nc": "rola_nc"}[m.group(1)]] = int(m.group(2))
+    return out
+
+
+def _active_state_floats(arm, hidden, geometry):
+    if arm.startswith("rola-"):
+        g = {**geometry, **_rola_overrides(arm)}
+        nh, nc, dqk, dv = (int(g["rola_nh"]), int(g["rola_nc"]), int(g["rola_dqk"]), int(g["rola_dv"]))
+        return nh * nc * dqk * dv
+    if arm == "gdn":
+        hd = int(geometry.get("gdn_head_dim", 256))
+        return int(geometry.get("gdn_nh", 8)) * hd * int(hd * float(geometry.get("gdn_expand_v", 2.0)))
+    if arm == "gdn-isostate":
+        hd = int(geometry.get("gdniso_head_dim", geometry.get("gdn_head_dim", 256)))
+        return int(geometry.get("gdniso_nh", geometry.get("gdn_nh", 8))) * hd * int(
+            hd * float(geometry.get("gdniso_expand_v", geometry.get("gdn_expand_v", 2.0))))
+    if arm == "gla":
+        nh = int(geometry.get("gla_nh", 4))
+        return int(hidden * float(geometry.get("gla_ek", 2.0))) * int(hidden * float(geometry.get("gla_ev", 8.0))) // nh
+    if arm == "gla-isostate":
+        nh = int(geometry.get("glaiso_nh", geometry.get("gla_nh", 4)))
+        return int(hidden * float(geometry.get("glaiso_ek", geometry.get("gla_ek", 2.0)))) * int(
+            hidden * float(geometry.get("glaiso_ev", geometry.get("gla_ev", 8.0)))) // nh
+    return None
+
+
+def _validate_half_kv_states(spec):
+    """Active bounded LM arms must use state = block_size * hidden = half of attention KV cache."""
+    backbone = spec.get("backbone") or {}
+    geometry = spec.get("geometry") or {}
+    budget = spec.get("budget") or {}
+    hidden = int(backbone.get("hidden", 512))
+    block_size = int(budget.get("block_size", 2048))
+    target = hidden * block_size
+    bad = []
+    for arm in spec["arms"]:
+        state = _active_state_floats(arm, hidden, geometry)
+        if state is None:
+            continue
+        if state != target:
+            bad.append(f"{arm}: state={state}, want={target}")
+        if arm.startswith("rola-"):
+            g = {**geometry, **_rola_overrides(arm)}
+            x_axis = int(g["rola_nc"]) * int(g["rola_dqk"])
+            out_width = int(g["rola_nh"]) * int(g["rola_dv"])
+            if x_axis != block_size:
+                bad.append(f"{arm}: rola_nc*rola_dqk={x_axis}, want block_size={block_size}")
+            if out_width != hidden:
+                bad.append(f"{arm}: rola_nh*rola_dv={out_width}, want hidden={hidden}")
+    if bad:
+        raise ValueError("LM half-KV state validation failed: " + "; ".join(bad))
+
+
 def lm_job(config="default"):
     spec = load("lm", config)
+    _validate_half_kv_states(spec)
     arms, seeds = spec["arms"], spec["seeds"]
     box_env = env_from("LM", spec.get("backbone"), spec.get("geometry"), spec.get("budget"))
     fleet = dict(spec.get("fleet", {}))

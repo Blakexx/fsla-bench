@@ -1,16 +1,15 @@
 # Single-seed EXPLORE pass — one seed (1337) per config, to see every arm's number fast (then
 # multi-seed the winners). tinystories (fastest corpus). Covers: RoLA + attn references (in-run, same
-# conditions), iso-PARAM + iso-STATE GDN/GLA, and the RoLA head/d_v structure sweep. iso-state targets
-# RoLA's content state 131072 here. launch.py lm lm_explore
+# conditions), GDN/GLA at the same half-KV recurrent-state target, and the RoLA head/d_v structure
+# sweep. For block_size=512 and hidden=256, bounded-state target = 131072 floats/layer.
+# launch.py lm lm_explore
 arms:  [rola-rla-kappa-asym, rola-gla-kappa-asym, attn,
-        gdn, gdn-isostate, gla, gla-isostate,
+        gdn, gla,
         rola-rla-kappa-asym__nh16_dv16, rola-rla-kappa-asym__nh4_dv64, rola-rla-kappa-asym__nh2_dv128]
 seeds: [1337]
 backbone: {hidden: 256, layers: 6, max_pos: 2048}
 geometry: {rola_nc: 32, rola_dqk: 16, rola_dv: 32, rola_nh: 8, attn_heads: 4,
-           gdn_nh: 4, gdn_head_dim: 64, gdn_expand_v: 2.0, gla_nh: 4, gla_ek: 1.0, gla_ev: 1.0,
-           gdniso_nh: 8, gdniso_head_dim: 128, gdniso_expand_v: 1.0,
-           glaiso_nh: 4, glaiso_ek: 4.0, glaiso_ev: 2.0,
+           gdn_nh: 8, gdn_head_dim: 128, gdn_expand_v: 1.0, gla_nh: 4, gla_ek: 4.0, gla_ev: 2.0,
            qk_norm: true, router_zloss_coef: 0.0}
 budget:
   lr: 3e-4

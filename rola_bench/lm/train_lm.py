@@ -16,7 +16,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers import TrainerCallback
 import fla_rola.models.rola  # registers RoLA with HF AutoClasses
 from fla_rola.models.rola import RoLAConfig
-import arms  # the 5-arm iso-backbone registry (RoLA x3 + GDN + attn ceiling)
+import arms  # iso-backbone registry (RoLA/GDN/GLA/attention)
 from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments,
                           DataCollatorForLanguageModeling, default_data_collator)
