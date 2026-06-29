@@ -164,7 +164,7 @@ def main():
     # No choices=: structure-suffix arms ("rola-...__nhX_dvY") are valid but dynamic, so arm_config
     # does the validation (and raises loud on a genuinely unknown arm) — a fixed choices list rejected them.
     p.add_argument("--arm", default=None,
-                   help="registry arm (rola-rla-kappa-{sym,asym} / rola-gla-kappa-asym / gdn[-isostate] / gla[-isostate] / attn / <base>__nhX_dvY)")
+                   help="registry arm (RoLA kappa variants, optional asym -conv arms, gdn, gla, attn, or <base>__nhX_dvY)")
     p.add_argument("--seed", type=int, default=1337)
     p.add_argument("--results", default=None, help="fleet result ndjson to append {run_id, ok, ...}")
     p.add_argument("--ckpt_dir", default=os.environ.get("FLEET_CKPT_DIR"), help="dir to save_pretrained into")

@@ -97,13 +97,13 @@ ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA
 # openly. Flip USE_SHORT_CONV to True to give RoLA+GDN their canonical conv (attention stays off).
 USE_SHORT_CONV = False
 
-# arm name -> the three RoLA variants share geometry + backbone, differ only in rola_instance.
-# All three use KAPPA normalization (state_norm='kappa') for consistency with the paper-canonical
-# RLA cell: kappa-sym/kappa-asym (RLA) + gla-kappa-asym (scalar GLA, decayed per-state mass — same
-# kappa construction). NOT the 'global'-norm scalar-norm variant. (MQAR routed-GLA is being re-run
-# on the kappa variant too, #112.)
+# arm name -> RoLA variants share geometry + backbone, differ only in rola_instance. The "-conv"
+# variants are the asym RLA/GLA cells with RoLA's short convolution enabled.
+# All use KAPPA normalization (state_norm='kappa') for consistency with the paper-canonical RLA cell:
+# kappa-sym/kappa-asym (RLA) + gla-kappa-asym (scalar GLA, decayed per-state mass).
 ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
-             "rola-gla-kappa-asym", "rola-gla-kappa-sym")   # both kernels' asym/sym pair (asym>sym test)
+             "rola-gla-kappa-asym", "rola-gla-kappa-sym",
+             "rola-rla-kappa-asym-conv", "rola-gla-kappa-asym-conv")
 ARMS = ROLA_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
 
 

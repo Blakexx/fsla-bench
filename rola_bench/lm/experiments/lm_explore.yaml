@@ -3,7 +3,8 @@
 # conditions), GDN/GLA at the same half-KV recurrent-state target, and the RoLA head/d_v structure
 # sweep. For block_size=512 and hidden=256, bounded-state target = 131072 floats/layer.
 # launch.py lm lm_explore
-arms:  [rola-rla-kappa-asym, rola-gla-kappa-asym, attn,
+arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv,
+        rola-gla-kappa-asym, rola-gla-kappa-asym-conv, attn,
         gdn, gla,
         rola-rla-kappa-asym__nh16_dv16, rola-rla-kappa-asym__nh4_dv64, rola-rla-kappa-asym__nh2_dv128]
 seeds: [1337]
