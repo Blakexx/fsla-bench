@@ -1,25 +1,61 @@
 # Diagnostic one-cell graph profile.
 #
-# This is not a reportable scaling benchmark. It runs profile_graph.py on one arm/cell and returns the
-# summary in the fleet result row; the worker also writes report/profiler artifacts under its perf output
-# directory.
+# This is not a reportable scaling benchmark. It runs profile_graph.py on each listed arm/cell and returns
+# each summary in its fleet result row; the worker also writes report/profiler artifacts under its perf
+# output directory.
 #
 # Launch after rebuilding the image:
 #   python launch.py perf profile_graph --boxes 1 --batch 1
 benches: [profile-graph]
+
+profiles:
+  - name: "rla_l131k_d16_nc64_square"
+    arm: "rola-rla"
+    L: 131072
+    batch: 2
+    d_qk: 16
+    nc: 64
+    routing: "square"
+    warmup: 2
+    reps: 1
+    torch_profiler: true
+
+  - name: "gla_l131k_d16_nc64_square"
+    arm: "rola-gla"
+    L: 131072
+    batch: 2
+    d_qk: 16
+    nc: 64
+    routing: "square"
+    warmup: 2
+    reps: 1
+    torch_profiler: true
+
+  - name: "rla_l131k_d16_nc256_square"
+    arm: "rola-rla"
+    L: 131072
+    batch: 2
+    d_qk: 16
+    nc: 256
+    routing: "square"
+    warmup: 1
+    reps: 1
+    torch_profiler: true
+
+  - name: "gla_l131k_d16_nc256_square"
+    arm: "rola-gla"
+    L: 131072
+    batch: 2
+    d_qk: 16
+    nc: 256
+    routing: "square"
+    warmup: 1
+    reps: 1
+    torch_profiler: true
+
 fleet:
   image: "blakeresearch/rola-bench:v28"
   offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
   idle_timeout: 900
   batch: 1
   per_batch_timeout: 3600
-  env:
-    PROFILE_ARM: "rola-gla"
-    PROFILE_L: "131072"
-    PROFILE_B: "2"
-    PROFILE_DQK: "16"
-    PROFILE_NC: "64"
-    PROFILE_ROUTING: "square"
-    PROFILE_WARMUP: "2"
-    PROFILE_REPS: "1"
-    PROFILE_TORCH_PROFILER: "1"

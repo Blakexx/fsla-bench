@@ -53,8 +53,10 @@ Fleet diagnostic launch:
 python launch.py perf profile_graph --boxes 1 --batch 1
 ```
 
-The fleet config uses `PROFILE_ARM`, `PROFILE_L`, `PROFILE_B`, `PROFILE_DQK`, `PROFILE_NC`,
-`PROFILE_ROUTING`, and `PROFILE_TORCH_PROFILER` to select the cell.
+The fleet config's `profiles:` list owns the cells to profile. Each entry becomes a run id:
+`perf-profile-graph-<name>`. A profile entry specifies `arm`, `L`, `batch`, `d_qk`, `nc`,
+`routing`, `warmup`, `reps`, and whether to collect `torch_profiler` artifacts. `PROFILE_*` env vars
+are kept only as an ad hoc fallback for manual/local one-off runs.
 
 Outputs:
 

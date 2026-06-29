@@ -16,6 +16,8 @@ import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
+from rola_bench.spec import load
+
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 REPS = int(os.environ.get("PERF_REPS", "15"))
 
@@ -68,36 +70,72 @@ def _env_bool(name, default=False):
     return v not in ("0", "", "false", "False", "no", "No")
 
 
-def run_profile_graph(out_dir):
+def _as_bool(v):
+    if isinstance(v, bool):
+        return v
+    return str(v) not in ("0", "", "false", "False", "no", "No")
+
+
+def _profile_from_env():
+    return {
+        "arm": os.environ.get("PROFILE_ARM", "rola-rla"),
+        "L": int(os.environ.get("PROFILE_L", "65536")),
+        "batch": int(os.environ.get("PROFILE_B", os.environ.get("PERF_B", "2"))),
+        "d_qk": int(os.environ.get("PROFILE_DQK", "16")),
+        "nc": int(os.environ.get("PROFILE_NC", "64")),
+        "routing": os.environ.get("PROFILE_ROUTING", "square"),
+        "warmup": int(os.environ.get("PROFILE_WARMUP", "2")),
+        "reps": int(os.environ.get("PROFILE_REPS", "1")),
+        "seed": int(os.environ.get("PROFILE_SEED", "0")),
+        "torch_profiler": _env_bool("PROFILE_TORCH_PROFILER", False),
+        "with_stack": _env_bool("PROFILE_WITH_STACK", False),
+        "top": int(os.environ.get("PROFILE_TOP", "30")),
+    }
+
+
+def _profile_from_spec(run_id):
+    prefix = "perf-profile-graph-"
+    if not run_id.startswith(prefix):
+        return _profile_from_env()
+    config = os.environ.get("PERF_CONFIG", "profile_graph")
+    name = run_id[len(prefix):]
+    spec = load("perf", config)
+    for profile in spec.get("profiles", []):
+        if profile.get("name") == name:
+            return profile
+    raise KeyError(f"profile {name!r} not found in perf config {config!r}")
+
+
+def run_profile_graph(out_dir, run_id="perf-profile-graph"):
     """One diagnostic graph profile on the box GPU.
 
-    Axes come from PROFILE_* env vars so a fleet config can reproduce a suspicious scaling cell without
-    adding another paper-facing benchmark surface.
+    Axes normally come from the perf YAML's `profiles:` list. PROFILE_* env vars remain as an ad hoc
+    fallback for local/manual runs.
     """
     from rola_bench.perf import profile_graph as pg
+    profile = _profile_from_spec(run_id)
     args = SimpleNamespace(
-        arm=os.environ.get("PROFILE_ARM", "rola-rla"),
-        L=int(os.environ.get("PROFILE_L", "65536")),
-        batch=int(os.environ.get("PROFILE_B", os.environ.get("PERF_B", "2"))),
-        d_qk=int(os.environ.get("PROFILE_DQK", "16")),
-        nc=int(os.environ.get("PROFILE_NC", "64")),
-        routing=os.environ.get("PROFILE_ROUTING", "square"),
-        warmup=int(os.environ.get("PROFILE_WARMUP", "2")),
-        reps=int(os.environ.get("PROFILE_REPS", "1")),
-        seed=int(os.environ.get("PROFILE_SEED", "0")),
-        torch_profiler=_env_bool("PROFILE_TORCH_PROFILER", False),
-        with_stack=_env_bool("PROFILE_WITH_STACK", False),
-        top=int(os.environ.get("PROFILE_TOP", "30")),
+        arm=profile.get("arm", "rola-rla"),
+        L=int(profile.get("L", 65536)),
+        batch=int(profile.get("batch", os.environ.get("PERF_B", "2"))),
+        d_qk=int(profile.get("d_qk", profile.get("dqk", 16))),
+        nc=int(profile.get("nc", 64)),
+        routing=profile.get("routing", "square"),
+        warmup=int(profile.get("warmup", 2)),
+        reps=int(profile.get("reps", 1)),
+        seed=int(profile.get("seed", 0)),
+        torch_profiler=_as_bool(profile.get("torch_profiler", False)),
+        with_stack=_as_bool(profile.get("with_stack", False)),
+        top=int(profile.get("top", 30)),
         out=Path(out_dir) / "profile_graph",
     )
-    return {"bench": "profile-graph", "profile_graph": pg.run(args)}
+    return {"bench": "profile-graph", "profile": profile, "profile_graph": pg.run(args)}
 
 
 BENCHES = {
     "perf-scaling-train": lambda o: run_scaling(o, "train"),
     "perf-scaling-prefill": lambda o: run_scaling(o, "prefill"),
     "perf-scaling-decode": lambda o: run_scaling(o, "decode"),
-    "perf-profile-graph": run_profile_graph,
 }
 
 
@@ -126,6 +164,8 @@ def main():
             print(f"[perf] {rid} FAILED: cuda unavailable ({cuda_err})", flush=True)
             continue
         fn = BENCHES.get(rid)
+        if fn is None and rid.startswith("perf-profile-graph"):
+            fn = lambda o, _rid=rid: run_profile_graph(o, _rid)
         if fn is None:
             _append({"run_id": rid, "ok": False, "gpu": gpu, "error": "unknown perf bench id"})
             print(f"[perf] unknown bench {rid!r}", flush=True)

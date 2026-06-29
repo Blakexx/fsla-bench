@@ -15,6 +15,16 @@ def perf_job(config="default"):
     knobs = {k: spec[k] for k in ("reps",) if k in spec}
     box_env = env_from("PERF", knobs)
     fleet = dict(spec.get("fleet", {}))
-    fleet["env"] = {**box_env, **fleet.get("env", {})}
-    return make_job("perf", config, lambda: [f"perf-{b}" for b in benches],
+    fleet["env"] = {"PERF_CONFIG": config, **box_env, **fleet.get("env", {})}
+
+    def _work_list():
+        ids = []
+        for bench in benches:
+            if bench == "profile-graph":
+                ids.extend(f"perf-profile-graph-{p['name']}" for p in spec.get("profiles", []))
+            else:
+                ids.append(f"perf-{bench}")
+        return ids
+
+    return make_job("perf", config, _work_list,
                     "python -u -m rola_bench.perf.run_perf", fleet)
