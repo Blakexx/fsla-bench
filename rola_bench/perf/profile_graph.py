@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -227,6 +228,213 @@ def _top_profiler_rows(prof, sort_by: str, limit: int) -> list[dict[str, Any]]:
             "cuda_mem_mib": _round(_mib(_evt_mem(evt, "cuda_memory_usage"))),
         })
     return rows
+
+
+def _tail_text(s: str, limit: int = 24000) -> str:
+    if len(s) <= limit:
+        return s
+    return s[:4000] + f"\n\n... <truncated {len(s) - limit} chars> ...\n\n" + s[-(limit - 4000):]
+
+
+def _find_tool(names: tuple[str, ...], extra_globs: tuple[str, ...] = ()) -> str | None:
+    for name in names:
+        path = shutil.which(name)
+        if path:
+            return path
+
+    for pattern in extra_globs:
+        candidates = Path("/").glob(pattern.lstrip("/"))
+        for path in sorted(candidates, key=lambda p: str(p), reverse=True):
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+    return None
+
+
+def _child_profile_cmd(args, out_dir: Path) -> list[str]:
+    cmd = [
+        sys.executable, "-m", "rola_bench.perf.profile_graph",
+        "--arm", args.arm,
+        "--L", str(args.L),
+        "--batch", str(args.batch),
+        "--d-qk", str(args.d_qk),
+        "--nc", str(args.nc),
+        "--routing", args.routing,
+        "--warmup", str(args.deep_warmup),
+        "--reps", "1",
+        "--seed", str(args.seed),
+        "--top", str(args.top),
+        "--out", str(out_dir / "deep_child"),
+        "--deep-child",
+    ]
+    return cmd
+
+
+def _run_deep_command(name: str, cmd: list[str], out_dir: Path, timeout: int) -> dict[str, Any]:
+    log = out_dir / f"{name}.log"
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env={**os.environ, "ROLA_PROFILE_DEEP_CHILD": "1"},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        stdout, stderr = proc.stdout, proc.stderr
+        log.write_text(stdout + ("\n\n--- STDERR ---\n" + stderr if stderr else ""))
+        return {
+            "tool": name,
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "seconds": _round(time.time() - started),
+            "command": cmd,
+            "stdout": _tail_text(stdout),
+            "stderr": _tail_text(stderr),
+            "log_text": _tail_text(log.read_text()),
+        }
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ""
+        stderr = e.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        log.write_text(stdout + ("\n\n--- STDERR ---\n" + stderr if stderr else ""))
+        return {
+            "tool": name,
+            "ok": False,
+            "returncode": None,
+            "seconds": _round(time.time() - started),
+            "command": cmd,
+            "error": f"timeout after {timeout}s",
+            "stdout": _tail_text(stdout),
+            "stderr": _tail_text(stderr),
+            "log_text": _tail_text(log.read_text()),
+        }
+
+
+def _attach_ncu_details(info: dict[str, Any], ncu: str, report_prefix: Path, out_dir: Path, timeout: int) -> None:
+    report_file = report_prefix.with_suffix(".ncu-rep")
+    info["report_file"] = str(report_file)
+    if not info.get("ok") or not report_file.exists():
+        return
+
+    cmd = [
+        ncu,
+        "--import", str(report_file),
+        "--page", "details",
+        "--print-details", "all",
+    ]
+    log = out_dir / "ncu_details.log"
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        log.write_text(proc.stdout + ("\n\n--- STDERR ---\n" + proc.stderr if proc.stderr else ""))
+        info.update({
+            "details_ok": proc.returncode == 0,
+            "details_returncode": proc.returncode,
+            "details_seconds": _round(time.time() - started),
+            "details_command": cmd,
+            "details_text": _tail_text(proc.stdout),
+            "details_stderr": _tail_text(proc.stderr),
+        })
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ""
+        stderr = e.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        log.write_text(stdout + ("\n\n--- STDERR ---\n" + stderr if stderr else ""))
+        info.update({
+            "details_ok": False,
+            "details_returncode": None,
+            "details_seconds": _round(time.time() - started),
+            "details_command": cmd,
+            "details_error": f"timeout after {timeout}s",
+            "details_text": _tail_text(stdout),
+            "details_stderr": _tail_text(stderr),
+        })
+
+
+def _deep_profile(args, out_dir: Path) -> dict[str, Any]:
+    """Optional NVIDIA-tool profile.
+
+    PyTorch profiler stops at the Triton launch boundary. Nsight Systems explains launch ordering,
+    gaps, and memory timeline; Nsight Compute samples one/few matching Triton kernel launches and reports
+    occupancy, memory, instruction, and stall metrics. Both are opt-in because they can be slow and may
+    require host profiler permissions.
+    """
+    mode = getattr(args, "deep_profile", "none")
+    if mode in (None, "", "none") or getattr(args, "deep_child", False):
+        return {"enabled": False}
+    out = {"enabled": True, "mode": mode, "tools": {}}
+    child = _child_profile_cmd(args, out_dir)
+    timeout = int(getattr(args, "deep_timeout", 900))
+
+    if mode in ("nsys", "both"):
+        nsys = _find_tool(
+            ("nsys",),
+            (
+                "/opt/nvidia/nsight-systems/*/bin/nsys",
+                "/usr/local/cuda-*/bin/nsys",
+            ),
+        )
+        if nsys is None:
+            out["tools"]["nsys"] = {"ok": False, "error": "nsys not found on PATH or standard install paths"}
+        else:
+            report = out_dir / "nsys_profile"
+            cmd = [
+                nsys, "profile",
+                "--force-overwrite=true",
+                "--stats=true",
+                "--trace=cuda,nvtx,osrt",
+                "--cuda-memory-usage=true",
+                "--sample=none",
+                "-o", str(report),
+                *child,
+            ]
+            out["tools"]["nsys"] = _run_deep_command("nsys", cmd, out_dir, timeout)
+
+    if mode in ("ncu", "both"):
+        ncu = _find_tool(
+            ("ncu", "nv-nsight-cu-cli"),
+            (
+                "/opt/nvidia/nsight-compute/*/ncu",
+                "/usr/local/cuda-*/bin/ncu",
+            ),
+        )
+        if ncu is None:
+            out["tools"]["ncu"] = {
+                "ok": False,
+                "error": "ncu/nv-nsight-cu-cli not found on PATH or standard install paths",
+            }
+        else:
+            report = out_dir / "ncu_kappa_fwd_chunk"
+            kernel = getattr(args, "deep_kernel_name", "_kappa_fwd_chunk")
+            cmd = [
+                ncu,
+                "--force-overwrite",
+                "--target-processes", "all",
+                "--kernel-name-base", "function",
+                "--kernel-name", f"regex:{kernel}",
+                "--launch-skip", str(getattr(args, "deep_launch_skip", 16)),
+                "--launch-count", str(getattr(args, "deep_launch_count", 1)),
+                "--set", getattr(args, "deep_ncu_set", "full"),
+                "--export", str(report),
+                *child,
+            ]
+            info = _run_deep_command("ncu", cmd, out_dir, timeout)
+            _attach_ncu_details(info, ncu, report, out_dir, timeout)
+            out["tools"]["ncu"] = info
+    return out
 
 
 def _build_arm(arm: str, L: int, d: int, nc: int, routing: str):
@@ -496,6 +704,18 @@ def _markdown_report(summary: dict[str, Any]) -> str:
                 lines.append(f"- `{k}`: `<embedded text table, {len(v)} chars>`")
                 continue
             lines.append(f"- `{k}`: `{v}`")
+    if summary.get("deep_profile", {}).get("enabled"):
+        lines.extend(["", "## Deep Profile", ""])
+        deep = summary["deep_profile"]
+        lines.append(f"- `mode`: `{deep.get('mode')}`")
+        for name, info in deep.get("tools", {}).items():
+            lines.append(f"- `{name}`: `ok={info.get('ok')}` `returncode={info.get('returncode')}`")
+            if info.get("error"):
+                lines.append(f"  - error: `{info['error']}`")
+            if info.get("log_text"):
+                lines.append(f"  - `log_text`: `<embedded {len(info['log_text'])} chars>`")
+            if info.get("details_text"):
+                lines.append(f"  - `details_text`: `<embedded {len(info['details_text'])} chars>`")
     lines.append("")
     return "\n".join(lines)
 
@@ -512,6 +732,18 @@ def _stdout_summary(summary: dict[str, Any]) -> dict[str, Any]:
             if key in prof:
                 prof[key] = f"<embedded text table, {len(prof[key])} chars>"
         out["torch_profiler"] = prof
+    deep = out.get("deep_profile")
+    if isinstance(deep, dict):
+        deep = dict(deep)
+        tools = {}
+        for name, info in deep.get("tools", {}).items():
+            info = dict(info)
+            for key in ("stdout", "stderr", "log_text", "details_text", "details_stderr"):
+                if key in info:
+                    info[key] = f"<embedded {len(info[key])} chars>"
+            tools[name] = info
+        deep["tools"] = tools
+        out["deep_profile"] = deep
     return out
 
 
@@ -569,6 +801,9 @@ def run(args) -> dict[str, Any]:
     }
     if profiler_info is not None:
         summary["torch_profiler"] = profiler_info
+    deep_info = _deep_profile(args, out_dir)
+    if deep_info.get("enabled"):
+        summary["deep_profile"] = deep_info
     summary["diagnostics"] = _diagnostics(whole, phases, ledger, profiler_info)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (out_dir / "report.md").write_text(_markdown_report(summary))
@@ -592,6 +827,17 @@ def main():
     p.add_argument("--torch-profiler", action="store_true")
     p.add_argument("--with-stack", action="store_true")
     p.add_argument("--top", type=int, default=30)
+    p.add_argument("--deep-profile", choices=("none", "nsys", "ncu", "both"),
+                   default=os.environ.get("ROLA_DEEP_PROFILE", "none"),
+                   help="Optional NVIDIA profiler pass around a child run. nsys gives timeline/launch/memory; "
+                        "ncu samples matching Triton kernels for hardware counters.")
+    p.add_argument("--deep-kernel-name", default=os.environ.get("ROLA_DEEP_KERNEL", "_kappa_fwd_chunk"))
+    p.add_argument("--deep-launch-skip", type=int, default=int(os.environ.get("ROLA_DEEP_LAUNCH_SKIP", "16")))
+    p.add_argument("--deep-launch-count", type=int, default=int(os.environ.get("ROLA_DEEP_LAUNCH_COUNT", "1")))
+    p.add_argument("--deep-ncu-set", default=os.environ.get("ROLA_DEEP_NCU_SET", "full"))
+    p.add_argument("--deep-warmup", type=int, default=int(os.environ.get("ROLA_DEEP_WARMUP", "1")))
+    p.add_argument("--deep-timeout", type=int, default=int(os.environ.get("ROLA_DEEP_TIMEOUT", "900")))
+    p.add_argument("--deep-child", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--out", type=Path, default=Path(os.environ.get(
         "ROLA_PROFILE_OUT", str(C.RESULTS_DIR / "profile_graph"))))
     args = p.parse_args()

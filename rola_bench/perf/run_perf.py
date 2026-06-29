@@ -127,6 +127,14 @@ def run_profile_graph(out_dir, run_id="perf-profile-graph"):
         torch_profiler=_as_bool(profile.get("torch_profiler", False)),
         with_stack=_as_bool(profile.get("with_stack", False)),
         top=int(profile.get("top", 30)),
+        deep_profile=profile.get("deep_profile", os.environ.get("ROLA_DEEP_PROFILE", "none")),
+        deep_kernel_name=profile.get("deep_kernel_name", os.environ.get("ROLA_DEEP_KERNEL", "_kappa_fwd_chunk")),
+        deep_launch_skip=int(profile.get("deep_launch_skip", os.environ.get("ROLA_DEEP_LAUNCH_SKIP", 16))),
+        deep_launch_count=int(profile.get("deep_launch_count", os.environ.get("ROLA_DEEP_LAUNCH_COUNT", 1))),
+        deep_ncu_set=profile.get("deep_ncu_set", os.environ.get("ROLA_DEEP_NCU_SET", "full")),
+        deep_warmup=int(profile.get("deep_warmup", os.environ.get("ROLA_DEEP_WARMUP", 1))),
+        deep_timeout=int(profile.get("deep_timeout", os.environ.get("ROLA_DEEP_TIMEOUT", 900))),
+        deep_child=False,
         out=Path(out_dir) / "profile_graph",
     )
     return {"bench": "profile-graph", "profile": profile, "profile_graph": pg.run(args)}
