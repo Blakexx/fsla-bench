@@ -32,10 +32,10 @@ case "$TARGET" in
   *) echo "unknown target '$TARGET' (mqar|lm)"; exit 2;;
 esac
 
-CLA="/mnt/c/Users/Blake/Documents/VSCode/CLA"
-FLA="/home/blake/flash-linear-attention-rola"
-ZOO="/home/blake/zoology"
-RB="/home/blake/rola-bench"
+CLA="${ROLA_CLA_SRC:-/mnt/c/Users/Blake/Documents/VSCode/CLA}"
+FLA="${ROLA_FLA_SRC:-/home/blake/flash-linear-attention-rola}"
+ZOO="${ROLA_ZOO_SRC:-/home/blake/zoology}"
+RB="${ROLA_BENCH_SRC:-/home/blake/rola-bench}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 STAGE="$(mktemp -d)"

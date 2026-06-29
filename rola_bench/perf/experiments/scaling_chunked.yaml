@@ -1,0 +1,23 @@
+# Chunked forward scaling run.
+#
+# This is the prefill/chunked-forward arm of scaling.py: RoLA/monolith/attention layer forward,
+# swept over L x state fraction x d_qk x routing. It is separate from scaling_dbg so reportable
+# reruns do not rely on a debug/no_kill config.
+#
+# Launch:
+#   python launch.py perf scaling_chunked --boxes 1
+benches: [scaling-prefill]
+reps: 10
+fleet:
+  image: "blakeresearch/rola-bench:v28"
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
+  idle_timeout: 1800
+  batch: 1
+  per_batch_timeout: 10800
+  env:
+    # Use the scaling.py default prefill frontier:
+    #   SCALE_LENS_PREFILL = 1024,4096,16384,65536,131072
+    SCALE_NCS: "16,64,256,1024"
+    SCALE_DQKS: "16,64,128"
+    SCALE_ROUTINGS: "flat,square,tree"
+    PERF_B: "2"
