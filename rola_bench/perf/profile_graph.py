@@ -8,6 +8,7 @@ and arm names as the scaling benchmark.
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import json
 import os
@@ -172,10 +173,13 @@ def _torch_profile(module, x, out_dir: Path, top: int, with_stack: bool) -> dict
     table_mem = prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=top)
     (out_dir / "profiler_cuda.txt").write_text(table_cuda)
     (out_dir / "profiler_memory.txt").write_text(table_mem)
+    trace_bytes = trace_path.read_bytes()
     return {
-        "trace": str(trace_path),
-        "cuda_table": str(out_dir / "profiler_cuda.txt"),
-        "memory_table": str(out_dir / "profiler_memory.txt"),
+        "trace_encoding": "chrome_trace_json_gzip_base64",
+        "trace_json_gz_base64": base64.b64encode(trace_bytes).decode("ascii"),
+        "trace_json_gz_bytes": len(trace_bytes),
+        "cuda_table": table_cuda,
+        "memory_table": table_mem,
         "peak_delta_mib": _round(_mib(peak - base)),
         "top_cuda": _top_profiler_rows(prof, "self_cuda_time_total", top),
         "top_memory": _top_profiler_rows(prof, "self_cuda_memory_usage", top),
@@ -483,9 +487,31 @@ def _markdown_report(summary: dict[str, Any]) -> str:
         for k, v in summary["torch_profiler"].items():
             if k.startswith("top_"):
                 continue
+            if k == "trace_json_gz_base64":
+                nbytes = summary["torch_profiler"].get("trace_json_gz_bytes", 0)
+                lines.append(f"- `{k}`: `<embedded {nbytes} bytes gzip/base64>`")
+                continue
+            if k in ("cuda_table", "memory_table"):
+                lines.append(f"- `{k}`: `<embedded text table, {len(v)} chars>`")
+                continue
             lines.append(f"- `{k}`: `{v}`")
     lines.append("")
     return "\n".join(lines)
+
+
+def _stdout_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Small console copy; summary.json/result payload remains fully self-contained."""
+    out = dict(summary)
+    prof = out.get("torch_profiler")
+    if isinstance(prof, dict):
+        prof = dict(prof)
+        if "trace_json_gz_base64" in prof:
+            prof["trace_json_gz_base64"] = f"<embedded {prof.get('trace_json_gz_bytes', 0)} bytes gzip/base64>"
+        for key in ("cuda_table", "memory_table"):
+            if key in prof:
+                prof[key] = f"<embedded text table, {len(prof[key])} chars>"
+        out["torch_profiler"] = prof
+    return out
 
 
 def run(args) -> dict[str, Any]:
@@ -545,7 +571,7 @@ def run(args) -> dict[str, Any]:
     summary["diagnostics"] = _diagnostics(whole, phases, ledger, profiler_info)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (out_dir / "report.md").write_text(_markdown_report(summary))
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(_stdout_summary(summary), indent=2))
     print(f"\nWROTE {out_dir}")
     return summary
 
