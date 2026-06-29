@@ -32,6 +32,39 @@ Fleet axes are configured via `SCALE_LENS[_TYPE]`, `SCALE_NCS`, `SCALE_DQKS`,
 - Prefill peak memory uses CUDA's `max_memory_allocated() - base` around the forward call.
 - Training also reports retained activation memory from `saved_tensors_hooks`, before backward.
 
+## Diagnostic profiling
+
+`profile_graph.py` profiles one concrete scaling cell and writes an actionable report instead of a
+paper table. Use it when a scaling row looks wrong and you need the computation graph broken into
+phase high-water memory, whole-forward peak, analytic tensor sizes, and optional PyTorch profiler
+tables/traces.
+
+Example:
+
+```bash
+PERF_B=2 python -m rola_bench.perf.profile_graph \
+  --arm rola-gla --L 65536 --d-qk 16 --nc 64 --routing square \
+  --torch-profiler --out /home/blake/rola-scratch/results/profile_graph
+```
+
+Fleet diagnostic launch:
+
+```bash
+python launch.py perf profile_graph --boxes 1 --batch 1
+```
+
+The fleet config uses `PROFILE_ARM`, `PROFILE_L`, `PROFILE_B`, `PROFILE_DQK`, `PROFILE_NC`,
+`PROFILE_ROUTING`, and `PROFILE_TORCH_PROFILER` to select the cell.
+
+Outputs:
+
+- `summary.json`: machine-readable cell metadata, phase timings, memory deltas, and analytic sizes.
+- `report.md`: short human-readable diagnosis scaffold.
+- `profiler_cuda.txt` / `profiler_memory.txt` / `trace.json.gz` when `--torch-profiler` is set.
+
+This diagnostic entrypoint is deliberately separate from the scaling launch configs. It is for root
+causing constants and memory walls, not for producing headline curves.
+
 ## Archive
 
 Older perf experiments, matched-state scratch benches, debug launch configs, and stale perf runtime

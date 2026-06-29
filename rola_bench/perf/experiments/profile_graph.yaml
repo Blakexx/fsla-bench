@@ -1,0 +1,25 @@
+# Diagnostic one-cell graph profile.
+#
+# This is not a reportable scaling benchmark. It runs profile_graph.py on one arm/cell and returns the
+# summary in the fleet result row; the worker also writes report/profiler artifacts under its perf output
+# directory.
+#
+# Launch after rebuilding the image:
+#   python launch.py perf profile_graph --boxes 1 --batch 1
+benches: [profile-graph]
+fleet:
+  image: "blakeresearch/rola-bench:v28"
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
+  idle_timeout: 900
+  batch: 1
+  per_batch_timeout: 3600
+  env:
+    PROFILE_ARM: "rola-gla"
+    PROFILE_L: "131072"
+    PROFILE_B: "2"
+    PROFILE_DQK: "16"
+    PROFILE_NC: "64"
+    PROFILE_ROUTING: "square"
+    PROFILE_WARMUP: "2"
+    PROFILE_REPS: "1"
+    PROFILE_TORCH_PROFILER: "1"

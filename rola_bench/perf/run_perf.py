@@ -14,6 +14,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 REPS = int(os.environ.get("PERF_REPS", "15"))
@@ -60,10 +61,43 @@ def run_scaling(out_dir, which):
     return {"scaling": rows, "bench": which}
 
 
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v not in ("0", "", "false", "False", "no", "No")
+
+
+def run_profile_graph(out_dir):
+    """One diagnostic graph profile on the box GPU.
+
+    Axes come from PROFILE_* env vars so a fleet config can reproduce a suspicious scaling cell without
+    adding another paper-facing benchmark surface.
+    """
+    from rola_bench.perf import profile_graph as pg
+    args = SimpleNamespace(
+        arm=os.environ.get("PROFILE_ARM", "rola-rla"),
+        L=int(os.environ.get("PROFILE_L", "65536")),
+        batch=int(os.environ.get("PROFILE_B", os.environ.get("PERF_B", "2"))),
+        d_qk=int(os.environ.get("PROFILE_DQK", "16")),
+        nc=int(os.environ.get("PROFILE_NC", "64")),
+        routing=os.environ.get("PROFILE_ROUTING", "square"),
+        warmup=int(os.environ.get("PROFILE_WARMUP", "2")),
+        reps=int(os.environ.get("PROFILE_REPS", "1")),
+        seed=int(os.environ.get("PROFILE_SEED", "0")),
+        torch_profiler=_env_bool("PROFILE_TORCH_PROFILER", False),
+        with_stack=_env_bool("PROFILE_WITH_STACK", False),
+        top=int(os.environ.get("PROFILE_TOP", "30")),
+        out=Path(out_dir) / "profile_graph",
+    )
+    return {"bench": "profile-graph", "profile_graph": pg.run(args)}
+
+
 BENCHES = {
     "perf-scaling-train": lambda o: run_scaling(o, "train"),
     "perf-scaling-prefill": lambda o: run_scaling(o, "prefill"),
     "perf-scaling-decode": lambda o: run_scaling(o, "decode"),
+    "perf-profile-graph": run_profile_graph,
 }
 
 
