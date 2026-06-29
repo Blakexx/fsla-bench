@@ -63,6 +63,11 @@ Outputs:
 - `summary.json`: machine-readable cell metadata, phase timings, memory deltas, and analytic sizes.
 - `report.md`: short human-readable diagnosis scaffold.
 - `profiler_cuda.txt` / `profiler_memory.txt` / `trace.json.gz` when `--torch-profiler` is set.
+- Synced profiler rows: `summary.json` includes `torch_profiler.top_cuda` and
+  `torch_profiler.top_memory`, so the fleet result row is useful even when raw trace artifacts are not
+  pulled back.
+- Buffer ledger: `summary.json` includes `buffer_ledger` and `diagnostics.unattributed_routed_peak_mib`
+  to separate known model-sized buffers from hidden allocator/kernel workspace.
 
 This diagnostic entrypoint is deliberately separate from the scaling launch configs. It is for root
 causing constants and memory walls, not for producing headline curves.

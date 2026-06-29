@@ -152,6 +152,7 @@ def _torch_profile(module, x, out_dir: Path, top: int, with_stack: bool) -> dict
     with torch.inference_mode():
         _sync()
         torch.cuda.reset_peak_memory_stats()
+        base = torch.cuda.memory_allocated()
         with profile(
             activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
             record_shapes=True,
@@ -161,6 +162,7 @@ def _torch_profile(module, x, out_dir: Path, top: int, with_stack: bool) -> dict
             with record_function("profile_graph::whole_forward"):
                 _module_forward(module, x)
         _sync()
+        peak = torch.cuda.max_memory_allocated()
     raw_trace = trace_path.with_suffix(".json")
     prof.export_chrome_trace(str(raw_trace))
     with raw_trace.open("rb") as src, gzip.open(trace_path, "wb") as dst:
@@ -174,7 +176,53 @@ def _torch_profile(module, x, out_dir: Path, top: int, with_stack: bool) -> dict
         "trace": str(trace_path),
         "cuda_table": str(out_dir / "profiler_cuda.txt"),
         "memory_table": str(out_dir / "profiler_memory.txt"),
+        "peak_delta_mib": _round(_mib(peak - base)),
+        "top_cuda": _top_profiler_rows(prof, "self_cuda_time_total", top),
+        "top_memory": _top_profiler_rows(prof, "self_cuda_memory_usage", top),
     }
+
+
+def _evt_us(evt, name: str) -> float:
+    aliases = {
+        "self_cuda_time_total": ("self_cuda_time_total", "self_device_time_total"),
+        "cuda_time_total": ("cuda_time_total", "device_time_total"),
+    }
+    for attr in aliases.get(name, (name,)):
+        if hasattr(evt, attr):
+            return float(getattr(evt, attr))
+    return 0.0
+
+
+def _evt_mem(evt, name: str) -> float:
+    aliases = {
+        "self_cuda_memory_usage": ("self_cuda_memory_usage", "self_device_memory_usage"),
+        "cuda_memory_usage": ("cuda_memory_usage", "device_memory_usage"),
+    }
+    for attr in aliases.get(name, (name,)):
+        if hasattr(evt, attr):
+            return float(getattr(evt, attr))
+    return 0.0
+
+
+def _top_profiler_rows(prof, sort_by: str, limit: int) -> list[dict[str, Any]]:
+    def key(evt):
+        if "memory" in sort_by:
+            return _evt_mem(evt, sort_by)
+        return _evt_us(evt, sort_by)
+
+    rows = []
+    for evt in sorted(prof.key_averages(), key=key, reverse=True)[:limit]:
+        rows.append({
+            "key": evt.key,
+            "count": evt.count,
+            "self_cpu_ms": _round(evt.self_cpu_time_total / 1000.0),
+            "cpu_total_ms": _round(evt.cpu_time_total / 1000.0),
+            "self_cuda_ms": _round(_evt_us(evt, "self_cuda_time_total") / 1000.0),
+            "cuda_total_ms": _round(_evt_us(evt, "cuda_time_total") / 1000.0),
+            "self_cuda_mem_mib": _round(_mib(_evt_mem(evt, "self_cuda_memory_usage"))),
+            "cuda_mem_mib": _round(_mib(_evt_mem(evt, "cuda_memory_usage"))),
+        })
+    return rows
 
 
 def _build_arm(arm: str, L: int, d: int, nc: int, routing: str):
@@ -223,6 +271,98 @@ def _analytic_sizes(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[s
             "state_x_pct_physical": sc._state_x_pct(nc, d, L),
         })
     return sizes
+
+
+def _ledger_item(name: str, shape: tuple[int, ...], dtype: str, bytes_per_el: int, note: str = ""):
+    numel = 1
+    for s in shape:
+        numel *= int(s)
+    return {
+        "name": name,
+        "shape": list(shape),
+        "dtype": dtype,
+        "mib": _round(_mib(numel * bytes_per_el)),
+        "note": note,
+    }
+
+
+def _buffer_ledger(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[str, Any]:
+    """Expected major HBM buffers for the layer and routed forward.
+
+    This is an analytic ledger, not a CUDA allocator trace. Its job is to show whether measured peak is
+    explained by known model-sized tensors or by hidden kernel/profiler/transient workspace.
+    """
+    sc = _scaling()
+    H = C.H
+    dm = sc.DM
+    bf16 = torch.tensor([], dtype=C.DT).element_size()
+    fp32 = 4
+    items = [
+        _ledger_item("input_x", (B, L, dm), "bf16", bf16, "Layer input held live by caller."),
+        _ledger_item("q", (B, L, H, d), "bf16", bf16, "Projected query."),
+        _ledger_item("k", (B, L, H, d), "bf16", bf16, "Projected key."),
+        _ledger_item("v", (B, L, H, d), "bf16", bf16, "Projected value."),
+        _ledger_item("q_feature", (B, L, H, d), "bf16", bf16, "Feature-mapped query."),
+        _ledger_item("k_feature", (B, L, H, d), "bf16", bf16, "Feature-mapped key."),
+        _ledger_item("layer_output", (B, L, dm), "bf16", bf16, "Output after o_proj."),
+    ]
+    routed = []
+    if arm.startswith("rola-"):
+        D = module.route_D
+        b = module.route_b
+        BH = B * H
+        route_count = 1 if module.read_W is None else 2
+        for name in ("write_router_logits", "read_router_logits")[:route_count]:
+            items.append(_ledger_item(name, (B, L, H, D, b), "bf16", bf16, "Materialized factor logits."))
+        if module.state_norm == "kappa":
+            items.append(_ledger_item("kappa", (B, L, H, 1), "bf16", bf16, "Per-token kappa exponent."))
+        if module.kernel == "gla_scalar":
+            items.append(_ledger_item("gla_alpha_logits", (B, L, H), "bf16", bf16, "Per-head scalar decay logits."))
+        routed = [
+            _ledger_item("kappa_num", (BH, L, d), "fp32", fp32, "Full-length numerator buffer in _kappa_routed_fwd."),
+            _ledger_item("kappa_den", (BH, L), "fp32", fp32, "Full-length denominator buffer in _kappa_routed_fwd."),
+            _ledger_item("Sval", (BH, nc, d, d), "fp32", fp32, "Running value state inside _kappa_routed_fwd."),
+            _ledger_item("Sden", (BH, nc, d), "fp32", fp32, "Running denominator state inside _kappa_routed_fwd."),
+            _ledger_item("routed_out_bf16", (BH, L, d), "bf16", bf16, "Returned routed output before o_proj."),
+        ]
+        if module.state_norm == "kappa":
+            routed.append(_ledger_item(
+                "normalized_out_temp", (BH, L, d), "fp32", fp32,
+                "Temporary fp32 num/den result before casting back to bf16."))
+    total_live = sum(x["mib"] for x in items)
+    total_routed = sum(x["mib"] for x in routed)
+    return {
+        "major_live_tensors": items,
+        "routed_internal_tensors": routed,
+        "major_live_total_mib": _round(total_live),
+        "routed_internal_total_mib": _round(total_routed),
+    }
+
+
+def _phase_by_name(phases: list[Phase], name: str) -> Phase | None:
+    for phase in phases:
+        if phase.name == name:
+            return phase
+    return None
+
+
+def _diagnostics(whole: dict[str, Any], phases: list[Phase], ledger: dict[str, Any],
+                 profiler_info: dict[str, Any] | None) -> dict[str, Any]:
+    routed = _phase_by_name(phases, "chunk_rola_routed")
+    routed_peak = routed.peak_delta_mib if routed is not None else None
+    routed_known = ledger.get("routed_internal_total_mib", 0.0)
+    out = {
+        "whole_forward_peak_mib": whole.get("peak_delta_mib"),
+        "routed_phase_peak_mib": routed_peak,
+        "known_routed_internal_mib": routed_known,
+    }
+    if routed_peak is not None:
+        out["unattributed_routed_peak_mib"] = _round(max(0.0, routed_peak - routed_known))
+    if profiler_info is not None:
+        out["profiler_peak_mib"] = profiler_info.get("peak_delta_mib")
+        out["profiler_peak_over_whole_mib"] = _round(
+            profiler_info.get("peak_delta_mib", 0.0) - whole.get("peak_delta_mib", 0.0))
+    return out
 
 
 def _profile_rola_phases(module, x, args) -> list[Phase]:
@@ -323,9 +463,26 @@ def _markdown_report(summary: dict[str, Any]) -> str:
             "- If peak tracks router logits more than recurrent state, the fix is tiled/progressive "
             "router-logit production rather than changing the state formula.",
         ])
+    diagnostics = summary.get("diagnostics", {})
+    if diagnostics:
+        lines.extend(["", "## Diagnostics", ""])
+        for k, v in diagnostics.items():
+            lines.append(f"- `{k}`: `{v}`")
+    ledger = summary.get("buffer_ledger", {})
+    if ledger:
+        lines.extend(["", "## Routed Buffer Ledger", ""])
+        lines.append(f"- `major_live_total_mib`: `{ledger.get('major_live_total_mib')}`")
+        lines.append(f"- `routed_internal_total_mib`: `{ledger.get('routed_internal_total_mib')}`")
+        lines.append("")
+        lines.append("| buffer | MiB | dtype | shape |")
+        lines.append("|---|---:|---|---|")
+        for item in ledger.get("routed_internal_tensors", []):
+            lines.append(f"| `{item['name']}` | {item['mib']} | `{item['dtype']}` | `{item['shape']}` |")
     if summary.get("torch_profiler"):
         lines.extend(["", "## Profiler Artifacts", ""])
         for k, v in summary["torch_profiler"].items():
+            if k.startswith("top_"):
+                continue
             lines.append(f"- `{k}`: `{v}`")
     lines.append("")
     return "\n".join(lines)
@@ -356,6 +513,7 @@ def run(args) -> dict[str, Any]:
     profiler_info = None
     if args.torch_profiler:
         profiler_info = _torch_profile(module, x, out_dir, args.top, args.with_stack)
+    ledger = _buffer_ledger(module, args.arm, args.batch, args.L, args.d_qk, args.nc)
 
     summary = {
         "cell": {
@@ -380,9 +538,11 @@ def run(args) -> dict[str, Any]:
         "whole_forward": whole,
         "phases": [asdict(p) for p in phases],
         "analytic": _analytic_sizes(module, args.arm, args.batch, args.L, args.d_qk, args.nc),
+        "buffer_ledger": ledger,
     }
     if profiler_info is not None:
         summary["torch_profiler"] = profiler_info
+    summary["diagnostics"] = _diagnostics(whole, phases, ledger, profiler_info)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (out_dir / "report.md").write_text(_markdown_report(summary))
     print(json.dumps(summary, indent=2))
