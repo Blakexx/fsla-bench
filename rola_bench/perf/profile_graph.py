@@ -394,10 +394,12 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             kap = None
         if module.kernel == "gla_scalar":
             alpha_logits = add("gla_alpha_logits", lambda: module.w_g(x))
+            alpha = add("gla_alpha_sigmoid", lambda: torch.sigmoid(alpha_logits).view(B, L, H))
             Wg = module.w_g.weight
             h = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
         else:
             alpha_logits = None
+            alpha = None
             Wg = None
             h = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
         wl = add("write_router_logits", lambda: module._factor_logits(x, module.write_W, module.write_b))
@@ -410,7 +412,7 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             qf, kf, v, h, module.write_W if module.read_W is None else module.read_W, module.write_W,
             module.route_D, module.route_b, norm=module.state_norm, kappa=kap, scale=1.0,
             b_r=(module.write_b if module.read_W is None else module.read_b),
-            b_w=module.write_b, Wg=Wg, wl=wl, rl=rl))
+            b_w=module.write_b, Wg=Wg, wl=wl, rl=rl, alpha=alpha))
         if alpha_logits is not None:
             # Keep the tensor live until after the routed phase, matching the real forward's lifetime.
             _ = alpha_logits
