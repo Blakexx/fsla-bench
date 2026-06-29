@@ -9,7 +9,7 @@
 benches: [profile-graph]
 
 profiles:
-  - name: "rla_l131k_d16_nc64_square"
+  - name: "v34_rla_l131k_d16_nc64_square"
     arm: "rola-rla"
     L: 131072
     batch: 2
@@ -20,7 +20,7 @@ profiles:
     reps: 1
     torch_profiler: true
 
-  - name: "gla_l131k_d16_nc64_square"
+  - name: "v34_gla_l131k_d16_nc64_square"
     arm: "rola-gla"
     L: 131072
     batch: 2
@@ -31,7 +31,7 @@ profiles:
     reps: 1
     torch_profiler: true
 
-  - name: "rla_l131k_d16_nc256_square"
+  - name: "v34_rla_l131k_d16_nc256_square"
     arm: "rola-rla"
     L: 131072
     batch: 2
@@ -42,7 +42,7 @@ profiles:
     reps: 1
     torch_profiler: true
 
-  - name: "gla_l131k_d16_nc256_square"
+  - name: "v34_gla_l131k_d16_nc256_square"
     arm: "rola-gla"
     L: 131072
     batch: 2
@@ -54,7 +54,7 @@ profiles:
     torch_profiler: true
 
 fleet:
-  image: "blakeresearch/rola-bench:v34"
+  image: "blakeresearch/rola-bench:v35"
   offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
   idle_timeout: 900
   batch: 1
