@@ -396,12 +396,11 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             alpha_logits = add("gla_alpha_logits", lambda: module.w_g(x))
             alpha = add("gla_alpha_sigmoid", lambda: torch.sigmoid(alpha_logits).view(B, L, H))
             Wg = module.w_g.weight
-            h = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
         else:
             alpha_logits = None
             alpha = None
             Wg = None
-            h = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
+        h = x.new_empty(B, L, H, 1)
         wl = add("write_router_logits", lambda: module._factor_logits(x, module.write_W, module.write_b))
         if module.read_W is None:
             rl = wl
