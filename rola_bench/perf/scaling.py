@@ -46,6 +46,7 @@ while this bench fires the kappa-norm kernels — 0/4 overlap).
 """
 import argparse
 import contextlib
+import gc
 import importlib
 import math
 import os
@@ -506,19 +507,9 @@ def _summarize_prefill(rows, L, x_pct, d, nc, spec, recs):
     rows.append(row); print(row, flush=True)
 
 
-def _timed_sample(bench, L, d, nc, spec):
-    """Run one isolated timing sample for an arm.
-
-    Modules are intentionally built per sample so each arm's peak/OOM reflects only that arm, while the
-    outer loop still cycles arms round-robin to share clock/thermal drift.
-    """
-    seed = 10_000 + L + d * 31 + nc * 17 + spec["idx"]
-    torch.manual_seed(seed)
-    module = _build_scaling_arm(spec, L, d, nc)
-    if module is None:
-        return None
-    torch.manual_seed(seed + 1)
-    x = torch.randn(C.B, L, DM, device=C.DEV, dtype=C.DT)
+def _prepared_sample(rec):
+    """Run one timing sample against a warm, reused module/input pair."""
+    bench, spec, module, x = rec["bench"], rec["spec"], rec["module"], rec["x"]
     if bench == "train":
         leaves = {"x": x.detach().requires_grad_()}
         forward = lambda lv: _fwd(module, lv["x"])
@@ -527,9 +518,55 @@ def _timed_sample(bench, L, d, nc, spec):
                 return _e2e_rep(forward, leaves, module)
         return _e2e_rep(forward, leaves, module)
     if spec["kind"] == "attn":
-        with _sdpa_context():
+        with _sdpa_context(), torch.inference_mode():
             return _prefill_rep(module, x)
-    return _prefill_rep(module, x)
+    with torch.inference_mode():
+        return _prefill_rep(module, x)
+
+
+def _prepare_timed_arm(bench, L, d, nc, spec):
+    """Build one module/input pair for the whole cell timing pass.
+
+    Keeping the same module and input across warmup + measured reps avoids first-use allocator/cuBLAS/
+    module construction jitter in every retained sample. Peak memory is still measured by a separate
+    isolated pass below, so the extra resident arms in the round-robin timing pass do not define the
+    reported memory frontier.
+    """
+    seed = 10_000 + L + d * 31 + nc * 17 + spec["idx"]
+    torch.manual_seed(seed)
+    module = _build_scaling_arm(spec, L, d, nc)
+    if module is None:
+        return None
+    torch.manual_seed(seed + 1)
+    x = torch.randn(C.B, L, DM, device=C.DEV, dtype=C.DT)
+    return {"bench": bench, "spec": spec, "module": module, "x": x}
+
+
+def _isolated_metric_sample(bench, L, d, nc, spec):
+    """One isolated warm sample for peak/activation accounting.
+
+    This intentionally builds only one arm, warms it once, then records the memory metrics from a
+    second sample. Timing from this pass is discarded; the round-robin timing pass owns latency.
+    """
+    rec = _prepare_timed_arm(bench, L, d, nc, spec)
+    if rec is None:
+        return None
+    _prepared_sample(rec)
+    sample = _prepared_sample(rec)
+    del rec
+    gc.collect()
+    torch.cuda.empty_cache()
+    return sample
+
+
+def _with_isolated_metrics(bench, data, metric_sample):
+    if not data or metric_sample is None:
+        return data
+    if bench == "train":
+        _, _, peak, act = metric_sample
+        return [(f, fb, peak, act) for f, fb, _, _ in data]
+    _, peak = metric_sample
+    return [(f, peak) for f, _ in data]
 
 
 def _timed_decode_sample(L, d, nc, spec):
@@ -555,11 +592,27 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     """Time comparable RoLA/monolith arms round-robin for one scaling cell.
 
     Keeping the same `(bench,L,d,nc)` arms in round-robin order makes thermal/clock drift affect their
-    ratios similarly. Each sample builds and frees only that arm so peak memory and OOM sentinels remain
-    per-arm, matching the old one-arm-at-a-time memory semantics.
+    ratios similarly. Each arm now reuses one warm module/input pair for latency; per-arm peak memory is
+    measured afterward in an isolated one-arm pass.
     """
-    active = [dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[])
-              for spec in _arm_specs(routings, include_attention=True)]
+    active = []
+    for spec in _arm_specs(routings, include_attention=True):
+        try:
+            prepared = _prepare_timed_arm(bench, L, d, nc, spec)
+            if prepared is not None:
+                active.append(dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec,
+                                   prepared=prepared, data=[]))
+        except _INFEASIBLE:
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
+            torch.cuda.empty_cache()
+            print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+            print(row, flush=True)
+        except Exception as e:  # noqa: BLE001
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
+            torch.cuda.empty_cache()
+            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            print(row, flush=True)
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*format mismatch.*")
@@ -568,9 +621,7 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
             for rec in C.rotated(active, r):
                 spec = rec["spec"]
                 try:
-                    sample = _timed_sample(bench, L, d, nc, spec)
-                    if sample is None:
-                        continue
+                    sample = _prepared_sample(rec["prepared"])
                     if r >= C.WARMUP:
                         rec["data"].append(sample)
                     still_active.append(rec)
@@ -594,10 +645,23 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     for rec in active:
         if not rec["data"]:
             continue
+        try:
+            rec["data"] = _with_isolated_metrics(
+                bench, rec["data"], _isolated_metric_sample(bench, L, d, nc, rec["spec"]))
+        except _INFEASIBLE:
+            row = _append_error(rows, bench, L, x_pct, d, nc, rec["spec"], "OOM")
+            print(f"OOM {rec['spec']['arm']} {bench} L{L} X{x_pct} d{d} "
+                  f"r{rec['spec']['routing']} nc{nc} during isolated memory pass", flush=True)
+            print(row, flush=True)
+            continue
         if bench == "train":
             _summarize_train(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
         else:
             _summarize_prefill(rows, L, x_pct, d, nc, rec["spec"], rec["data"])
+
+    del active
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
