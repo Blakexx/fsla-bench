@@ -599,16 +599,13 @@ def _buffer_ledger(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[st
         if module.kernel == "gla_scalar":
             items.append(_ledger_item("gla_alpha_logits", (B, L, H), "bf16", bf16, "Per-head scalar decay logits."))
         routed = [
-            _ledger_item("kappa_num", (BH, L, d), "fp32", fp32, "Full-length numerator buffer in _kappa_routed_fwd."),
+            _ledger_item("kappa_num", (BH, L, d), "fp32", fp32,
+                         "Full-length numerator buffer, normalized in-place after _kappa_routed_fwd."),
             _ledger_item("kappa_den", (BH, L), "fp32", fp32, "Full-length denominator buffer in _kappa_routed_fwd."),
             _ledger_item("Sval", (BH, nc, d, d), "fp32", fp32, "Running value state inside _kappa_routed_fwd."),
             _ledger_item("Sden", (BH, nc, d), "fp32", fp32, "Running denominator state inside _kappa_routed_fwd."),
             _ledger_item("routed_out_bf16", (BH, L, d), "bf16", bf16, "Returned routed output before o_proj."),
         ]
-        if module.state_norm == "kappa":
-            routed.append(_ledger_item(
-                "normalized_out_temp", (BH, L, d), "fp32", fp32,
-                "Temporary fp32 num/den result before casting back to bf16."))
     total_live = sum(x["mib"] for x in items)
     total_routed = sum(x["mib"] for x in routed)
     return {
