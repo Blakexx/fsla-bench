@@ -1,0 +1,21 @@
+# Focused A100 validation for the progressive/tiled router prototype.
+#
+# FLA source in image:
+#   /home/blake/flash-linear-attention-rola-router-tiling @ da6bf45b
+#
+# Launch:
+#   python launch.py perf scaling_tiling_smoke --boxes 1 --batch 1
+benches: [scaling-prefill]
+reps: 5
+fleet:
+  image: "blakeresearch/rola-bench:v38"
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
+  idle_timeout: 900
+  batch: 1
+  per_batch_timeout: 3600
+  env:
+    SCALE_LENS_PREFILL: "65536"
+    SCALE_NCS: "256,1024"
+    SCALE_DQKS: "16"
+    SCALE_ROUTINGS: "flat,square,tree"
+    PERF_B: "2"
