@@ -6,7 +6,7 @@
 # Launch:
 #   python launch.py perf scaling_chunked --boxes 1
 benches: [scaling-prefill]
-reps: 10
+reps: 15
 fleet:
   image: "blakeresearch/rola-bench:v28"
   offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"

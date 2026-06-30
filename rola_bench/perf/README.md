@@ -25,10 +25,11 @@ Fleet axes are configured via `SCALE_LENS[_TYPE]`, `SCALE_NCS`, `SCALE_DQKS`,
 ## Protocol
 
 - Round-robin interleaving cycles comparable arms within a scaling cell so clock and thermal drift
-  affect ratios similarly.
+  affect ratios similarly. The arm order rotates each round so fixed position effects are shared too.
 - Each timing sample builds, runs, and frees one arm at a time, so peak memory and OOM sentinels are
   per-arm rather than group-residency artifacts.
-- Timings are reported as median plus IQR over kept reps, with warmup excluded.
+- Timings are reported as median plus IQR over kept reps, with warmup excluded. CSV rows also include
+  raw sample arrays and IQR percentages so noisy cells can be filtered before plotting.
 - Prefill peak memory uses CUDA's `max_memory_allocated() - base` around the forward call.
 - Training also reports retained activation memory from `saved_tensors_hooks`, before backward.
 
@@ -55,12 +56,14 @@ python launch.py perf profile_graph --boxes 1 --batch 1
 
 The fleet config's `profiles:` list owns the cells to profile. Each entry becomes a run id:
 `perf-profile-graph-<name>`. A profile entry specifies `arm`, `L`, `batch`, `d_qk`, `nc`,
-`routing`, `warmup`, `reps`, and whether to collect `torch_profiler` artifacts. `PROFILE_*` env vars
-are kept only as an ad hoc fallback for manual/local one-off runs.
+`routing`, `warmup`, `reps`, and whether to collect `torch_profiler` artifacts. Use `reps>=7` for
+diagnostic timing cells; deep Nsight profiles can stay at `reps=1` because the profiler serializes
+kernel replay. `PROFILE_*` env vars are kept only as an ad hoc fallback for manual/local one-off runs.
 
 Outputs:
 
-- `summary.json`: machine-readable cell metadata, phase timings, memory deltas, and analytic sizes.
+- `summary.json`: machine-readable cell metadata, phase timings, memory deltas, robust timing stats,
+  raw samples, peak-memory samples, and analytic sizes.
 - `report.md`: short human-readable diagnosis scaffold.
 - `profiler_cuda.txt` / `profiler_memory.txt` / `trace.json.gz` when `--torch-profiler` is set.
 - Synced profiler artifacts: `summary.json` embeds `torch_profiler.cuda_table`,

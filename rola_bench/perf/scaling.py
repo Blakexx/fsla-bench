@@ -52,6 +52,10 @@ import os
 import warnings
 from pathlib import Path
 
+os.environ.setdefault("HF_HOME", "/tmp/rola-bench-hf")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.environ["HF_HUB_CACHE"])
+
 import torch
 
 from zoology.mixers.rola import RoLAMixer
@@ -430,7 +434,10 @@ def _decode_attn_sample(L):
 def _row(**kw):
     base = dict(bench=None, L=None, state_axis=None, X_pct=None, d_qk=None, nc=None, routing=None, arm=None,
                 fwd_ms=None, fwd_iqr_ms=None, fb_ms=None, fb_iqr_ms=None, peak_mib=None, act_mib=None,
-                decode_ms=None, decode_iqr_ms=None, state_mib=None, attn_backend=None, sdpa_flags=None)
+                fwd_iqr_pct=None, fb_iqr_pct=None, decode_iqr_pct=None,
+                fwd_samples_ms=None, fb_samples_ms=None, decode_samples_ms=None,
+                peak_samples_mib=None, act_samples_mib=None,
+                state_mib=None, attn_backend=None, sdpa_flags=None)
     base.update(kw)
     return base
 
@@ -472,11 +479,15 @@ def _build_scaling_arm(spec, L, d, nc):
 
 def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
     f, fb, pk, ac = zip(*recs)
+    f_stats = C.sample_stats(f)
+    fb_stats = C.sample_stats(fb)
     row = _row(bench="train", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"],
-               fwd_ms=_round_ms(C.median(f)), fwd_iqr_ms=_round_ms(C.iqr(f)),
-               fb_ms=_round_ms(C.median(fb)), fb_iqr_ms=_round_ms(C.iqr(fb)),
+               fwd_ms=f_stats["median"], fwd_iqr_ms=f_stats["iqr"], fwd_iqr_pct=f_stats["iqr_pct"],
+               fb_ms=fb_stats["median"], fb_iqr_ms=fb_stats["iqr"], fb_iqr_pct=fb_stats["iqr_pct"],
                peak_mib=round(max(pk)), act_mib=round(max(ac)),
+               fwd_samples_ms=C.samples_json(f), fb_samples_ms=C.samples_json(fb),
+               peak_samples_mib=C.samples_json(pk, digits=1), act_samples_mib=C.samples_json(ac, digits=1),
                attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
                sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
     rows.append(row); print(row, flush=True)
@@ -484,9 +495,12 @@ def _summarize_train(rows, L, x_pct, d, nc, spec, recs):
 
 def _summarize_prefill(rows, L, x_pct, d, nc, spec, recs):
     f, pk = zip(*recs)
+    f_stats = C.sample_stats(f)
     row = _row(bench="prefill", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"],
-               fwd_ms=_round_ms(C.median(f)), fwd_iqr_ms=_round_ms(C.iqr(f)), peak_mib=round(max(pk)),
+               fwd_ms=f_stats["median"], fwd_iqr_ms=f_stats["iqr"], fwd_iqr_pct=f_stats["iqr_pct"],
+               fwd_samples_ms=C.samples_json(f), peak_samples_mib=C.samples_json(pk, digits=1),
+               peak_mib=round(max(pk)),
                attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
                sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
     rows.append(row); print(row, flush=True)
@@ -551,7 +565,7 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
         warnings.filterwarnings("ignore", message=".*format mismatch.*")
         for r in range(C.WARMUP + C.REPS):
             still_active = []
-            for rec in active:
+            for rec in C.rotated(active, r):
                 spec = rec["spec"]
                 try:
                     sample = _timed_sample(bench, L, d, nc, spec)
@@ -588,11 +602,13 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
 
 def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
     ms, state_mib, pk = zip(*recs)
+    ms_stats = C.sample_stats(ms, digits=4)
     row = _row(bench="decode", L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"],
-               decode_ms=_round_ms(C.median(ms), 4), decode_iqr_ms=_round_ms(C.iqr(ms), 4),
+               decode_ms=ms_stats["median"], decode_iqr_ms=ms_stats["iqr"],
+               decode_iqr_pct=ms_stats["iqr_pct"], decode_samples_ms=C.samples_json(ms, digits=4),
                state_mib=next((m for m in state_mib if m is not None), None),
-               peak_mib=round(max(pk)),
+               peak_mib=round(max(pk)), peak_samples_mib=C.samples_json(pk, digits=1),
                attn_backend=_sdpa_backend_label() if spec["kind"] == "attn" else None,
                sdpa_flags=str(_sdpa_flags()) if spec["kind"] == "attn" else None)
     rows.append(row); print(row, flush=True)
@@ -605,7 +621,7 @@ def _timed_decode_group(L, x_pct, d, nc, routings, rows):
 
     for r in range(DECODE_WARMUP + DECODE_STEPS):
         still_active = []
-        for rec in active:
+        for rec in C.rotated(active, r):
             spec = rec["spec"]
             try:
                 sample = _timed_decode_sample(L, d, nc, spec)

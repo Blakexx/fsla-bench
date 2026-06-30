@@ -54,8 +54,11 @@ class Phase:
     ms: float
     iqr_ms: float
     samples_ms: list[float]
+    stats_ms: dict[str, Any]
     alloc_delta_mib: float
     peak_delta_mib: float
+    peak_samples_mib: list[float]
+    peak_stats_mib: dict[str, Any]
     end_alloc_mib: float
     outputs: list[dict[str, Any]]
 
@@ -120,13 +123,17 @@ def _measure_phase(name: str, fn, reps: int = 1) -> tuple[Phase, Any]:
         samples.append(float(ms))
         peaks.append(_mib(peak - base))
     med_ms, iqr_ms = _timing_stats(samples)
+    peak_stats = C.sample_stats(peaks)
     phase = Phase(
         name=name,
         ms=_round(med_ms),
         iqr_ms=_round(iqr_ms),
         samples_ms=[_round(x) for x in samples],
+        stats_ms=C.sample_stats(samples),
         alloc_delta_mib=_round(_mib(end_alloc - base)),
         peak_delta_mib=_round(max(peaks) if peaks else 0.0),
+        peak_samples_mib=[_round(x) for x in peaks],
+        peak_stats_mib=peak_stats,
         end_alloc_mib=_round(_mib(end_alloc)),
         outputs=_tensor_info(value),
     )
@@ -181,8 +188,31 @@ def _whole_forward_profile(module, x, reps: int = 1) -> dict[str, Any]:
         "ms": _round(med_ms),
         "iqr_ms": _round(iqr_ms),
         "samples_ms": [_round(x) for x in samples],
+        "stats_ms": C.sample_stats(samples),
         "peak_delta_mib": _round(max(peaks) if peaks else 0.0),
+        "peak_samples_mib": [_round(x) for x in peaks],
+        "peak_stats_mib": C.sample_stats(peaks),
         "output": _tensor_info(y),
+    }
+
+
+def _runtime_metadata() -> dict[str, Any]:
+    props = torch.cuda.get_device_properties(0)
+    return {
+        "gpu": torch.cuda.get_device_name(0),
+        "device_index": torch.cuda.current_device(),
+        "device_capability": list(torch.cuda.get_device_capability(0)),
+        "device_total_memory_mib": _round(_mib(props.total_memory)),
+        "multiprocessor_count": props.multi_processor_count,
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "dtype": str(C.DT).replace("torch.", ""),
+        "matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+        "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "rola_bench_rev": _git_rev("/home/blake/rola-bench"),
+        "fla_rola_rev": _module_git_rev("fla_rola"),
     }
 
 
@@ -684,17 +714,19 @@ def _markdown_report(summary: dict[str, Any]) -> str:
         "",
         f"- time: `{summary['whole_forward']['ms']} ms`",
         f"- IQR: `{summary['whole_forward'].get('iqr_ms', 0.0)} ms`",
+        f"- IQR %: `{summary['whole_forward'].get('stats_ms', {}).get('iqr_pct', 0.0)}`",
         f"- peak delta: `{summary['whole_forward']['peak_delta_mib']} MiB`",
         "",
         "## Phase High-Water",
         "",
-        "| phase | median ms | IQR ms | alloc delta MiB | peak delta MiB | output MiB |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| phase | median ms | IQR ms | IQR % | alloc delta MiB | peak delta MiB | output MiB |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for p in summary.get("phases", []):
         out_mib = sum(o.get("mib", 0.0) for o in p.get("outputs", []))
         lines.append(
-            f"| `{p['name']}` | {p['ms']} | {p.get('iqr_ms', 0.0)} | {p['alloc_delta_mib']} | "
+            f"| `{p['name']}` | {p['ms']} | {p.get('iqr_ms', 0.0)} | "
+            f"{p.get('stats_ms', {}).get('iqr_pct', 0.0)} | {p['alloc_delta_mib']} | "
             f"{p['peak_delta_mib']} | {round(out_mib, 3)} |"
         )
     analytic = summary.get("analytic", {})
@@ -825,13 +857,14 @@ def run(args) -> dict[str, Any]:
             "warmup": args.warmup,
             "seed": args.seed,
         },
-        "runtime": {
-            "gpu": torch.cuda.get_device_name(0),
-            "torch": torch.__version__,
-            "cuda": torch.version.cuda,
-            "dtype": str(C.DT).replace("torch.", ""),
-            "rola_bench_rev": _git_rev("/home/blake/rola-bench"),
-            "fla_rola_rev": _module_git_rev("fla_rola"),
+        "runtime": _runtime_metadata(),
+        "measurement": {
+            "timing": "CUDA events",
+            "whole_forward_reps": args.reps,
+            "phase_reps": args.reps,
+            "warmup": args.warmup,
+            "headline": "median with IQR; raw samples retained in summary.json",
+            "phase_note": "Phase timings are diagnostic and measured after the layer has been decomposed.",
         },
         "whole_forward": whole,
         "phases": [asdict(p) for p in phases],

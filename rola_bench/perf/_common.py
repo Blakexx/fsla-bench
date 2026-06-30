@@ -16,10 +16,15 @@ Imports are clean: `fla` (canonical) and `fla_rola` (the fork) are pip-installed
 sys.path hacks. Run on an IDLE GPU for the memory/timing numbers to be meaningful.
 """
 import csv
+import json
 import os
 import statistics
 import time
 from pathlib import Path
+
+os.environ.setdefault("HF_HOME", "/tmp/rola-bench-hf")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.environ["HF_HUB_CACHE"])
 
 import torch
 
@@ -100,6 +105,61 @@ def iqr(xs):
     return q[2] - q[0]
 
 
+def _round_float(x, digits=3):
+    return round(float(x), digits)
+
+
+def sample_stats(xs, digits=3):
+    """Robust timing summary for benchmark samples.
+
+    Median/IQR remain the headline fields. The percentage fields make noisy cells easy to filter before
+    plotting, while raw samples remain available for paired/round-robin analysis.
+    """
+    vals = [float(x) for x in xs]
+    if not vals:
+        return {
+            "n": 0,
+            "median": None,
+            "iqr": None,
+            "iqr_pct": None,
+            "mean": None,
+            "stdev": None,
+            "cv_pct": None,
+            "min": None,
+            "max": None,
+            "samples": [],
+        }
+    med = median(vals)
+    spread = iqr(vals)
+    mean = statistics.fmean(vals)
+    stdev = statistics.pstdev(vals) if len(vals) > 1 else 0.0
+    denom = abs(med) if med else 0.0
+    return {
+        "n": len(vals),
+        "median": _round_float(med, digits),
+        "iqr": _round_float(spread, digits),
+        "iqr_pct": _round_float(100.0 * spread / denom, 2) if denom else 0.0,
+        "mean": _round_float(mean, digits),
+        "stdev": _round_float(stdev, digits),
+        "cv_pct": _round_float(100.0 * stdev / abs(mean), 2) if mean else 0.0,
+        "min": _round_float(min(vals), digits),
+        "max": _round_float(max(vals), digits),
+        "samples": [_round_float(v, digits) for v in vals],
+    }
+
+
+def samples_json(xs, digits=3):
+    return json.dumps([_round_float(x, digits) for x in xs], separators=(",", ":"))
+
+
+def rotated(items, round_idx):
+    """Rotate a list for position-fair round-robin timing within a cell."""
+    if not items:
+        return items
+    k = round_idx % len(items)
+    return items[k:] + items[:k]
+
+
 def gpu_name():
     return torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu"
 
@@ -172,7 +232,7 @@ def round_robin(impls, run_one, reps=REPS, warmup=WARMUP):
     """
     data = {name: [] for name, _ in impls}
     for r in range(warmup + reps):
-        for name, payload in impls:
+        for name, payload in rotated(impls, r):
             rec = run_one(name, payload)
             if r >= warmup:
                 data[name].append(rec)
