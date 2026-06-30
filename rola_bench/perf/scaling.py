@@ -733,8 +733,9 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     ratios similarly. Each arm now reuses one warm module/input pair for latency; per-arm peak memory is
     measured afterward in an isolated one-arm pass.
     """
-    active = []
-    for spec in _arm_specs(routings, include_attention=True):
+    specs = list(_arm_specs(routings, include_attention=True))
+    survivors = []
+    for spec in specs:
         try:
             preflight = _preflight_arm(bench, L, d, nc, spec)
             if not preflight.get("ok", False):
@@ -747,6 +748,22 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
                       f"r{spec['routing']} nc{nc}: {row.get('error')}", flush=True)
                 print(row, flush=True)
                 continue
+            survivors.append(spec)
+        except _INFEASIBLE:
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
+            _safe_empty_cache()
+            print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
+            print(row, flush=True)
+        except Exception as e:  # noqa: BLE001
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR", e)
+            _safe_empty_cache()
+            print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            print(row, flush=True)
+
+    active = []
+    for spec in survivors:
+        try:
             prepared = _prepare_timed_arm(bench, L, d, nc, spec)
             if prepared is not None:
                 active.append(dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec,

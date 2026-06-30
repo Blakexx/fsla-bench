@@ -113,6 +113,8 @@ def _measure_phase(name: str, fn, reps: int = 1) -> tuple[Phase, Any]:
         with record_function(f"profile_graph::{name}"):
             return fn()
 
+    value = wrapped()
+    _sync()
     for _ in range(max(1, reps)):
         _sync()
         torch.cuda.reset_peak_memory_stats()
