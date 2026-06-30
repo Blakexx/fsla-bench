@@ -682,6 +682,15 @@ def _buffer_ledger(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[st
         b = module.route_b
         BH = B * H
         route_count = 1 if module.read_W is None else 2
+        if getattr(module, "use_short_conv", False):
+            items.append(_ledger_item("write_route_stream", (B, L, dm), "bf16", bf16,
+                                      "Short-conv write-router input stream."))
+            if module.read_W is not None:
+                items.append(_ledger_item("read_route_stream", (B, L, dm), "bf16", bf16,
+                                          "Short-conv read-router input stream."))
+            if module.kernel == "gla_scalar":
+                items.append(_ledger_item("decay_alpha_stream", (B, L, H), "bf16", bf16,
+                                          "Short-conv scalar decay stream used as h_g."))
         items.append(_ledger_item("router_logits_equivalent_avoided",
                                   (route_count, B, L, H, D, b), "bf16", bf16,
                                   "Equivalent full logits if materialized; production streams tiles inside the scan."))
@@ -738,14 +747,22 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
     chunk_rola_routed = _chunk_rola_routed()
     B, L, _ = x.shape
     H = module.num_heads
+    use_short_conv = bool(getattr(module, "use_short_conv", False))
 
     def add(name, fn):
         phase, value = _measure_phase(name, fn, reps=args.reps)
         phases.append(phase)
         return value
 
+    def conv_value(y):
+        return y[0] if isinstance(y, tuple) else y
+
     with torch.inference_mode():
         q, k, v = add("qkv_proj", lambda: (module.q_proj(x), module.k_proj(x), module.v_proj(x)))
+        if use_short_conv:
+            q = add("q_short_conv", lambda: conv_value(module.q_conv1d(q)))
+            k = add("k_short_conv", lambda: conv_value(module.k_conv1d(k)))
+            v = add("v_short_conv", lambda: conv_value(module.v_conv1d(v)))
         q = q.reshape(B, L, H, module.proj_qk)
         k = k.reshape(B, L, H, module.proj_qk)
         v = v.reshape(B, L, H, module.head_v_dim)
@@ -753,31 +770,46 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             q, k = add("qk_norm", lambda: (module.q_norm(q), module.k_norm(k)))
         qf, kf = add("feature_map", lambda: module._feature_map(q, k))
         if module.state_norm == "kappa":
-            kap = add("kappa_logits_sigmoid", lambda: torch.sigmoid(module.w_kappa(x)).view(B, L, H, 1))
+            kappa_logits = add("kappa_logits", lambda: module.w_kappa(x))
+            if use_short_conv:
+                kappa_logits = add("kappa_short_conv", lambda: conv_value(module.kappa_conv1d(kappa_logits)))
+            kap = add("kappa_sigmoid", lambda: torch.sigmoid(kappa_logits).view(B, L, H, 1))
         else:
             kap = None
         if module.kernel == "gla_scalar":
             alpha_logits = add("gla_alpha_logits", lambda: module.w_g(x))
+            if use_short_conv:
+                alpha_logits = add("gla_alpha_short_conv", lambda: conv_value(module.g_conv1d(alpha_logits)))
             alpha = add("gla_alpha_sigmoid", lambda: torch.sigmoid(alpha_logits).view(B, L, H))
-            Wg = module.w_g.weight
+            Wg = module._unit_w_g.to(device=x.device, dtype=torch.float32) if use_short_conv else module.w_g.weight
         else:
             alpha_logits = None
             alpha = None
             Wg = None
+        if use_short_conv:
+            wx = add("write_route_short_conv", lambda: conv_value(module.write_route_conv1d(x)))
+            if module.read_W is None:
+                rx = wx
+            else:
+                rx = add("read_route_short_conv", lambda: conv_value(module.read_route_conv1d(x)))
+        else:
+            wx = x
+            rx = x
         needs_router_logits = module.router_zloss_coef > 0.0 or module.state_norm == "raw"
         if needs_router_logits:
-            wl = add("write_router_logits_required", lambda: module._factor_logits(x, module.write_W, module.write_b))
+            wl = add("write_router_logits_required", lambda: module._factor_logits(wx, module.write_W, module.write_b))
             if module.read_W is None:
                 rl = wl
             else:
-                rl = add("read_router_logits_required", lambda: module._factor_logits(x, module.read_W, module.read_b))
+                rl = add("read_router_logits_required", lambda: module._factor_logits(rx, module.read_W, module.read_b))
             module._stash_zloss(wl, rl)
         else:
             wl = rl = None
             module._router_aux = None
-        h_read = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
-        h_write = h_read
-        h_decay = h_read
+        h_read = rx.unsqueeze(2).expand(B, L, H, module.hidden_size)
+        h_write = wx.unsqueeze(2).expand(B, L, H, module.hidden_size)
+        h_decay = (alpha_logits.view(B, L, H, 1) if (module.kernel == "gla_scalar" and use_short_conv)
+                   else x.unsqueeze(2).expand(B, L, H, module.hidden_size))
         out = add("chunk_rola_routed", lambda: chunk_rola_routed(
             qf, kf, v, h_read, module.write_W if module.read_W is None else module.read_W, module.write_W,
             module.route_D, module.route_b, norm=module.state_norm, kappa=kap, scale=1.0,
