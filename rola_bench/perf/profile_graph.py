@@ -12,6 +12,7 @@ import base64
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -381,8 +382,83 @@ def _run_deep_command(name: str, cmd: list[str], out_dir: Path, timeout: int) ->
         }
 
 
+_NCU_METRIC_LABELS = {
+    "Duration": "duration",
+    "Memory Throughput": "memory_throughput",
+    "DRAM Throughput": "dram_throughput",
+    "L1/TEX Cache Throughput": "l1_tex_throughput",
+    "L2 Cache Throughput": "l2_throughput",
+    "LSU": "lsu",
+    "Grid Size": "grid_size",
+    "Block Size": "block_size",
+    "Registers Per Thread": "registers_per_thread",
+    "Dynamic Shared Memory Per Block": "dynamic_smem_per_block",
+    "Static Shared Memory Per Block": "static_smem_per_block",
+    "Waves Per SM": "waves_per_sm",
+    "Theoretical Occupancy": "theoretical_occupancy",
+    "Achieved Occupancy": "achieved_occupancy",
+    "Block Limit Registers": "block_limit_registers",
+    "Block Limit Shared Mem": "block_limit_smem",
+    "Block Limit Warps": "block_limit_warps",
+    "Block Limit Blocks": "block_limit_blocks",
+    "Stall Wait": "stall_wait",
+    "Stall Long Scoreboard": "stall_long_scoreboard",
+    "Stall Math Pipe Throttle": "stall_math_pipe_throttle",
+    "Stall Barrier": "stall_barrier",
+    "Stall MIO Throttle": "stall_mio_throttle",
+    "Stall Short Scoreboard": "stall_short_scoreboard",
+}
+
+
+def _ncu_metric_suffix(line: str) -> str:
+    if "%" in line:
+        return "pct"
+    if "Gbyte/s" in line:
+        return "gb_s"
+    if "Kbyte/block" in line:
+        return "kib_per_block"
+    if "byte/block" in line:
+        return "bytes_per_block"
+    if "register/thread" in line:
+        return "regs_per_thread"
+    if "thread" in line:
+        return "threads"
+    if "cycle" in line:
+        return "cycles"
+    if "usecond" in line or " us " in f" {line} ":
+        return "us"
+    if " ms " in f" {line} ":
+        return "ms"
+    if "block" in line:
+        return "blocks"
+    if "inst" in line:
+        return "inst"
+    return "value"
+
+
+def _parse_ncu_details(text: str) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    number = re.compile(r"[-+]?\d+(?:\.\d+)?")
+    for raw in text.splitlines():
+        line = raw.strip()
+        for label, base_key in _NCU_METRIC_LABELS.items():
+            if not line.startswith(label):
+                continue
+            vals = number.findall(line)
+            if not vals:
+                continue
+            key = f"{base_key}_{_ncu_metric_suffix(line)}"
+            metrics.setdefault(key, _round(float(vals[-1])))
+    return metrics
+
+
+def _ncu_report_prefix(out_dir: Path, kernel: str) -> Path:
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", kernel.strip("_")).strip("_")
+    return out_dir / f"ncu_{stem or 'kernel'}"
+
+
 def _attach_ncu_details(info: dict[str, Any], ncu: str, report_prefix: Path, out_dir: Path, timeout: int) -> None:
-    report_file = report_prefix.with_suffix(".ncu-rep")
+    report_file = Path(f"{report_prefix}.ncu-rep")
     info["report_file"] = str(report_file)
     if not info.get("ok") or not report_file.exists():
         return
@@ -412,6 +488,8 @@ def _attach_ncu_details(info: dict[str, Any], ncu: str, report_prefix: Path, out
             "details_text": _full_text(proc.stdout),
             "details_stderr": _full_text(proc.stderr),
         })
+        if proc.returncode == 0:
+            info["parsed_metrics"] = _parse_ncu_details(proc.stdout)
     except subprocess.TimeoutExpired as e:
         stdout = e.stdout or ""
         stderr = e.stderr or ""
@@ -485,8 +563,8 @@ def _deep_profile(args, out_dir: Path) -> dict[str, Any]:
                 "error": "ncu/nv-nsight-cu-cli not found on PATH or standard install paths",
             }
         else:
-            report = out_dir / "ncu_kappa_fwd_chunk"
-            kernel = getattr(args, "deep_kernel_name", "_kappa_fwd_chunk")
+            kernel = getattr(args, "deep_kernel_name", "_kappa_fwd_scan_cb_atomic")
+            report = _ncu_report_prefix(out_dir, kernel)
             cmd = [
                 ncu,
                 "--force-overwrite",
@@ -500,7 +578,18 @@ def _deep_profile(args, out_dir: Path) -> dict[str, Any]:
                 *child,
             ]
             info = _run_deep_command("ncu", cmd, out_dir, timeout)
+            if "No kernels were profiled" in info.get("log_text", ""):
+                info["ok"] = False
+                info["error"] = (
+                    f"ncu matched no kernels for regex:{kernel}; see available kernels in log_text"
+                )
             _attach_ncu_details(info, ncu, report, out_dir, timeout)
+            if info.get("ok") and not info.get("details_ok"):
+                info["ok"] = False
+                info["error"] = "ncu report was not imported successfully; no details were parsed"
+            if info.get("ok") and not info.get("parsed_metrics"):
+                info["ok"] = False
+                info["error"] = "ncu produced no parsed metrics; kernel match/details are not actionable"
             out["tools"]["ncu"] = info
     return out
 
@@ -900,7 +989,7 @@ def main():
                    default=os.environ.get("ROLA_DEEP_PROFILE", "none"),
                    help="Optional NVIDIA profiler pass around a child run. nsys gives timeline/launch/memory; "
                         "ncu samples matching Triton kernels for hardware counters.")
-    p.add_argument("--deep-kernel-name", default=os.environ.get("ROLA_DEEP_KERNEL", "_kappa_fwd_chunk"))
+    p.add_argument("--deep-kernel-name", default=os.environ.get("ROLA_DEEP_KERNEL", "_kappa_fwd_scan_cb_atomic"))
     p.add_argument("--deep-launch-skip", type=int, default=int(os.environ.get("ROLA_DEEP_LAUNCH_SKIP", "16")))
     p.add_argument("--deep-launch-count", type=int, default=int(os.environ.get("ROLA_DEEP_LAUNCH_COUNT", "1")))
     p.add_argument("--deep-ncu-set", default=os.environ.get("ROLA_DEEP_NCU_SET", "full"))
