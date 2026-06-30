@@ -114,10 +114,12 @@ def _ckpt_config_matches(ck, cfg):
         cj = json.load(open(os.path.join(ck, "config.json")))
     except Exception:
         return False
-    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "states_per_head", "d_qk", "d_v"):
+    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "states_per_head",
+              "d_qk", "d_v", "router_bias"):
         want = getattr(cfg, k, None)
-        if want is not None and k in cj and cj[k] != want:
-            print(f"[resume] checkpoint {os.path.basename(ck)} config mismatch: {k}={cj[k]} != {want} "
+        got = cj.get(k, False if k == "router_bias" else None)
+        if want is not None and got is not None and got != want:
+            print(f"[resume] checkpoint {os.path.basename(ck)} config mismatch: {k}={got} != {want} "
                   f"-> REFUSING this checkpoint, starting FRESH (run_id collision across regimes?)", flush=True)
             return False
     return True

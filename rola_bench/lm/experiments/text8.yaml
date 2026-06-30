@@ -8,7 +8,7 @@ seeds: [1337, 2024, 11]
 backbone: {hidden: 256, layers: 6, max_pos: 2048}
 geometry: {rola_nc: 128, rola_dqk: 16, rola_dv: 32, rola_nh: 8, attn_heads: 4,
            gdn_nh: 8, gdn_head_dim: 128, gdn_expand_v: 4.0, gla_nh: 4, gla_ek: 4.0, gla_ev: 8.0,
-           qk_norm: true, router_zloss_coef: 0.0}
+           qk_norm: true, router_bias: true, router_zloss_coef: 0.0}
 budget:
   lr: 3e-4
   max_steps: 15000
