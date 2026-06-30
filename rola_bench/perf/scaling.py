@@ -48,8 +48,12 @@ import argparse
 import contextlib
 import gc
 import importlib
+import json
 import math
 import os
+import subprocess
+import sys
+import tempfile
 import traceback
 import warnings
 from pathlib import Path
@@ -477,6 +481,21 @@ def _safe_empty_cache():
         pass
 
 
+def _env_flag(name, default=False):
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v not in ("0", "", "false", "False", "no", "No")
+
+
+def _preflight_enabled():
+    return _env_flag("SCALE_PREFLIGHT_ARMS", False)
+
+
+def _preflight_timeout():
+    return int(os.environ.get("SCALE_PREFLIGHT_TIMEOUT", "900"))
+
+
 def _append_error(rows, bench, L, x_pct, d, nc, spec, label, exc=None):
     row = _row(bench=bench, L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"])
@@ -491,6 +510,101 @@ def _append_error(rows, bench, L, x_pct, d, nc, spec, label, exc=None):
         row["trace"] = traceback.format_exc()
     rows.append(row)
     return row
+
+
+def _preflight_child(args):
+    routing = None if args.preflight_routing == "__none__" else args.preflight_routing
+    spec = {
+        "idx": args.preflight_idx,
+        "kind": args.preflight_kind,
+        "routing": routing,
+        "gla": bool(args.preflight_gla),
+        "arm": args.preflight_arm,
+    }
+    try:
+        if args.preflight_bench in ("train", "prefill"):
+            rec = _prepare_timed_arm(
+                args.preflight_bench,
+                args.preflight_L,
+                args.preflight_d,
+                args.preflight_nc,
+                spec,
+            )
+            if rec is None:
+                data = {"ok": False, "label": "OOM", "error": "arm build returned None"}
+            else:
+                sample = _prepared_sample(rec)
+                peak = sample[2] if args.preflight_bench == "train" else sample[1]
+                data = {"ok": True, "peak_mib": round(float(peak), 1)}
+        else:
+            sample = _timed_decode_sample(args.preflight_L, args.preflight_d, args.preflight_nc, spec)
+            if sample is None:
+                data = {"ok": False, "label": "OOM", "error": "arm build returned None"}
+            else:
+                data = {"ok": True, "peak_mib": round(float(sample[-1]), 1)}
+    except _INFEASIBLE as e:
+        data = {"ok": False, "label": "OOM", "error": f"{type(e).__name__}: {e}",
+                "trace": traceback.format_exc()}
+    except Exception as e:  # noqa: BLE001
+        data = {"ok": False, "label": "ERR", "error": f"{type(e).__name__}: {e}",
+                "trace": traceback.format_exc()}
+
+    Path(args.preflight_out).write_text(json.dumps(data))
+
+
+def _preflight_arm(bench, L, d, nc, spec):
+    if not _preflight_enabled():
+        return {"ok": True}
+
+    fd, out_path = tempfile.mkstemp(prefix="rola-preflight-", suffix=".json")
+    os.close(fd)
+    routing = spec["routing"] if spec["routing"] is not None else "__none__"
+    cmd = [
+        sys.executable, "-m", "rola_bench.perf.scaling",
+        "--preflight-out", out_path,
+        "--preflight-bench", bench,
+        "--preflight-L", str(L),
+        "--preflight-d", str(d),
+        "--preflight-nc", str(nc),
+        "--preflight-kind", spec["kind"],
+        "--preflight-routing", routing,
+        "--preflight-gla", "1" if spec["gla"] else "0",
+        "--preflight-arm", spec["arm"],
+        "--preflight-idx", str(spec["idx"]),
+    ]
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=_preflight_timeout(),
+            check=False,
+        )
+        try:
+            data = json.loads(Path(out_path).read_text())
+        except Exception as e:  # noqa: BLE001
+            data = {"ok": False, "label": "ERR",
+                    "error": f"preflight produced no JSON: {type(e).__name__}: {e}"}
+        if proc.returncode != 0 and data.get("ok", False):
+            data = {"ok": False, "label": "ERR", "error": f"preflight exited {proc.returncode}"}
+        if not data.get("ok", False):
+            stderr = proc.stderr.strip()
+            stdout = proc.stdout.strip()
+            if stderr:
+                data["stderr"] = stderr[-4000:]
+            if stdout:
+                data["stdout"] = stdout[-4000:]
+        return data
+    except subprocess.TimeoutExpired as e:
+        return {"ok": False, "label": "ERR", "error": f"preflight timed out after {e.timeout}s"}
+    finally:
+        try:
+            Path(out_path).unlink()
+        except OSError:
+            pass
 
 
 def _build_scaling_arm(spec, L, d, nc):
@@ -622,6 +736,17 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
     active = []
     for spec in _arm_specs(routings, include_attention=True):
         try:
+            preflight = _preflight_arm(bench, L, d, nc, spec)
+            if not preflight.get("ok", False):
+                row = _append_error(rows, bench, L, x_pct, d, nc, spec,
+                                    preflight.get("label", "ERR"))
+                row["error"] = preflight.get("error")
+                if preflight.get("trace"):
+                    row["trace"] = preflight["trace"]
+                print(f"{row['fwd_ms']} {spec['arm']} {bench} L{L} X{x_pct} d{d} "
+                      f"r{spec['routing']} nc{nc}: {row.get('error')}", flush=True)
+                print(row, flush=True)
+                continue
             prepared = _prepare_timed_arm(bench, L, d, nc, spec)
             if prepared is not None:
                 active.append(dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec,
@@ -704,8 +829,20 @@ def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
 
 def _timed_decode_group(L, x_pct, d, nc, routings, rows):
     """Time comparable decode arms round-robin for one scaling cell."""
-    active = [dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[])
-              for spec in _arm_specs(routings, include_attention=True)]
+    active = []
+    for spec in _arm_specs(routings, include_attention=True):
+        preflight = _preflight_arm("decode", L, d, nc, spec)
+        if not preflight.get("ok", False):
+            row = _append_error(rows, "decode", L, x_pct, d, nc, spec,
+                                preflight.get("label", "ERR"))
+            row["error"] = preflight.get("error")
+            if preflight.get("trace"):
+                row["trace"] = preflight["trace"]
+            print(f"{row.get('decode_ms')} {spec['arm']} decode L{L} X{x_pct} d{d} "
+                  f"r{spec['routing']} nc{nc}: {row.get('error')}", flush=True)
+            print(row, flush=True)
+            continue
+        active.append(dict(key=f"{spec['arm']}:{spec['routing']}", spec=spec, data=[]))
 
     for r in range(DECODE_WARMUP + DECODE_STEPS):
         still_active = []
@@ -762,6 +899,16 @@ def sweep(benches, lens, ncs, dqks, rows, routings=ROUTINGS):
 
 def main():
     ap = argparse.ArgumentParser(description="RoLA scaling benchmark (RoLA vs attention; per-arch curves).")
+    ap.add_argument("--preflight-out", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-bench", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-L", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-d", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-nc", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-kind", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-routing", default="__none__", help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-gla", type=int, default=0, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-arm", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-idx", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--benches", default="train,prefill,decode", help="comma: train,prefill,decode")
     ap.add_argument("--lens", default=os.environ.get("SCALE_LENS", "1024,4096,16384,65536"))
     ap.add_argument("--ncs", default=os.environ.get("SCALE_NCS", "16,64,256,1024"),
@@ -772,6 +919,10 @@ def main():
     ap.add_argument("--reps", type=int, default=C.REPS)
     ap.add_argument("--out", default=str(C.RESULTS_DIR))
     a = ap.parse_args()
+    if a.preflight_out:
+        C.require_cuda()
+        _preflight_child(a)
+        return
     C.require_cuda()
     C.REPS = a.reps
     benches = [b for b in a.benches.split(",") if b.strip()]
