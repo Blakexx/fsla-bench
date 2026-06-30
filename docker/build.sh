@@ -27,10 +27,11 @@ for a in "$@"; do case "$a" in --push) PUSH=1;; --prune) PRUNE=1;; esac; done
 # suite (perf+rank+mqar modules); perf/rank select their runner via FLEET_RUN_CMD at launch.
 V="${IMG_VERSION:-v2}"
 case "$TARGET" in
-  mqar) TAG="blakeresearch/rola-bench:$V"; DF="mqar.Dockerfile"; WITH_ZOO=1;;
-  lm)   TAG="blakeresearch/rola-lm:$V";    DF="lm.Dockerfile";   WITH_ZOO=0;;
+  mqar) TAG="blakeresearch/rola-bench:$V"; DF="mqar.Dockerfile"; WITH_ZOO=1; BASE_DEFAULT=v2;;
+  lm)   TAG="blakeresearch/rola-lm:$V";    DF="lm.Dockerfile";   WITH_ZOO=0; BASE_DEFAULT=v1;;
   *) echo "unknown target '$TARGET' (mqar|lm)"; exit 2;;
 esac
+BASE_TAG="${FLEET_BASE_TAG:-$BASE_DEFAULT}"
 
 CLA="${ROLA_CLA_SRC:-/mnt/c/Users/Blake/Documents/VSCode/CLA}"
 FLA="${ROLA_FLA_SRC:-/home/blake/flash-linear-attention-rola}"
@@ -63,8 +64,8 @@ OTHER=$([ "$TARGET" = mqar ] && echo lm || echo mqar)
 cp "$RB/pyproject.toml" "$STAGE/rola-bench/"
 
 cp "$HERE/$DF" "$STAGE/Dockerfile"
-echo "build context staged at $STAGE ($(du -sh "$STAGE" | cut -f1)); building $TAG…"
-docker build -t "$TAG" "$STAGE"
+echo "build context staged at $STAGE ($(du -sh "$STAGE" | cut -f1)); building $TAG from fleet-base:$BASE_TAG…"
+docker build --build-arg "FLEET_BASE_TAG=$BASE_TAG" -t "$TAG" "$STAGE"
 echo "built $TAG"
 
 if [ "$PUSH" = 1 ]; then

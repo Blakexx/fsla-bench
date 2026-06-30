@@ -475,7 +475,7 @@ def _append_error(rows, bench, L, x_pct, d, nc, spec, label, exc=None):
             row["fb_ms"] = label
     if exc is not None:
         row["error"] = f"{type(exc).__name__}: {exc}"
-        row["trace"] = traceback.format_exc()[-12000:]
+        row["trace"] = traceback.format_exc()
     rows.append(row)
     return row
 

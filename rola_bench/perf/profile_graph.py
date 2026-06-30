@@ -297,10 +297,8 @@ def _top_profiler_rows(prof, sort_by: str, limit: int) -> list[dict[str, Any]]:
     return rows
 
 
-def _tail_text(s: str, limit: int = 24000) -> str:
-    if len(s) <= limit:
-        return s
-    return s[:4000] + f"\n\n... <truncated {len(s) - limit} chars> ...\n\n" + s[-(limit - 4000):]
+def _full_text(s: str) -> str:
+    return s
 
 
 def _find_tool(names: tuple[str, ...], extra_globs: tuple[str, ...] = ()) -> str | None:
@@ -356,9 +354,9 @@ def _run_deep_command(name: str, cmd: list[str], out_dir: Path, timeout: int) ->
             "returncode": proc.returncode,
             "seconds": _round(time.time() - started),
             "command": cmd,
-            "stdout": _tail_text(stdout),
-            "stderr": _tail_text(stderr),
-            "log_text": _tail_text(log.read_text()),
+            "stdout": _full_text(stdout),
+            "stderr": _full_text(stderr),
+            "log_text": _full_text(log.read_text()),
         }
     except subprocess.TimeoutExpired as e:
         stdout = e.stdout or ""
@@ -375,9 +373,9 @@ def _run_deep_command(name: str, cmd: list[str], out_dir: Path, timeout: int) ->
             "seconds": _round(time.time() - started),
             "command": cmd,
             "error": f"timeout after {timeout}s",
-            "stdout": _tail_text(stdout),
-            "stderr": _tail_text(stderr),
-            "log_text": _tail_text(log.read_text()),
+            "stdout": _full_text(stdout),
+            "stderr": _full_text(stderr),
+            "log_text": _full_text(log.read_text()),
         }
 
 
@@ -409,8 +407,8 @@ def _attach_ncu_details(info: dict[str, Any], ncu: str, report_prefix: Path, out
             "details_returncode": proc.returncode,
             "details_seconds": _round(time.time() - started),
             "details_command": cmd,
-            "details_text": _tail_text(proc.stdout),
-            "details_stderr": _tail_text(proc.stderr),
+            "details_text": _full_text(proc.stdout),
+            "details_stderr": _full_text(proc.stderr),
         })
     except subprocess.TimeoutExpired as e:
         stdout = e.stdout or ""
@@ -426,8 +424,8 @@ def _attach_ncu_details(info: dict[str, Any], ncu: str, report_prefix: Path, out
             "details_seconds": _round(time.time() - started),
             "details_command": cmd,
             "details_error": f"timeout after {timeout}s",
-            "details_text": _tail_text(stdout),
-            "details_stderr": _tail_text(stderr),
+            "details_text": _full_text(stdout),
+            "details_stderr": _full_text(stderr),
         })
 
 

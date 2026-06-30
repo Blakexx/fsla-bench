@@ -186,7 +186,7 @@ def main():
             print(f"[perf] {rid} OK", flush=True)
         except Exception as e:  # noqa: BLE001 -- one bench's failure must not drop the rest
             _append({"run_id": rid, "ok": False, "gpu": gpu,
-                     "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-12000:]})
+                     "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()})
             print(f"[perf] {rid} FAILED: {type(e).__name__}: {e}", flush=True)
 
 

@@ -5,7 +5,8 @@
 #
 # The box-side contract is wired: run_lm.py maps RUN_IDS ("<arm>_s<seed>") -> train_lm.py, which
 # appends {run_id, ok, params_m, state_floats, ppl, ...} to $FLEET_RESULTS + saves the ckpt dir.
-FROM blakeresearch/fleet-base:v1
+ARG FLEET_BASE_TAG=v1
+FROM blakeresearch/fleet-base:${FLEET_BASE_TAG}
 
 ENV DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PYTHONUNBUFFERED=1 \
     WANDB_MODE=offline WANDB_CONSOLE=off

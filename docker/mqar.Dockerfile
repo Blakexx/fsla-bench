@@ -4,7 +4,8 @@
 # the research stack (rola, fla-rola, zoology) + the suite package (rola_bench), and tell box_server
 # how to run/verify a batch via FLEET_RUN_CMD / FLEET_VERIFY_CMD. Sources are staged clean by
 # build.sh — only runtime code, no .git/CLAUDE.md/data/results (publication-safe).
-FROM blakeresearch/fleet-base:v2
+ARG FLEET_BASE_TAG=v2
+FROM blakeresearch/fleet-base:${FLEET_BASE_TAG}
 
 ENV DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PYTHONUNBUFFERED=1 \
     WANDB_MODE=offline WANDB_CONSOLE=off
