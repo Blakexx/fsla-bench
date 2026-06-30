@@ -688,6 +688,9 @@ def _buffer_ledger(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[st
             if module.read_W is not None:
                 items.append(_ledger_item("read_route_stream", (B, L, dm), "bf16", bf16,
                                           "Short-conv read-router input stream."))
+            if module.state_norm == "kappa":
+                items.append(_ledger_item("kappa_logits_stream", (B, L, H), "bf16", bf16,
+                                          "Short-conv kappa logit stream before sigmoid."))
             if module.kernel == "gla_scalar":
                 items.append(_ledger_item("decay_alpha_stream", (B, L, H), "bf16", bf16,
                                           "Short-conv scalar decay stream used as h_g."))
