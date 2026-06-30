@@ -632,8 +632,9 @@ def _analytic_sizes(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[s
         sizes.update({
             "route_D": D,
             "route_b": b,
-            "one_router_logits_mib": _round(_mib(one_logits)),
-            "all_router_logits_mib": _round(_mib(one_logits * router_count)),
+            "router_logits_materialized": False,
+            "one_router_logits_equivalent_mib": _round(_mib(one_logits)),
+            "all_router_logits_equivalent_mib": _round(_mib(one_logits * router_count)),
             "router_logits_count": router_count,
             "kernel_working_state_mib_fp32": _round(_mib(working_state)),
             "persistent_layer_state_mib_fp32": _round(_mib(persistent_layer_state)),
@@ -681,8 +682,9 @@ def _buffer_ledger(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[st
         b = module.route_b
         BH = B * H
         route_count = 1 if module.read_W is None else 2
-        for name in ("write_router_logits", "read_router_logits")[:route_count]:
-            items.append(_ledger_item(name, (B, L, H, D, b), "bf16", bf16, "Materialized factor logits."))
+        items.append(_ledger_item("router_logits_equivalent_avoided",
+                                  (route_count, B, L, H, D, b), "bf16", bf16,
+                                  "Equivalent full logits if materialized; production streams tiles inside the scan."))
         if module.state_norm == "kappa":
             items.append(_ledger_item("kappa", (B, L, H, 1), "bf16", bf16, "Per-token kappa exponent."))
         if module.kernel == "gla_scalar":
@@ -762,18 +764,25 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             alpha_logits = None
             alpha = None
             Wg = None
-        h = x.new_empty(B, L, H, 1)
-        wl = add("write_router_logits", lambda: module._factor_logits(x, module.write_W, module.write_b))
-        if module.read_W is None:
-            rl = wl
+        needs_router_logits = module.router_zloss_coef > 0.0 or module.state_norm == "raw"
+        if needs_router_logits:
+            wl = add("write_router_logits_required", lambda: module._factor_logits(x, module.write_W, module.write_b))
+            if module.read_W is None:
+                rl = wl
+            else:
+                rl = add("read_router_logits_required", lambda: module._factor_logits(x, module.read_W, module.read_b))
+            module._stash_zloss(wl, rl)
         else:
-            rl = add("read_router_logits", lambda: module._factor_logits(x, module.read_W, module.read_b))
-        module._stash_zloss(wl, rl)
+            wl = rl = None
+            module._router_aux = None
+        h_read = x.unsqueeze(2).expand(B, L, H, module.hidden_size)
+        h_write = h_read
+        h_decay = h_read
         out = add("chunk_rola_routed", lambda: chunk_rola_routed(
-            qf, kf, v, h, module.write_W if module.read_W is None else module.read_W, module.write_W,
+            qf, kf, v, h_read, module.write_W if module.read_W is None else module.read_W, module.write_W,
             module.route_D, module.route_b, norm=module.state_norm, kappa=kap, scale=1.0,
             b_r=(module.write_b if module.read_W is None else module.read_b),
-            b_w=module.write_b, Wg=Wg, wl=wl, rl=rl, alpha=alpha))
+            b_w=module.write_b, Wg=Wg, wl=wl, rl=rl, alpha=alpha, h_w=h_write, h_g=h_decay))
         if alpha_logits is not None:
             # Keep the tensor live until after the routed phase, matching the real forward's lifetime.
             _ = alpha_logits
@@ -820,18 +829,18 @@ def _markdown_report(summary: dict[str, Any]) -> str:
         lines.extend(["", "## Analytic Tensor Pressure", ""])
         for k, v in analytic.items():
             lines.append(f"- `{k}`: `{v}`")
-    if "all_router_logits_mib" in analytic:
+    if "all_router_logits_equivalent_mib" in analytic:
         kv = analytic["attention_kv_cache_mib_bf16"]
-        router = analytic["all_router_logits_mib"]
+        router = analytic["all_router_logits_equivalent_mib"]
         state = analytic["kernel_working_state_mib_fp32"]
         lines.extend([
             "",
             "## Read",
             "",
-            f"- Router logits are `{router}` MiB versus `{state}` MiB of fp32 working recurrent state.",
+            f"- Full router logits would be `{router}` MiB versus `{state}` MiB of fp32 working recurrent state.",
             f"- Attention KV cache at this cell would be `{kv}` MiB in bf16.",
-            "- If peak tracks router logits more than recurrent state, the fix is tiled/progressive "
-            "router-logit production rather than changing the state formula.",
+            "- The production chunk path streams routing tiles inside the scan, so this equivalent size should "
+            "not appear as live memory unless raw mode or router z-loss explicitly requires logits.",
         ])
     diagnostics = summary.get("diagnostics", {})
     if diagnostics:
