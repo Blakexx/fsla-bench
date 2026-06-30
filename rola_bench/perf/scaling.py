@@ -444,12 +444,25 @@ def _row(**kw):
     return base
 
 
+def _arm_kinds():
+    raw = os.environ.get("SCALE_ARMS", "attn,rola,monolith")
+    kinds = tuple(x.strip() for x in raw.split(",") if x.strip())
+    allowed = {"attn", "rola", "monolith"}
+    unknown = sorted(set(kinds) - allowed)
+    if unknown:
+        raise ValueError(f"unknown SCALE_ARMS entries {unknown}; expected subset of {sorted(allowed)}")
+    return kinds
+
+
 def _arm_specs(routings, include_attention=False):
+    kinds = _arm_kinds()
     idx = 0
-    if include_attention:
+    if include_attention and "attn" in kinds:
         yield dict(idx=idx, kind="attn", routing=None, gla=None, arm="attn")
         idx += 1
     for kind in ("rola", "monolith"):
+        if kind not in kinds:
+            continue
         kind_routings = routings if kind == "rola" else (None,)
         for routing in kind_routings:
             for gla, var in ((False, "rla"), (True, "gla")):

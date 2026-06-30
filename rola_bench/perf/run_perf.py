@@ -148,6 +148,17 @@ BENCHES = {
 }
 
 
+def _has_successful_measurement(data):
+    rows = data.get("scaling") if isinstance(data, dict) else None
+    if rows is None:
+        return True
+    timing_fields = ("fwd_ms", "fb_ms", "decode_ms")
+    return any(
+        any(r.get(k) not in (None, "ERR", "OOM") for k in timing_fields)
+        for r in rows
+    )
+
+
 def main():
     import torch
     import rola_bench.perf._common as C
@@ -182,8 +193,12 @@ def main():
         try:
             print(f"[perf] running {rid} on {gpu} (reps={REPS})", flush=True)
             data = fn(out_dir)
-            _append({"run_id": rid, "ok": True, "gpu": gpu, "reps": REPS, **data})
-            print(f"[perf] {rid} OK", flush=True)
+            ok = _has_successful_measurement(data)
+            row = {"run_id": rid, "ok": ok, "gpu": gpu, "reps": REPS, **data}
+            if not ok:
+                row["error"] = "no successful timing rows"
+            _append(row)
+            print(f"[perf] {rid} {'OK' if ok else 'FAILED: no successful timing rows'}", flush=True)
         except Exception as e:  # noqa: BLE001 -- one bench's failure must not drop the rest
             _append({"run_id": rid, "ok": False, "gpu": gpu,
                      "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()})

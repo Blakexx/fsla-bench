@@ -18,5 +18,6 @@ fleet:
     SCALE_NCS: "256,1024"
     SCALE_DQKS: "16"
     SCALE_ROUTINGS: "flat,square,tree"
+    SCALE_ARMS: "attn,rola"
     PERF_B: "2"
     CUDA_LAUNCH_BLOCKING: "1"
