@@ -52,6 +52,8 @@ def _chunk_rola_routed():
 class Phase:
     name: str
     ms: float
+    iqr_ms: float
+    samples_ms: list[float]
     alloc_delta_mib: float
     peak_delta_mib: float
     end_alloc_mib: float
@@ -94,23 +96,37 @@ def _event_ms(fn):
     return start.elapsed_time(end), value
 
 
-def _measure_phase(name: str, fn) -> tuple[Phase, Any]:
-    _sync()
-    torch.cuda.reset_peak_memory_stats()
-    base = torch.cuda.memory_allocated()
+def _timing_stats(samples: list[float]) -> tuple[float, float]:
+    return C.median(samples), C.iqr(samples)
+
+
+def _measure_phase(name: str, fn, reps: int = 1) -> tuple[Phase, Any]:
+    samples: list[float] = []
+    peaks: list[float] = []
+    alloc_delta = end_alloc = base = 0
+    value = None
 
     def wrapped():
         with record_function(f"profile_graph::{name}"):
             return fn()
 
-    ms, value = _event_ms(wrapped)
-    end_alloc = torch.cuda.memory_allocated()
-    peak = torch.cuda.max_memory_allocated()
+    for _ in range(max(1, reps)):
+        _sync()
+        torch.cuda.reset_peak_memory_stats()
+        base = torch.cuda.memory_allocated()
+        ms, value = _event_ms(wrapped)
+        end_alloc = torch.cuda.memory_allocated()
+        peak = torch.cuda.max_memory_allocated()
+        samples.append(float(ms))
+        peaks.append(_mib(peak - base))
+    med_ms, iqr_ms = _timing_stats(samples)
     phase = Phase(
         name=name,
-        ms=_round(ms),
+        ms=_round(med_ms),
+        iqr_ms=_round(iqr_ms),
+        samples_ms=[_round(x) for x in samples],
         alloc_delta_mib=_round(_mib(end_alloc - base)),
-        peak_delta_mib=_round(_mib(peak - base)),
+        peak_delta_mib=_round(max(peaks) if peaks else 0.0),
         end_alloc_mib=_round(_mib(end_alloc)),
         outputs=_tensor_info(value),
     )
@@ -130,21 +146,42 @@ def _git_rev(path: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def _module_git_rev(module_name: str) -> str | None:
+    try:
+        mod = __import__(module_name)
+        path = Path(mod.__file__).resolve()
+    except Exception:
+        return None
+    for parent in (path.parent, *path.parents):
+        if (parent / ".git").exists():
+            return _git_rev(str(parent))
+    return None
+
+
 def _module_forward(module, x):
     o = module(x)
     return o[0] if isinstance(o, tuple) else o
 
 
-def _whole_forward_profile(module, x) -> dict[str, Any]:
+def _whole_forward_profile(module, x, reps: int = 1) -> dict[str, Any]:
+    samples: list[float] = []
+    peaks: list[float] = []
+    y = None
     with torch.inference_mode():
-        _sync()
-        torch.cuda.reset_peak_memory_stats()
-        base = torch.cuda.memory_allocated()
-        ms, y = _event_ms(lambda: _module_forward(module, x))
-        peak = torch.cuda.max_memory_allocated()
+        for _ in range(max(1, reps)):
+            _sync()
+            torch.cuda.reset_peak_memory_stats()
+            base = torch.cuda.memory_allocated()
+            ms, y = _event_ms(lambda: _module_forward(module, x))
+            peak = torch.cuda.max_memory_allocated()
+            samples.append(float(ms))
+            peaks.append(_mib(peak - base))
+    med_ms, iqr_ms = _timing_stats(samples)
     return {
-        "ms": _round(ms),
-        "peak_delta_mib": _round(_mib(peak - base)),
+        "ms": _round(med_ms),
+        "iqr_ms": _round(iqr_ms),
+        "samples_ms": [_round(x) for x in samples],
+        "peak_delta_mib": _round(max(peaks) if peaks else 0.0),
         "output": _tensor_info(y),
     }
 
@@ -585,7 +622,7 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
     H = module.num_heads
 
     def add(name, fn):
-        phase, value = _measure_phase(name, fn)
+        phase, value = _measure_phase(name, fn, reps=args.reps)
         phases.append(phase)
         return value
 
@@ -646,17 +683,18 @@ def _markdown_report(summary: dict[str, Any]) -> str:
         "## Whole Forward",
         "",
         f"- time: `{summary['whole_forward']['ms']} ms`",
+        f"- IQR: `{summary['whole_forward'].get('iqr_ms', 0.0)} ms`",
         f"- peak delta: `{summary['whole_forward']['peak_delta_mib']} MiB`",
         "",
         "## Phase High-Water",
         "",
-        "| phase | ms | alloc delta MiB | peak delta MiB | output MiB |",
-        "|---|---:|---:|---:|---:|",
+        "| phase | median ms | IQR ms | alloc delta MiB | peak delta MiB | output MiB |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for p in summary.get("phases", []):
         out_mib = sum(o.get("mib", 0.0) for o in p.get("outputs", []))
         lines.append(
-            f"| `{p['name']}` | {p['ms']} | {p['alloc_delta_mib']} | "
+            f"| `{p['name']}` | {p['ms']} | {p.get('iqr_ms', 0.0)} | {p['alloc_delta_mib']} | "
             f"{p['peak_delta_mib']} | {round(out_mib, 3)} |"
         )
     analytic = summary.get("analytic", {})
@@ -768,7 +806,7 @@ def run(args) -> dict[str, Any]:
 
     out_dir = args.out / time.strftime("%Y%m%d_%H%M%S")
     out_dir.mkdir(parents=True, exist_ok=True)
-    whole = _whole_forward_profile(module, x)
+    whole = _whole_forward_profile(module, x, reps=args.reps)
     phases = _profile_rola_phases(module, x, args) if args.arm.startswith("rola-") else []
     profiler_info = None
     if args.torch_profiler:
@@ -793,7 +831,7 @@ def run(args) -> dict[str, Any]:
             "cuda": torch.version.cuda,
             "dtype": str(C.DT).replace("torch.", ""),
             "rola_bench_rev": _git_rev("/home/blake/rola-bench"),
-            "fla_rola_rev": _git_rev("/home/blake/flash-linear-attention-rola"),
+            "fla_rola_rev": _module_git_rev("fla_rola"),
         },
         "whole_forward": whole,
         "phases": [asdict(p) for p in phases],
