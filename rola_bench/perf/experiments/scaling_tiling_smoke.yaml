@@ -19,3 +19,4 @@ fleet:
     SCALE_DQKS: "16"
     SCALE_ROUTINGS: "flat,square,tree"
     PERF_B: "2"
+    CUDA_LAUNCH_BLOCKING: "1"
