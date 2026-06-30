@@ -23,6 +23,7 @@ REPS = int(os.environ.get("PERF_REPS", "15"))
 
 
 def _append(row):
+    Path(RESULTS).parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTS, "a") as fh:
         fh.write(json.dumps(row) + "\n")
         fh.flush()
@@ -185,7 +186,7 @@ def main():
             print(f"[perf] {rid} OK", flush=True)
         except Exception as e:  # noqa: BLE001 -- one bench's failure must not drop the rest
             _append({"run_id": rid, "ok": False, "gpu": gpu,
-                     "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-2000:]})
+                     "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-12000:]})
             print(f"[perf] {rid} FAILED: {type(e).__name__}: {e}", flush=True)
 
 

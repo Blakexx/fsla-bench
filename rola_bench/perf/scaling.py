@@ -50,6 +50,7 @@ import gc
 import importlib
 import math
 import os
+import traceback
 import warnings
 from pathlib import Path
 
@@ -456,7 +457,14 @@ def _arm_specs(routings, include_attention=False):
                 idx += 1
 
 
-def _append_error(rows, bench, L, x_pct, d, nc, spec, label):
+def _safe_empty_cache():
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _append_error(rows, bench, L, x_pct, d, nc, spec, label, exc=None):
     row = _row(bench=bench, L=L, state_axis="nc", X_pct=x_pct, d_qk=d, nc=nc,
                routing=spec["routing"], arm=spec["arm"])
     if bench == "decode":
@@ -465,6 +473,9 @@ def _append_error(rows, bench, L, x_pct, d, nc, spec, label):
         row["fwd_ms"] = label
         if bench == "train":
             row["fb_ms"] = label
+    if exc is not None:
+        row["error"] = f"{type(exc).__name__}: {exc}"
+        row["trace"] = traceback.format_exc()[-12000:]
     rows.append(row)
     return row
 
@@ -555,7 +566,7 @@ def _isolated_metric_sample(bench, L, d, nc, spec):
     sample = _prepared_sample(rec)
     del rec
     gc.collect()
-    torch.cuda.empty_cache()
+    _safe_empty_cache()
     return sample
 
 
@@ -604,12 +615,12 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
                                    prepared=prepared, data=[]))
         except _INFEASIBLE:
             row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
-            torch.cuda.empty_cache()
+            _safe_empty_cache()
             print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
             print(row, flush=True)
         except Exception as e:  # noqa: BLE001
-            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
-            torch.cuda.empty_cache()
+            row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR", e)
+            _safe_empty_cache()
             print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
                   f"{type(e).__name__}: {e}", flush=True)
             print(row, flush=True)
@@ -627,17 +638,17 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
                     still_active.append(rec)
                 except _INFEASIBLE:
                     row = _append_error(rows, bench, L, x_pct, d, nc, spec, "OOM")
-                    torch.cuda.empty_cache()
+                    _safe_empty_cache()
                     print(f"OOM {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
                     print(row, flush=True)
                 except Exception as e:  # noqa: BLE001
-                    row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR")
-                    torch.cuda.empty_cache()
+                    row = _append_error(rows, bench, L, x_pct, d, nc, spec, "ERR", e)
+                    _safe_empty_cache()
                     print(f"ERR {spec['arm']} {bench} L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
                           f"{type(e).__name__}: {e}", flush=True)
                     print(row, flush=True)
                 finally:
-                    torch.cuda.empty_cache()
+                    _safe_empty_cache()
             active = still_active
             if not active:
                 break
@@ -661,7 +672,7 @@ def _timed_group(bench, L, x_pct, d, nc, routings, rows):
 
     del active
     gc.collect()
-    torch.cuda.empty_cache()
+    _safe_empty_cache()
 
 
 def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
@@ -696,17 +707,17 @@ def _timed_decode_group(L, x_pct, d, nc, routings, rows):
                 still_active.append(rec)
             except _INFEASIBLE:
                 row = _append_error(rows, "decode", L, x_pct, d, nc, spec, "OOM")
-                torch.cuda.empty_cache()
+                _safe_empty_cache()
                 print(f"OOM {spec['arm']} decode L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}", flush=True)
                 print(row, flush=True)
             except Exception as e:  # noqa: BLE001
-                row = _append_error(rows, "decode", L, x_pct, d, nc, spec, "ERR")
-                torch.cuda.empty_cache()
+                row = _append_error(rows, "decode", L, x_pct, d, nc, spec, "ERR", e)
+                _safe_empty_cache()
                 print(f"ERR {spec['arm']} decode L{L} X{x_pct} d{d} r{spec['routing']} nc{nc}: "
                       f"{type(e).__name__}: {e}", flush=True)
                 print(row, flush=True)
             finally:
-                torch.cuda.empty_cache()
+                _safe_empty_cache()
         active = still_active
         if not active:
             break
