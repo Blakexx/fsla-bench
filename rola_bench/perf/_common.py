@@ -242,8 +242,15 @@ def round_robin(impls, run_one, reps=REPS, warmup=WARMUP):
 def write_csv(path, rows):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = []
+    seen = set()
+    for row in rows:
+        for key in row.keys():
+            if key not in seen:
+                seen.add(key)
+                fieldnames.append(key)
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
         w.writeheader()
         w.writerows(rows)
     return path
