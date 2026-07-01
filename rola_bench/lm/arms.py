@@ -62,7 +62,6 @@ _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embedd
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
 _QKNORM  = str(_os.environ.get("LM_QK_NORM", "0")).lower() in ("1", "true", "yes")  # qk-rmsnorm (RoLA + attn)
 _ROUTER_BIAS = str(_os.environ.get("LM_ROUTER_BIAS", "0")).lower() in ("1", "true", "yes")
-_ZLOSS   = float(_os.environ.get("LM_ROUTER_ZLOSS_COEF", "0"))      # ST-MoE router z-loss (RoLA; 0 = off)
 
 # --- shared backbone (the part that must be IDENTICAL across all arms) -------------------------
 BACKBONE = dict(
@@ -82,7 +81,7 @@ BACKBONE = dict(
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
 ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
-                 router_bias=_ROUTER_BIAS, router_zloss_coef=_ZLOSS)
+                 router_bias=_ROUTER_BIAS)
 GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)
 GLA_GEOM = dict(num_heads=_GLA_NH, expand_k=_GLA_EK, expand_v=_GLA_EV, gate_logit_normalizer=16)
 # Alias geometry for older configs that still name gdn-isostate/gla-isostate.

@@ -798,17 +798,6 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
         else:
             wx = x
             rx = x
-        needs_router_logits = module.router_zloss_coef > 0.0 or module.state_norm == "raw"
-        if needs_router_logits:
-            wl = add("write_router_logits_required", lambda: module._factor_logits(wx, module.write_W, module.write_b))
-            if module.read_W is None:
-                rl = wl
-            else:
-                rl = add("read_router_logits_required", lambda: module._factor_logits(rx, module.read_W, module.read_b))
-            module._stash_zloss(wl, rl)
-        else:
-            wl = rl = None
-            module._router_aux = None
         h_read = rx.unsqueeze(2).expand(B, L, H, module.hidden_size)
         h_write = wx.unsqueeze(2).expand(B, L, H, module.hidden_size)
         h_decay = (alpha_logits.view(B, L, H, 1) if (module.kernel == "gla_scalar" and use_short_conv)
@@ -817,7 +806,7 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
             qf, kf, v, h_read, module.write_W if module.read_W is None else module.read_W, module.write_W,
             module.route_D, module.route_b, norm=module.state_norm, kappa=kap, scale=1.0,
             b_r=(module.write_b if module.read_W is None else module.read_b),
-            b_w=module.write_b, Wg=Wg, wl=wl, rl=rl, alpha=alpha, h_w=h_write, h_g=h_decay))
+            b_w=module.write_b, Wg=Wg, alpha=alpha, h_w=h_write, h_g=h_decay))
         if alpha_logits is not None:
             # Keep the tensor live until after the routed phase, matching the real forward's lifetime.
             _ = alpha_logits
