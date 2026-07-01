@@ -8,7 +8,7 @@
 benches: [scaling-prefill]
 reps: 15
 fleet:
-  image: "blakeresearch/rola-bench:v39"
+  image: "blakeresearch/rola-bench:v40"
   offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
   idle_timeout: 1800
   batch: 1
