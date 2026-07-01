@@ -19,4 +19,5 @@ fleet:
     SCALE_NCS: "16,64,256,1024"
     SCALE_DQKS: "16,64,128"
     SCALE_ROUTINGS: "flat,square,tree"
+    SCALE_PREFLIGHT_ARMS: "1"
     PERF_B: "2"
