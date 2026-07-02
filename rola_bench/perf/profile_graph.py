@@ -627,11 +627,22 @@ def _analytic_sizes(module, arm: str, B: int, L: int, d: int, nc: int) -> dict[s
         b = module.route_b
         one_logits = B * L * H * D * b * dtype_bytes
         router_count = 1 if module.read_W is None else 2
+        route_stream_count = router_count + (1 if module.kernel == "gla_scalar" else 0)
+        one_compact_route = B * L * dm * dtype_bytes
+        one_expanded_route = B * L * H * dm * dtype_bytes
         working_state = B * H * nc * d * (d + 1) * 4
         persistent_layer_state = H * nc * d * (d + 1) * 4
         sizes.update({
             "route_D": D,
             "route_b": b,
+            "route_streams_compact": True,
+            "route_stream_count": route_stream_count,
+            "one_compact_route_stream_mib": _round(_mib(one_compact_route)),
+            "one_expanded_route_stream_equivalent_mib": _round(_mib(one_expanded_route)),
+            "expanded_route_streams_equivalent_mib": _round(_mib(one_expanded_route * route_stream_count)),
+            "compact_route_streams_equivalent_mib": _round(_mib(one_compact_route * route_stream_count)),
+            "expanded_route_streams_avoided_mib": _round(_mib((one_expanded_route - one_compact_route)
+                                                             * route_stream_count)),
             "router_logits_materialized": False,
             "one_router_logits_equivalent_mib": _round(_mib(one_logits)),
             "all_router_logits_equivalent_mib": _round(_mib(one_logits * router_count)),
@@ -798,10 +809,10 @@ def _profile_rola_phases(module, x, args) -> list[Phase]:
         else:
             wx = x
             rx = x
-        h_read = rx.unsqueeze(2).expand(B, L, H, module.hidden_size)
-        h_write = wx.unsqueeze(2).expand(B, L, H, module.hidden_size)
+        h_read = rx
+        h_write = wx
         h_decay = (alpha_logits.view(B, L, H, 1) if (module.kernel == "gla_scalar" and use_short_conv)
-                   else x.unsqueeze(2).expand(B, L, H, module.hidden_size))
+                   else x)
         out = add("chunk_rola_routed", lambda: chunk_rola_routed(
             qf, kf, v, h_read, module.write_W if module.read_W is None else module.read_W, module.write_W,
             module.route_D, module.route_b, norm=module.state_norm, kappa=kap, scale=1.0,
@@ -857,12 +868,14 @@ def _markdown_report(summary: dict[str, Any]) -> str:
         kv = analytic["attention_kv_cache_mib_bf16"]
         router = analytic["all_router_logits_equivalent_mib"]
         state = analytic["kernel_working_state_mib_fp32"]
+        route_avoided = analytic.get("expanded_route_streams_avoided_mib")
         lines.extend([
             "",
             "## Read",
             "",
             f"- Full router logits would be `{router}` MiB versus `{state}` MiB of fp32 working recurrent state.",
             f"- Attention KV cache at this cell would be `{kv}` MiB in bf16.",
+            f"- Compact route streams avoid `{route_avoided}` MiB of B*H-expanded hidden-stream equivalent.",
             "- The production chunk path streams routing tiles inside the scan, so this equivalent size should "
             "not appear as live memory unless raw mode or router z-loss explicitly requires logits.",
         ])
