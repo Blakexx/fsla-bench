@@ -268,6 +268,75 @@ def build_rola(gla, nc, d, routing="flat"):
     return RoLAMixer(d_model=DM, layer_idx=0, **kw).to(C.DEV, C.DT)
 
 
+# --- REAL external linear-attention baselines (paper_v1: RoLA vs the FLA library's own canonical
+# layers, layer-vs-layer at matched d_model=DM, NOT matched-state -- these are the SAME complexity
+# class as RoLA per this module's own docstring rationale, included here specifically for paper_v1's
+# "final RoLA vs real implementations" ask; the scaling-SHAPE argument for excluding them from the
+# original RoLA-vs-monolith-vs-attn sweep still holds for that sweep's own purpose). Canonical geometry
+# per arm mirrors rola_bench.lm.arms's GDN_GEOM/GLA_GEOM (the paper's LM-suite defaults), NOT the (d,nc)
+# sweep axis -- these layers don't have a states_per_head knob to sweep. use_short_conv=False for all
+# (arms.py's uniform "isolate the mixer" policy). Layers come from `fla_rola.layers` (the engine's own
+# fork of the canonical fla layers) rather than the separately pip-installed `fla` package, so they
+# track whatever fla commit this engine worktree forked from.
+_FLA_BASELINE_GEOM = {
+    "gla": dict(num_heads=4, expand_k=2.0, expand_v=8.0, gate_logit_normalizer=16),
+    "gdn": dict(num_heads=8, head_dim=256, expand_v=2.0),
+    "deltanet": dict(num_heads=8, expand_k=1.0, expand_v=1.0),
+    "gsa": dict(num_heads=4, expand_k=1.0, expand_v=1.0, num_slots=64),
+}
+
+
+def _build_fla_baseline(kind):
+    """One canonical `fla_rola.layers` baseline layer at hidden_size=DM. `kind` in `_FLA_BASELINE_GEOM`."""
+    if kind == "gla":
+        from fla_rola.layers.gla import GatedLinearAttention as Cls
+    elif kind == "gdn":
+        from fla_rola.layers.gated_deltanet import GatedDeltaNet as Cls
+    elif kind == "deltanet":
+        from fla_rola.layers.delta_net import DeltaNet as Cls
+    elif kind == "gsa":
+        from fla_rola.layers.gsa import GatedSlotAttention as Cls
+    else:
+        raise ValueError(f"unknown fla baseline kind {kind!r}")
+    return Cls(hidden_size=DM, use_short_conv=False, layer_idx=0,
+              **_FLA_BASELINE_GEOM[kind]).to(C.DEV, C.DT)
+
+
+_NAMED_ROLA_ARM_KINDS = ("rola-base", "rola-base-rla")   # paper_v1's flagship arms
+
+
+def build_rola_named(kind, nc=256):
+    """Build a flagship named-config RoLA layer (`rola_bench.named_configs`) as a scaling arm, at ITS
+    OWN fixed geometry (H=8, d_qk=16, d_v=64, square topology) rather than the (d, nc) sweep axis --
+    same rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis. Goes
+    through the `RoLAMixer` `level_routing_configs` passthrough (same construct-gate pattern as
+    `rola_bench.suites.mqar._construct_named`): falls back to the named config's pinned pre-C8
+    substitute on the per-level-heterogeneous-activation gap, returns
+    `(module, used_name, requires_c8_hit)`."""
+    from rola_bench.named_configs import NAMED_CONFIGS
+    name = {"rola-base": "RoLA-base", "rola-base-rla": "RoLA-base-rla"}[kind]
+    cfg = NAMED_CONFIGS[name]
+
+    def _mixer(cfg_obj):
+        kwargs = dict(cfg_obj.build_kwargs(nc, True))   # use_short_conv=True (paper/LM geometry)
+        lrc = kwargs.pop("level_routing_configs")
+        D, b = kwargs.pop("levels_per_head"), kwargs.pop("states_per_level")
+        return RoLAMixer(d_model=DM, d_qk=16, d_v=64, num_chunks=b ** D, n_heads=8, routing="square",
+                         kernel=kwargs.pop("kernel"), level_routing_configs=lrc, layer_idx=0,
+                         kernel_kwargs={"state_norm": kwargs.pop("state_norm")},
+                         router_bias=kwargs.pop("router_bias"),
+                         use_short_conv=kwargs.pop("use_short_conv")).to(C.DEV, C.DT)
+
+    m = _mixer(cfg)
+    err = getattr(m, "_routing_resolution_error", None)
+    if err is None:
+        return m, name, False
+    if cfg.fallback is None or "per-level heterogeneous routing activation" not in str(err):
+        raise err
+    fb = NAMED_CONFIGS[cfg.fallback]
+    return _mixer(fb), fb.name, True
+
+
 def build_monolith(gla, nc, d):
     """The matched-state WIDE monolith (nc=1, one big state of size H·nc·d·d, d_k widened to nc·d) —
     RoLA's routed-vs-not ablation. Reuses canonical_baselines.baseline_cell at the perf shape so the
@@ -389,6 +458,55 @@ def _decode_layer_step(module, L):
     return _round_ms(C.median(times), 4), _round_ms(C.iqr(times), 4), peak
 
 
+def _decode_layer_sample_graphed(module, L):
+    """SAME seeding contract as `_decode_layer_sample` (fixed-size recurrent state, seeded from a
+    bounded prefill, `len(cache)==0` fail-loud guard), but the timed single-token step is a CUDA-graph
+    REPLAY rather than an eager call — the C9 pattern
+    (`rola-scratch/workflows/dag/dag_tasks/C9-decode-swap-graph.md`): prefer the engine's own
+    `RoLADecodeGraph` (bit-identical-to-eager, correctness-gated) when the checked-out engine has it;
+    else fall back to a generic `torch.cuda.graph` capture of the raw decode call (best-effort, NOT
+    correctness-gated — a graph-breaker there, e.g. a host sync on the decode path, surfaces as a real
+    exception, which the caller's round-robin loop already turns into an ERR sentinel row like any
+    other cell failure — no special-case handling needed here)."""
+    if getattr(module, "layer_idx", None) is None:
+        module.layer_idx = 0
+    seed_len = min(max(1, L), _SEED_PREFILL)
+    x_pre = torch.randn(C.B, seed_len, DM, device=C.DEV, dtype=C.DT)
+    x1 = torch.randn(C.B, 1, DM, device=C.DEV, dtype=C.DT)
+    torch.cuda.synchronize(); base = torch.cuda.memory_allocated()
+    with torch.inference_mode():
+        cache = _new_cache()
+        module(x_pre, past_key_values=cache, use_cache=True)
+        if len(cache) == 0:
+            raise RuntimeError(
+                "decode arm (graphed): cache NOT seeded after prefill (len==0) -- see "
+                "_decode_layer_sample's identical guard.")
+        try:
+            from fla_rola.layers.rola import RoLADecodeGraph
+            g = RoLADecodeGraph(module, cache, x1)
+            step = lambda: g.step(x1)
+        except ImportError:
+            static_in = x1.clone()
+            s = torch.cuda.Stream(); s.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(s):
+                for _ in range(3):
+                    module(static_in, past_key_values=cache, use_cache=True)
+            torch.cuda.current_stream().wait_stream(s)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                module(static_in, past_key_values=cache, use_cache=True)
+
+            def step():
+                static_in.copy_(x1)
+                graph.replay()
+        torch.cuda.synchronize(); torch.cuda.reset_peak_memory_stats()
+        t0 = torch.cuda.Event(enable_timing=True); t1 = torch.cuda.Event(enable_timing=True)
+        t0.record(); step(); t1.record(); torch.cuda.synchronize()
+        ms = t0.elapsed_time(t1)
+        peak = round((torch.cuda.max_memory_allocated() - base) / 2 ** 20, 1)
+    return ms, peak
+
+
 def _decode_rola_cell(module, L):
     """RoLA layer decode -> (ms/token, state_mib_analytic, peak_mib_measured). state_mib is the FIXED
     recurrent footprint (the comparison axis); peak_mib is the measured decode-step peak."""
@@ -448,21 +566,31 @@ def _row(**kw):
     return base
 
 
+_FLA_BASELINE_KINDS = tuple(_FLA_BASELINE_GEOM)   # ("gla", "gdn", "deltanet", "gsa")
+
+
 def _arm_kinds():
     raw = os.environ.get("SCALE_ARMS", "attn,rola,monolith")
     kinds = tuple(x.strip() for x in raw.split(",") if x.strip())
-    allowed = {"attn", "rola", "monolith"}
+    allowed = {"attn", "rola", "monolith", *_FLA_BASELINE_KINDS, *_NAMED_ROLA_ARM_KINDS}
     unknown = sorted(set(kinds) - allowed)
     if unknown:
         raise ValueError(f"unknown SCALE_ARMS entries {unknown}; expected subset of {sorted(allowed)}")
     return kinds
 
 
-def _arm_specs(routings, include_attention=False):
+def _decode_graphed_enabled():
+    """SCALE_DECODE_GRAPHED=1 adds a `graphed: true` cell variant to every RoLA decode arm (eager and
+    graphed as cells of the SAME decode bench, per the paper_v1 methodology) -- OFF by default (byte-
+    identical to before when unset), and only meaningful for `bench=='decode'`."""
+    return _env_flag("SCALE_DECODE_GRAPHED", False)
+
+
+def _arm_specs(routings, include_attention=False, include_graphed=False):
     kinds = _arm_kinds()
     idx = 0
     if include_attention and "attn" in kinds:
-        yield dict(idx=idx, kind="attn", routing=None, gla=None, arm="attn")
+        yield dict(idx=idx, kind="attn", routing=None, gla=None, arm="attn", graphed=False)
         idx += 1
     for kind in ("rola", "monolith"):
         if kind not in kinds:
@@ -470,8 +598,31 @@ def _arm_specs(routings, include_attention=False):
         kind_routings = routings if kind == "rola" else (None,)
         for routing in kind_routings:
             for gla, var in ((False, "rla"), (True, "gla")):
-                yield dict(idx=idx, kind=kind, routing=routing, gla=gla, arm=f"{kind}-{var}")
+                yield dict(idx=idx, kind=kind, routing=routing, gla=gla, arm=f"{kind}-{var}", graphed=False)
                 idx += 1
+                # graphed decode variant: RoLA only (monolith/attn stay eager -- the graph capture is
+                # RoLA's own decode-step machinery, not a generic layer capability here).
+                if include_graphed and kind == "rola":
+                    yield dict(idx=idx, kind=kind, routing=routing, gla=gla,
+                               arm=f"{kind}-{var}-graphed", graphed=True)
+                    idx += 1
+    # Real external FLA baselines (paper_v1): one fixed-geometry variant each, no routing/gla axis,
+    # never graphed (that machinery is RoLA-decode-specific).
+    for kind in _FLA_BASELINE_KINDS:
+        if kind not in kinds:
+            continue
+        yield dict(idx=idx, kind=kind, routing=None, gla=None, arm=kind, graphed=False)
+        idx += 1
+    # The flagship named-config arms (paper_v1): fixed geometry, eligible for the graphed decode
+    # variant (it IS RoLA's own decode-step machinery).
+    for kind in _NAMED_ROLA_ARM_KINDS:
+        if kind not in kinds:
+            continue
+        yield dict(idx=idx, kind=kind, routing=None, gla=None, arm=kind, graphed=False)
+        idx += 1
+        if include_graphed:
+            yield dict(idx=idx, kind=kind, routing=None, gla=None, arm=f"{kind}-graphed", graphed=True)
+            idx += 1
 
 
 def _safe_empty_cache():
@@ -520,6 +671,7 @@ def _preflight_child(args):
         "routing": routing,
         "gla": bool(args.preflight_gla),
         "arm": args.preflight_arm,
+        "graphed": bool(args.preflight_graphed),
     }
     try:
         if args.preflight_bench in ("train", "prefill"):
@@ -571,6 +723,7 @@ def _preflight_arm(bench, L, d, nc, spec):
         "--preflight-gla", "1" if spec["gla"] else "0",
         "--preflight-arm", spec["arm"],
         "--preflight-idx", str(spec["idx"]),
+        "--preflight-graphed", "1" if spec.get("graphed") else "0",
     ]
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
@@ -613,6 +766,11 @@ def _build_scaling_arm(spec, L, d, nc):
         return _CausalMHA(DM, C.H).to(C.DEV, C.DT)
     if spec["kind"] == "rola":
         return build_rola(spec["gla"], nc, d, routing=spec["routing"])
+    if spec["kind"] in _FLA_BASELINE_KINDS:
+        return _build_fla_baseline(spec["kind"])
+    if spec["kind"] in _NAMED_ROLA_ARM_KINDS:
+        module, _used, _requires_c8 = build_rola_named(spec["kind"])
+        return module
     return build_monolith(spec["gla"], nc, d)
 
 
@@ -719,7 +877,8 @@ def _timed_decode_sample(L, d, nc, spec):
     if module is None:
         return None
     torch.manual_seed(seed + 1)
-    ms, peak = _decode_layer_sample(module, L)
+    sampler = _decode_layer_sample_graphed if spec.get("graphed") else _decode_layer_sample
+    ms, peak = sampler(module, L)
     state_mib = None
     if spec["kind"] == "rola":
         state_mib = _module_state_mib(module)
@@ -847,7 +1006,7 @@ def _summarize_decode(rows, L, x_pct, d, nc, spec, recs):
 def _timed_decode_group(L, x_pct, d, nc, routings, rows):
     """Time comparable decode arms round-robin for one scaling cell."""
     active = []
-    for spec in _arm_specs(routings, include_attention=True):
+    for spec in _arm_specs(routings, include_attention=True, include_graphed=_decode_graphed_enabled()):
         preflight = _preflight_arm("decode", L, d, nc, spec)
         if not preflight.get("ok", False):
             row = _append_error(rows, "decode", L, x_pct, d, nc, spec,
@@ -926,6 +1085,7 @@ def main():
     ap.add_argument("--preflight-gla", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--preflight-arm", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--preflight-idx", type=int, default=0, help=argparse.SUPPRESS)
+    ap.add_argument("--preflight-graphed", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--benches", default="train,prefill,decode", help="comma: train,prefill,decode")
     ap.add_argument("--lens", default=os.environ.get("SCALE_LENS", "1024,4096,16384,65536"))
     ap.add_argument("--ncs", default=os.environ.get("SCALE_NCS", "16,64,256,1024"),

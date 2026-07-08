@@ -35,8 +35,11 @@ def test_rola_equiv_cpu():
         pytest.skip(f"fla_rola not importable: {e}")
     torch.manual_seed(0)
     d_model, d_qk, d_v, nc = DM, 8, 8, 4
-    mixer = RoLA(hidden_size=d_model, head_k_dim=d_qk, head_v_dim=d_v, states_per_head=nc, num_heads=H,
-                 kernel="rla", phi="elu", state_norm="global", tie_routers=False).eval()
+    # states_per_head=nc (flat) -> levels_per_head=1, states_per_level=nc; tie_routers=False ->
+    # routing_mode tied=False, dense/dense (#config-refactor, rola_compat.routing_mode_from_tie_routers).
+    mixer = RoLA(hidden_size=d_model, head_k_dim=d_qk, head_v_dim=d_v, levels_per_head=1, states_per_level=nc,
+                 num_heads=H, kernel="rla", phi="elu", state_norm="global",
+                 routing_mode={"tied": False, "read": "dense", "write": "dense"}).eval()
     x = torch.randn(B, L, d_model)
     # raw q/k/v + routing exactly as RoLA.forward feeds the kernel (use_short_conv off)
     q = mixer.q_proj(x).view(B, L, H, mixer.proj_qk)

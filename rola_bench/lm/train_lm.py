@@ -114,8 +114,10 @@ def _ckpt_config_matches(ck, cfg):
         cj = json.load(open(os.path.join(ck, "config.json")))
     except Exception:
         return False
-    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "states_per_head",
-              "d_qk", "d_v", "router_bias"):
+    # RoLAConfig (#config-refactor 2026-07-06) exposes levels_per_head/states_per_level, not
+    # states_per_head -- check those instead (still guards the same regime-collision gotcha).
+    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "levels_per_head",
+              "states_per_level", "d_qk", "d_v", "router_bias"):
         want = getattr(cfg, k, None)
         got = cj.get(k, False if k == "router_bias" else None)
         if want is not None and got is not None and got != want:
@@ -214,8 +216,10 @@ def main():
         model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
         state_floats = arms.recurrent_state_floats(a.arm)
     else:                                                # legacy single-RoLA run
-        cfg = RoLAConfig(rola_instance=a.rola_instance, states_per_head=a.num_states, d_qk=a.d_qk,
-                         d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
+        # --num_states (nc) -> flat (levels_per_head=1, states_per_level=nc); RoLAConfig has no
+        # states_per_head kwarg anymore (#config-refactor 2026-07-06).
+        cfg = RoLAConfig(rola_instance=a.rola_instance, levels_per_head=1, states_per_level=a.num_states,
+                         d_qk=a.d_qk, d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
                          num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
                          bos_token_id=eos_id, eos_token_id=eos_id)
         model = AutoModelForCausalLM.from_config(cfg)

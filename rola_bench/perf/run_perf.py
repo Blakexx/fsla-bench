@@ -11,6 +11,7 @@ ok=False row with the error so the dispatcher records it rather than silently dr
 import csv
 import json
 import os
+import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -141,6 +142,51 @@ def run_profile_graph(out_dir, run_id="perf-profile-graph"):
     return {"bench": "profile-graph", "profile": profile, "profile_graph": pg.run(args)}
 
 
+def _cell_from_spec(run_id, prefix, key):
+    """Look up the named cell dict (`engine_cells`, currently the only consumer) from the perf YAML, mirroring
+    `_profile_from_spec`'s per-name lookup pattern."""
+    config = os.environ.get("PERF_CONFIG", "paper_v1")
+    name = run_id[len(prefix):]
+    spec = load("perf", config)
+    for cell in spec.get(key, []):
+        if cell.get("name") == name:
+            return cell
+    raise KeyError(f"{key} cell {name!r} not found in perf config {config!r}")
+
+
+def _cell_argv(cell):
+    """{key: value} -> CLI flags for engine_bench.py / decode_bench.py. `True` -> bare flag (store_true),
+    `False`/`None` -> omitted, everything else -> `--key value`. `name` is metadata, not a CLI flag."""
+    argv = []
+    for k, v in cell.items():
+        if k == "name" or v is None:
+            continue
+        flag = f"--{k}"
+        if isinstance(v, bool):
+            if v:
+                argv.append(flag)
+        else:
+            argv += [flag, str(v)]
+    return argv
+
+
+def run_engine_bench(out_dir, run_id):
+    """One `engine_bench.py` cell (the cross-engine layer bake-off; see METHODOLOGY.md — this is the
+    A100-fleet path, `--worktree` stays unset so `fla_rola` resolves from the image's pip install).
+    Run as a SUBPROCESS (not imported in-process) so this cell's failure/state can't bleed into the
+    next run_id in the same box invocation (mirrors `rola_bench.suites.perf`'s reasoning)."""
+    prefix = "perf-engine-bench-"
+    cell = _cell_from_spec(run_id, prefix, "engine_cells")
+    out_path = Path(out_dir) / "engine_bench.jsonl"
+    argv = [sys.executable, "-u", "-m", "rola_bench.perf.engine_bench",
+            *_cell_argv(cell), "--reps", str(REPS), "--out", str(out_path)]
+    r = subprocess.run(argv, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"engine_bench cell {cell.get('name')!r} rc={r.returncode}: {r.stderr[-4000:]}")
+    row = json.loads(r.stdout.strip().splitlines()[-1])
+    return {"bench": "engine-bench", "cell": cell, "engine_bench": row}
+
+
 BENCHES = {
     "perf-scaling-train": lambda o: run_scaling(o, "train"),
     "perf-scaling-prefill": lambda o: run_scaling(o, "prefill"),
@@ -186,6 +232,8 @@ def main():
         fn = BENCHES.get(rid)
         if fn is None and rid.startswith("perf-profile-graph"):
             fn = lambda o, _rid=rid: run_profile_graph(o, _rid)
+        if fn is None and rid.startswith("perf-engine-bench-"):
+            fn = lambda o, _rid=rid: run_engine_bench(o, _rid)
         if fn is None:
             _append({"run_id": rid, "ok": False, "gpu": gpu, "error": "unknown perf bench id"})
             print(f"[perf] unknown bench {rid!r}", flush=True)

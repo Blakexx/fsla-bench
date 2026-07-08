@@ -80,6 +80,12 @@ BACKBONE = dict(
 # RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
 # normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
 # matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
+# `RoLAConfig` (#config-refactor 2026-07-06) takes `levels_per_head`/`states_per_level` (D, b; nc=b**D)
+# instead of `states_per_head` — the geometry here is flat (D=1, b=nc), the strict equivalent of the
+# old dense per-head router (rola_bench.rola_compat.topology_from_legacy). `states_per_head` is kept
+# as a KEY in ROLA_GEOM (nc, the locked pinned number) for every OTHER call site in this module
+# (MATCHED_STATE, ROLA_DEN_OVERHEAD, recurrent_state_floats, the `nc` structure-override key) — only
+# `arm_config`'s RoLAConfig(**ROLA_GEOM) construction call translates it to levels_per_head/states_per_level.
 ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
                  router_bias=_ROUTER_BIAS)
 GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)
@@ -130,7 +136,9 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
-        return RoLAConfig(rola_instance=_base, **{**ROLA_GEOM, **_struct}, **common)
+        g = {**ROLA_GEOM, **_struct}
+        nc = g.pop("states_per_head")   # -> flat (D=1, b=nc); RoLAConfig has no states_per_head kwarg.
+        return RoLAConfig(rola_instance=_base, levels_per_head=1, states_per_level=nc, **g, **common)
     if arm == "gdn":
         from fla.models.gated_deltanet import GatedDeltaNetConfig
         return GatedDeltaNetConfig(use_short_conv=USE_SHORT_CONV, use_gate=True, **GDN_GEOM, **common)

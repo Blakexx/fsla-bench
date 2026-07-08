@@ -18,7 +18,9 @@ def main():
     from fla_rola.layers import RoLA
     torch.manual_seed(0)
     dev = "cuda"
-    m = RoLA(hidden_size=64, head_k_dim=16, head_v_dim=16, states_per_head=4, num_heads=2).to(dev)
+    # states_per_head=4 (flat) -> levels_per_head=1, states_per_level=4 (#config-refactor, rola_compat).
+    m = RoLA(hidden_size=64, head_k_dim=16, head_v_dim=16, levels_per_head=1, states_per_level=4,
+             num_heads=2).to(dev)
     x = torch.randn(2, 64, 64, device=dev, requires_grad=True)
     o = m(x)
     if isinstance(o, tuple):

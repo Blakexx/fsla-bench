@@ -22,6 +22,8 @@ def perf_job(config="default"):
         for bench in benches:
             if bench == "profile-graph":
                 ids.extend(f"perf-profile-graph-{p['name']}" for p in spec.get("profiles", []))
+            elif bench == "engine-bench":
+                ids.extend(f"perf-engine-bench-{c['name']}" for c in spec.get("engine_cells", []))
             else:
                 ids.append(f"perf-{bench}")
         return ids

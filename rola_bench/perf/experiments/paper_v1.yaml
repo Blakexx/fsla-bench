@@ -1,0 +1,36 @@
+# paper_v1 — the paper's systems numbers: FINAL RoLA vs REAL EXTERNAL implementations, layer-vs-layer
+# at matched d_model (scaling.py's existing model — round-robin, IQR, OOM sentinels, state-MiB).
+# Arms: attention/SDPA-flash (the unbounded-KV ceiling), the RoLA flagship (rola-base, rola-base-rla —
+# rola_bench.named_configs, construct-gated to the pre-C8 fallback if that hasn't landed on the fleet
+# image's engine), and the REAL canonical `fla_rola.layers` baselines the engine forks: GLA,
+# GatedDeltaNet, DeltaNet, GSA (Mamba2's layer exists in this engine's `fla_rola/layers/mamba2.py` but
+# is NOT wired here -- it needs an SSM-shaped state cache the scaling.py decode/prefill harness doesn't
+# build; add it only alongside that harness change, not by hacking it into this cell shape).
+#
+# The internal CuTe-vs-Triton engine bake-off (engine_bench.py cells) is ENGINEERING-only, not paper
+# material -- see engine_regression.yaml. paper_v1 covers train/prefill/decode(+graphed) x L-sweep.
+#
+# `SCALE_DECODE_GRAPHED=1` adds a `-graphed` cell variant to the RoLA arms only (the C9
+# `RoLADecodeGraph` pattern; falls back to a generic `torch.cuda.graph` capture pre-C9, and to an ERR
+# sentinel row if that capture itself is unsupported -- never crashes the sweep).
+#
+# Launch:
+#   python launch.py perf paper_v1 --boxes 1
+
+benches: [scaling-train, scaling-prefill, scaling-decode]
+reps: 20
+
+fleet:
+  image: "blakeresearch/rola-bench:v40"
+  offer_query: "gpu_name=A100_PCIE num_gpus=1 rentable=true reliability>0.97 inet_down>500 inet_down_cost<0.01 inet_up_cost<0.01"
+  idle_timeout: 1800
+  batch: 1
+  per_batch_timeout: 10800
+  env:
+    SCALE_ARMS: "attn,rola-base,rola-base-rla,gla,gdn,deltanet,gsa"
+    SCALE_DECODE_GRAPHED: "1"
+    SCALE_NCS: "256"
+    SCALE_DQKS: "16"
+    SCALE_ROUTINGS: "square"
+    SCALE_PREFLIGHT_ARMS: "1"
+    PERF_B: "2"
