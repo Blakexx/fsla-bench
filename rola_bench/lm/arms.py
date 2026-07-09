@@ -101,7 +101,96 @@ ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA
 # attention has no conv, so conv-off keeps the only difference the mixer itself). This runs GDN
 # slightly below its canonical (conv-on) recipe — a conservative, RoLA-UNfavorable choice, stated
 # openly. Flip USE_SHORT_CONV to True to give RoLA+GDN their canonical conv (attention stays off).
+# This uniform conv-off policy applies ONLY to the LEGACY comparison cells (ROLA_ARMS + the fla
+# baselines) below. The published-flagship arms (ROLA_BASE_ARMS, just below) are NOT part of that
+# iso-conv comparison — they carry their OWN canonical conv setting (ON) per the published
+# architecture (`rola_bench.named_configs`), independent of USE_SHORT_CONV.
 USE_SHORT_CONV = False
+
+# --- published-flagship arms (F3, pre-E1 gap fix) -----------------------------------------------
+# RoLA-base / RoLA-base-rla / RoLA-base-global (`rola_bench.named_configs`): router_bias=True,
+# two-level topology (levels_per_head=2; branching per the GEOMETRY block below), UNTIED, per-level
+# heterogeneous write (sparse@coarse level0, dense@fine level1), dense read at both levels, conv ON. These
+# are the PUBLISHED cells, reachable through the HF `AutoModelForCausalLM` path now that
+# `RoLAConfig` carries `routing_mode`/`level_routing_configs`
+# (`fla_rola/models/rola/configuration_rola.py`) and `rola_instance()`/`RoLABlock` thread them into
+# the layer kwargs (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). The C8 per-level
+# heterogeneous activation shim-lift (engine-side, `_resolve_uniform_activation` in
+# `fla_rola/layers/rola.py`) is what makes the sparse/dense write mix actually EXECUTE (not just
+# construct) — verified 2026-07-08 against the rola-cute working tree.
+#
+# GEOMETRY (user decision, 2026-07-08, REVISED same day): the flagship LM arms TARGET the
+# MIXED-RADIX topology states_per_level=[8, 16] (coarse-first: 8 coarse × 16 fine, nc=128) —
+# state = 8·128·16·64 = 1,048,576 floats/layer = EXACT match with the GDN/GLA X=1 iso arms (all at
+# 50% of attention's reference KV cache at block_size=2048). Mixed-radix `states_per_level` is the
+# F4 engine feature (in flight on the rola-cute tree as of this writing) — so the topology is
+# CONSTRUCT-GATED (`_rola_base_topology()`, the `requires_c8` pattern): probe the layer with the
+# real [8,16] config once; if the engine tree doesn't accept the list yet, fall back to square
+# nc=64 (levels_per_head=2, states_per_level=8) with `requires_f4=True`.  # pending F4 mixed-radix
+#
+# Both rationales, recorded per the user decision:
+#   * PREFERRED [8,16] (matched-1M): iso-state with GDN/GLA — the clean like-for-like comparison,
+#     every bounded arm at exactly half of attention's KV.
+#   * FALLBACK nc=64 square (undersized-0.5M): state = 8·64·16·64 = 524,288 floats/layer = 50% of
+#     the baselines — RoLA claims the win under a COMPRESSION HANDICAP (half the baselines' state,
+#     a quarter of attention's KV), a stronger claim than matched, acceptable until F4 lands.
+# GDN/GLA stay at their canonical 1M-float iso geometries in BOTH cases (never rescaled). The PERF
+# suite keeps nc=256 (paper_v1 unchanged): the decode/systems numbers use the bigger state — a
+# different claim under a different config, both documented.
+_ROLA_BASE_SPL = [int(t) for t in _os.environ.get("LM_ROLA_BASE_SPL", "8,16").split(",")]
+_ROLA_BASE_FALLBACK_B = int(_os.environ.get("LM_ROLA_BASE_FALLBACK_B", "8"))   # square fallback: D=2, b=8, nc=64
+_ROLA_BASE_DQK = int(_os.environ.get("LM_ROLA_BASE_DQK", "16"))
+_ROLA_BASE_DV  = int(_os.environ.get("LM_ROLA_BASE_DV", "64"))
+_ROLA_BASE_NH  = int(_os.environ.get("LM_ROLA_BASE_NH", "8"))
+_ROLA_BASE_D   = len(_ROLA_BASE_SPL)
+
+_rola_base_f4_gate: bool | None = None    # None = not yet probed
+
+
+def _rola_base_topology() -> tuple[int, "int | list[int]", int, bool]:
+    """Return (levels_per_head, states_per_level, nc, requires_f4) for the flagship arms —
+    construct-gated on the F4 mixed-radix engine feature (probe cached per process). The probe
+    constructs one tiny REAL `fla_rola.layers.RoLA` with the actual [8,16]-shaped topology + the
+    published write mix; a rejection of the list form (the current pre-F4 tree raises at
+    construction) selects the undersized square fallback.  # pending F4 mixed-radix"""
+    global _rola_base_f4_gate
+    import math
+    if _rola_base_f4_gate is None:
+        try:
+            from fla_rola.layers.rola import RoLA
+            RoLA(hidden_size=32, num_heads=2, head_k_dim=8, head_v_dim=8,
+                 levels_per_head=_ROLA_BASE_D, states_per_level=list(_ROLA_BASE_SPL),
+                 kernel='gla_scalar', state_norm='kappa', router_bias=True,
+                 level_routing_configs=_convert_write_mix_for_probe())
+            _rola_base_f4_gate = False
+        except (TypeError, ValueError, NotImplementedError):
+            _rola_base_f4_gate = True   # pending F4 mixed-radix — fall back to square nc=64
+    if _rola_base_f4_gate:
+        return 2, _ROLA_BASE_FALLBACK_B, _ROLA_BASE_FALLBACK_B ** 2, True
+    return _ROLA_BASE_D, list(_ROLA_BASE_SPL), math.prod(_ROLA_BASE_SPL), False
+
+
+def _convert_write_mix_for_probe():
+    from fla_rola.layers.rola import LevelRoutingConfig
+    return [LevelRoutingConfig(tied=c['tied'], read=c['read'], write=c['write']) for c in ROLA_BASE_WRITE_MIX]
+
+# The published write mix: sparse (entmax, fixed alpha=1.5) at the coarse level, dense (softmax) at
+# the fine level; read stays dense at both levels (dead-end-free by construction, ROLA_SEMANTICS.md
+# §5). Serializable dict form -- `RoLAConfig.level_routing_configs` converts these to
+# `LevelRoutingConfig` at the `instances.py` boundary.
+ROLA_BASE_WRITE_MIX = [
+    {'tied': False, 'read': 'dense', 'write': 'sparse'},   # level 0 (coarse)
+    {'tied': False, 'read': 'dense', 'write': 'dense'},    # level 1 (fine)
+]
+
+# arm -> (rola_instance name, ) picks the (kernel, state_norm) combo; the topology/router_bias/
+# write-mix/conv are shared across all three (see ROLA_BASE_WRITE_MIX / _ROLA_BASE_* above).
+ROLA_BASE_INSTANCE = {
+    'rola-base':        'rola-gla-kappa-asym-conv',          # kernel=gla_scalar, state_norm=kappa
+    'rola-base-rla':    'rola-rla-kappa-asym-conv',           # kernel=rla,        state_norm=kappa
+    'rola-base-global': 'rola-gla-scalar-norm-asym-conv',     # kernel=gla_scalar, state_norm=global
+}
+ROLA_BASE_ARMS = tuple(ROLA_BASE_INSTANCE)
 
 # arm name -> RoLA variants share geometry + backbone, differ only in rola_instance. The "-conv"
 # variants are the asym RLA/GLA cells with RoLA's short convolution enabled.
@@ -110,7 +199,7 @@ USE_SHORT_CONV = False
 ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
              "rola-gla-kappa-asym", "rola-gla-kappa-sym",
              "rola-rla-kappa-asym-conv", "rola-gla-kappa-asym-conv")
-ARMS = ROLA_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
+ARMS = ROLA_ARMS + ROLA_BASE_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
 
 
 # Optional RoLA STRUCTURE override via arm-name suffix "<base>__nhX_dvY_ncZ_dqkW" (structure-ablation
@@ -134,6 +223,12 @@ def _parse_rola(arm: str):
 def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_id: int = 50256):
     """Build the HF config for `arm` on the shared backbone. Raises on an unknown arm (fail loud)."""
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
+    if arm in ROLA_BASE_ARMS:
+        D, spl, _nc, _requires_f4 = _rola_base_topology()   # construct-gated: [8,16] or nc=64 fallback
+        return RoLAConfig(
+            rola_instance=ROLA_BASE_INSTANCE[arm], levels_per_head=D, states_per_level=spl,
+            d_qk=_ROLA_BASE_DQK, d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
+            level_routing_configs=ROLA_BASE_WRITE_MIX, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
         g = {**ROLA_GEOM, **_struct}
@@ -167,6 +262,9 @@ def build_arm(arm: str, vocab_size: int, **kw):
 def recurrent_state_floats(arm: str) -> int | None:
     """Nominal recurrent-state floats/layer for the bounded arms (matched target); None for attn
     (unbounded KV cache). Realized state is read back from the built layer in the result row."""
+    if arm in ROLA_BASE_ARMS:
+        _D, _spl, nc, _requires_f4 = _rola_base_topology()   # [8,16]->1,048,576; fallback nc=64->524,288
+        return _ROLA_BASE_NH * nc * _ROLA_BASE_DQK * _ROLA_BASE_DV
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
         g = {**ROLA_GEOM, **_struct}
