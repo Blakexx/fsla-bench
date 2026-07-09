@@ -183,12 +183,31 @@ ROLA_BASE_WRITE_MIX = [
     {'tied': False, 'read': 'dense', 'write': 'dense'},    # level 1 (fine)
 ]
 
-# arm -> (rola_instance name, ) picks the (kernel, state_norm) combo; the topology/router_bias/
-# write-mix/conv are shared across all three (see ROLA_BASE_WRITE_MIX / _ROLA_BASE_* above).
+# rola-base-sym (user decision, 2026-07-08): the SYMMETRIC-COARSE ablation — the needle-threading
+# ablation pair with rola-base:
+#   * rola-base     = ASYMMETRIC coarse routing + dead-end-free dense read (write-only block skip).
+#   * rola-base-sym = SHARED coarse support: TIED sparse/sparse at the coarse level (read region ≡
+#     write region — still dead-end-safe: identical logits + identical activation ⇒ identical
+#     support, the trainability-safe double-sparse form; fine level stays dense/dense untied) =
+#     the MAX-SKIP cell: shared-support state blocks are never loaded on EITHER side.
+# Quality delta comes from LM/MQAR, perf delta from the skip planes. Note the mixed per-level tied
+# config means the layer's read_W holds ONLY the fine (untied) level — construction verified in the
+# suite smoke. Everything else (kernel=gla_scalar, kappa, bias, conv-on, geometry incl. the
+# [8,16]-with-fallback probe) is identical to rola-base; recurrent_state_floats unchanged (same nc).
+ROLA_BASE_SYM_MIX = [
+    {'tied': True,  'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): shared support
+    {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
+]
+
+# arm -> (rola_instance name, per-level routing mix). The instance name picks (kernel, state_norm,
+# conv) only — its own routing_mode default is fully SUPERSEDED by the explicit
+# `level_routing_configs` passthrough (so the '-asym' suffix on rola-base-sym's instance is inert).
+# Topology/router_bias are shared across all four (see _ROLA_BASE_* above).
 ROLA_BASE_INSTANCE = {
-    'rola-base':        'rola-gla-kappa-asym-conv',          # kernel=gla_scalar, state_norm=kappa
-    'rola-base-rla':    'rola-rla-kappa-asym-conv',           # kernel=rla,        state_norm=kappa
-    'rola-base-global': 'rola-gla-scalar-norm-asym-conv',     # kernel=gla_scalar, state_norm=global
+    'rola-base':        ('rola-gla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),       # gla_scalar, kappa
+    'rola-base-rla':    ('rola-rla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),        # rla,        kappa
+    'rola-base-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_scalar, global
+    'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
 }
 ROLA_BASE_ARMS = tuple(ROLA_BASE_INSTANCE)
 
@@ -225,10 +244,11 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
     if arm in ROLA_BASE_ARMS:
         D, spl, _nc, _requires_f4 = _rola_base_topology()   # construct-gated: [8,16] or nc=64 fallback
+        instance, mix = ROLA_BASE_INSTANCE[arm]
         return RoLAConfig(
-            rola_instance=ROLA_BASE_INSTANCE[arm], levels_per_head=D, states_per_level=spl,
+            rola_instance=instance, levels_per_head=D, states_per_level=spl,
             d_qk=_ROLA_BASE_DQK, d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
-            level_routing_configs=ROLA_BASE_WRITE_MIX, **common)
+            level_routing_configs=mix, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
         g = {**ROLA_GEOM, **_struct}

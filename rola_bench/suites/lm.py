@@ -1,12 +1,14 @@
 """LM suite entry point.
 
 Pinned configs = `rola_bench.lm.arms.ARMS` (RoLA kappa comparison variants, the published-flagship
-RoLA-base(-rla/-global) arms, gdn/gdn-isostate, gla/gla-isostate, attn).
+RoLA-base(-rla/-global/-sym) arms, gdn/gdn-isostate, gla/gla-isostate, attn).
 
 F3 (pre-E1 gap, CLOSED 2026-07-08): the published flagship — `rola-base` / `rola-base-rla` /
-`rola-base-global` (the kappa-vs-global ablation row; router_bias=True, SQUARE topology
-levels_per_head=2/states_per_level=sqrt(nc), UNTIED, per-level heterogeneous write: sparse@coarse +
-dense@fine, dense read, short conv ON — see `rola_bench.lm.arms.ROLA_BASE_*`) is now reachable
+`rola-base-global` (the kappa-vs-global ablation row) / `rola-base-sym` (the symmetric-coarse
+max-skip ablation: tied sparse/sparse coarse level, see `arms.ROLA_BASE_SYM_MIX`) — router_bias=True,
+two-level topology (mixed-radix [8,16] target, construct-gated with an nc=64 square fallback until F4
+lands; `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
+dense@fine, dense read (asym arms), short conv ON — see `rola_bench.lm.arms.ROLA_BASE_*` — reachable
 through the HF `AutoModelForCausalLM` path like every other arm: `RoLAConfig`
 (`fla_rola/models/rola/configuration_rola.py`) carries `routing_mode`/`level_routing_configs` fields,
 threaded through `rola_instance()`/`RoLABlock` into the RoLA layer kwargs
