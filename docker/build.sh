@@ -34,7 +34,7 @@ esac
 BASE_TAG="${FLEET_BASE_TAG:-$BASE_DEFAULT}"
 
 CLA="${ROLA_CLA_SRC:-/mnt/c/Users/Blake/Documents/VSCode/CLA}"
-FLA="${ROLA_FLA_SRC:-/home/blake/flash-linear-attention-rola-cuda-p0}"   # canonical CuTe engine (rola-cute); pre-batch worktree was silently staged before 2026-07-09
+FLA="${ROLA_FLA_SRC:-/home/blake/flash-linear-attention-rola-cuda-p0}"   # INTERIM until D4: rola-cute merges into flash-linear-attention-rola (the canonical repo, then pushed to remote) — re-point here + rebuild the image at that point
 ZOO="${ROLA_ZOO_SRC:-/home/blake/zoology}"
 RB="${ROLA_BENCH_SRC:-/home/blake/rola-bench}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
