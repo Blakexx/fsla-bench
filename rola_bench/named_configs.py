@@ -43,7 +43,11 @@ dependency — tied+sparse+sparse is homogeneous per level).
 
 Suite wiring (per the coordinator's addition):
   * LM suite     : RoLA-base, RoLA-base-rla, RoLA-base-global (the kappa-vs-global ablation row).
-  * MQAR suite   : the conv-free variants of the above.
+  * MQAR suite   : the conv-free variants of RoLA-base, RoLA-base-rla, plus RoLA-base-sym (the
+                    symmetric-coarse ablation, MQAR flagship addition 2026-07-09 -- sym-on-MQAR is
+                    the informative cell for coarse tying: recall is where read/write routing
+                    asymmetry should matter most -- sym≈base ⇒ max-skip is free; sym≪base ⇒ tying
+                    costs recall specifically).
   * Perf suite   : RoLA-base, RoLA-tied.
 """
 from __future__ import annotations
@@ -102,6 +106,24 @@ def _tied_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = '
     )
 
 
+def _sym_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'kappa') -> dict:
+    """RoLA-base-sym: the SYMMETRIC-COARSE ablation of RoLA-base (mirrors `rola_bench.lm.arms`
+    ROLA_BASE_SYM_MIX byte-for-byte). Coarse level is TIED sparse/sparse (shared read/write support
+    -- still dead-end-safe: identical logits + identical activation ⇒ identical support, the
+    trainability-safe double-sparse form) = the MAX-SKIP cell: shared-support state blocks are never
+    loaded on either side. Fine level stays untied dense/dense, same as RoLA-base."""
+    from fla_rola.layers.rola import LevelRoutingConfig
+    D, b = _square_topology(nc)
+    return dict(
+        levels_per_head=D, states_per_level=b, kernel=kernel, state_norm=state_norm,
+        router_bias=True, use_short_conv=use_short_conv,
+        level_routing_configs=[
+            LevelRoutingConfig(tied=True, read='sparse', write='sparse'),
+            LevelRoutingConfig(tied=False, read='dense', write='dense'),
+        ],
+    )
+
+
 NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-base': NamedConfig(
         'RoLA-base', requires_c8=True,
@@ -128,11 +150,22 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-tied': NamedConfig(
         'RoLA-tied', requires_c8=False,
         build_kwargs=lambda nc, conv: _tied_kwargs(nc, conv, 'gla_scalar', 'kappa')),
+    # RoLA-base-sym (MQAR flagship addition, 2026-07-09): the symmetric-coarse ablation pair with
+    # RoLA-base -- see `_sym_kwargs` and `rola_bench.lm.arms.ROLA_BASE_SYM_MIX` (same mix, LM side).
+    # sym-on-MQAR is the informative cell for coarse tying: recall is where read/write routing
+    # asymmetry should matter most -- sym≈base ⇒ max-skip is free; sym≪base ⇒ tying costs recall
+    # specifically. Per-level heterogeneous activation (sparse coarse / dense fine) needs the same
+    # C8 shim-lift as RoLA-base; falls back to RoLA-tied (already-runnable, homogeneous tied
+    # sparse/sparse) pre-C8 -- the closest existing max-skip analog.
+    'RoLA-base-sym': NamedConfig(
+        'RoLA-base-sym', requires_c8=True,
+        build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'kappa'),
+        fallback='RoLA-tied'),
 }
 
-# Suite wiring (coordinator addition, 2026-07-08).
+# Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09).
 LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global')   # kappa-vs-global ablation row
-MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla')   # use_short_conv forced False regardless of preset
+MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base', 'RoLA-tied')
 
 

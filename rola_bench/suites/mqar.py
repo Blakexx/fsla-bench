@@ -4,10 +4,13 @@ Pinned configs = the 13 named `rola_instance()` presets (`rola_bench.mqar.instan
 the LOCKED zoo — numbers/semantics unchanged by the #config-refactor, only the construction-boundary
 kwargs were translated, see `zoology.mixers.rola.RoLAMixer` / `rola_bench.rola_compat`) crossed with
 the three routing topologies {flat, square, tree}, PLUS the new pinned flagship named configs
-(`rola_bench.named_configs`) in their MQAR (conv-free) form: `RoLA-base`, `RoLA-base-rla` — these
-per-level-heterogeneous configs need the (in-flight) C8 shim-lift to construct on the current engine
-tip, and construct-gate to the runnable `RoLA-base-sw(-rla)` fallback when it hasn't landed yet
-(`used_config`/`requires_c8` recorded per cell, never silently swapped).
+(`rola_bench.named_configs`) in their MQAR (conv-free) form: `RoLA-base`, `RoLA-base-rla`,
+`RoLA-base-sym` — these per-level-heterogeneous configs need the (in-flight) C8 shim-lift to
+construct on the current engine tip, and construct-gate to the runnable `RoLA-base-sw(-rla)` /
+`RoLA-tied` fallback when it hasn't landed yet (`used_config`/`requires_c8` recorded per cell, never
+silently swapped). RoLA-base-sym is the informative MQAR cell for coarse tying: recall is where
+read/write routing asymmetry should matter most — sym≈base ⇒ max-skip is free; sym≪base ⇒ tying
+costs recall specifically.
 
 Real runs go through the existing fleet machinery (`rola_bench/mqar/run_rla_sweep.py`,
 `rola_bench/mqar/job.py`) and land in the MQAR results tree / zoology run ids — this entry point is
