@@ -119,6 +119,13 @@ USE_SHORT_CONV = False
 # `fla_rola/layers/rola.py`) is what makes the sparse/dense write mix actually EXECUTE (not just
 # construct) — verified 2026-07-08 against the rola-cute working tree.
 #
+# qk_norm (user decision, 2026-07-09): the canonical/published model runs qk_norm=True (RMSNorm on
+# q/k pre-feature-map). Pinned EXPLICITLY per flagship arm (`ROLA_BASE_QKNORM`, below the instance
+# table), not via the `LM_QK_NORM` env default -- that env stays for the legacy `ROLA_ARMS` cells.
+# `rola-base-noqknorm` is the one deliberate exception: rola-base with qk_norm=False, a one-seed
+# ablation probing whether historical LM instability traced to the projections (needing norm) or to
+# old-kernel numerics (now fixed — the per_state/rt bf16 defect, 3c6567f2).
+#
 # GEOMETRY (user decision, 2026-07-08, REVISED same day): the flagship LM arms TARGET the
 # MIXED-RADIX topology states_per_level=[8, 16] (coarse-first: 8 coarse × 16 fine, nc=128) —
 # state = 8·128·16·64 = 1,048,576 floats/layer = EXACT match with the GDN/GLA X=1 iso arms (all at
@@ -208,8 +215,18 @@ ROLA_BASE_INSTANCE = {
     'rola-base-rla':    ('rola-rla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),        # rla,        kappa
     'rola-base-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_scalar, global
     'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
+    # rola-base-noqknorm (user decision, 2026-07-09): rola-base with qk_norm=False. Tests whether the
+    # historical LM instability was the projections (needs norm) or old-kernel numerics (now fixed,
+    # per_state/rt bf16 defect 3c6567f2) — one-seed probe with the fp64 canary.
+    'rola-base-noqknorm': ('rola-gla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),
 }
 ROLA_BASE_ARMS = tuple(ROLA_BASE_INSTANCE)
+# qk_norm is PINNED explicitly per flagship arm (user decision, 2026-07-09): the canonical/published
+# model runs with qk_norm=True (RMSNorm on q/k pre-feature-map) — pinned here, NOT via the LM_QK_NORM
+# env default (which stays env-overridable for the legacy ROLA_ARMS comparison cells below).
+# rola-base-noqknorm is the one deliberate exception (see comment above).
+ROLA_BASE_QKNORM = {arm: True for arm in ROLA_BASE_ARMS}
+ROLA_BASE_QKNORM['rola-base-noqknorm'] = False
 
 # arm name -> RoLA variants share geometry + backbone, differ only in rola_instance. The "-conv"
 # variants are the asym RLA/GLA cells with RoLA's short convolution enabled.
@@ -248,6 +265,7 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
         return RoLAConfig(
             rola_instance=instance, levels_per_head=D, states_per_level=spl,
             d_qk=_ROLA_BASE_DQK, d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
+            qk_norm=ROLA_BASE_QKNORM[arm],
             level_routing_configs=mix, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
@@ -269,7 +287,12 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if arm == "attn":
         from fla.models.transformer import TransformerConfig
         # Softmax-attention ceiling: full causal attention (window_size=None), RoPE positions.
-        # qk_norm matched to RoLA's (fair stabilizer parity — fla.layers.attn supports it natively).
+        # qk_norm mirrors _QKNORM (LM_QK_NORM env, default off) -- fair stabilizer parity for the
+        # legacy iso-conv comparison (ROLA_ARMS + fla baselines), which is still env-controlled.
+        # fla.layers.attn supports qk_norm natively. NOTE: the published-flagship arms
+        # (ROLA_BASE_ARMS) now PIN qk_norm=True explicitly (ROLA_BASE_QKNORM, see above) independent
+        # of this env knob -- attn's qk_norm no longer auto-tracks the flagship arms' setting; if a
+        # flagship-vs-attn qk_norm-matched comparison is needed, set LM_QK_NORM=1 explicitly.
         return TransformerConfig(num_heads=ATTN_HEADS, window_size=None, qk_norm=_QKNORM, **common)
     raise ValueError(f"unknown arm {arm!r}; known: {ARMS}")
 
