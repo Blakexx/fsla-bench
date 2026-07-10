@@ -6,10 +6,13 @@ The old `fla_rola.layers.RoLA` construction kwargs `states_per_head` (nc) + `rou
 `level_routing_configs` for the tied/sparse-vs-dense knobs.
 
 This module is a PURE construction-boundary translation — it does not change any pinned MQAR/LM
-config NUMBERS (nc, tie-ness), only how they're spelled to the new layer/config constructors. Every
-site in rola-bench (and the zoology RoLA mixer, which keeps the legacy outward-facing vocabulary for
-its own pinned config dicts) should route through these two functions rather than re-deriving the
-(D, b) factorization inline.
+config NUMBERS (nc, tie-ness), only how they're spelled to the new layer/config constructors.
+`zoology.mixers.rola.RoLAMixer` itself speaks the new (D, b) / `routing_mode` surface directly (no
+shim) — these two functions exist for the rola-bench call sites that still want the convenient
+flat/square/tree + tie_routers spelling on their OWN CLI/config surface (`rola_bench.mqar.instances`,
+`rola_bench.perf.engine_bench`, ...) and translate it at their own construction boundary before
+passing kwargs to `RoLAMixer`/`fla_rola.layers.RoLA`. Every such site should route through these two
+functions rather than re-deriving the (D, b) factorization inline.
 """
 from __future__ import annotations
 

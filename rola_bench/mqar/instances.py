@@ -3,46 +3,51 @@
 The MQAR configs pass these to the mixer (which maps them onto fla_rola.layers.RoLA). The inner
 kernel (rla / gla_scalar) is the only parameterized axis; tie_routers => symmetric (one router).
 (Relocated from the now-deleted CLA rola.py — fla_rola is the model source of truth.)
+
+`rola_instance`'s OWN inputs keep the `num_chunks`/`routing`∈{flat,square,tree} spelling — the
+convenient state-count-ladder + topology-name vocabulary used throughout the MQAR grid builders
+(`rola_bench.mqar.build_configs`, `rola_bench.suites.mqar`) — but the returned dict speaks
+`zoology.mixers.rola.RoLAMixer`'s NEW structural surface directly (`levels_per_head`/
+`states_per_level`/`routing_mode`; #config-refactor 2026-07-06), via the shared
+`rola_bench.rola_compat` translators. No shim lives in the mixer itself anymore.
 """
+from rola_bench.rola_compat import routing_mode_from_tie_routers, topology_from_legacy
 
 
 def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4, routing='flat'):
     """RoLAMixer kwargs for a named instance. `routing` ∈ {flat,square,tree} selects the per-head
     factor topology (default 'flat' = the dense router, backward-compatible)."""
-    common = dict(d_qk=d_qk, d_v=d_v, num_chunks=num_chunks, n_heads=n_heads, routing=routing,
+    D, b = topology_from_legacy(num_chunks, routing)
+    common = dict(d_qk=d_qk, d_v=d_v, levels_per_head=D, states_per_level=b, n_heads=n_heads,
                   use_short_conv=False)
+
+    def _routed(tie_routers, **extra):
+        return dict(routing_mode=routing_mode_from_tie_routers(tie_routers), **extra, **common)
+
     # RLA family (phi = feature map; global/per_state/kappa norm).
     if name == 'rola-rla-asym':                              # global-norm RLA (explicit; was default)
-        return dict(kernel='rla', phi='elu', tie_routers=False,
-                    kernel_kwargs={'state_norm': 'global'}, **common)
+        return _routed(False, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'global'})
     if name == 'rola-rla-sym':
-        return dict(kernel='rla', phi='elu', tie_routers=True,
-                    kernel_kwargs={'state_norm': 'global'}, **common)
+        return _routed(True, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'global'})
     if name == 'rola-rla-asym-ps':
-        return dict(kernel='rla', phi='elu', tie_routers=False,
-                    kernel_kwargs={'state_norm': 'per_state'}, **common)
+        return _routed(False, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'per_state'})
     if name == 'rola-rla-sym-ps':
-        return dict(kernel='rla', phi='elu', tie_routers=True,
-                    kernel_kwargs={'state_norm': 'per_state'}, **common)
+        return _routed(True, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'per_state'})
     if name == 'rola-rla-kappa-asym':
-        return dict(kernel='rla', phi='elu', tie_routers=False,
-                    kernel_kwargs={'state_norm': 'kappa'}, **common)
+        return _routed(False, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'kappa'})
     if name == 'rola-rla-kappa-sym':
-        return dict(kernel='rla', phi='elu', tie_routers=True,
-                    kernel_kwargs={'state_norm': 'kappa'}, **common)
+        return _routed(True, kernel='rla', phi='elu', kernel_kwargs={'state_norm': 'kappa'})
     if name == 'rola-rla-asym-tieinit':
-        return dict(kernel='rla', phi='elu', tie_routers=False, tie_router_init=True,
-                    kernel_kwargs={'state_norm': 'global'}, **common)
+        return _routed(False, kernel='rla', phi='elu', tie_router_init=True,
+                       kernel_kwargs={'state_norm': 'global'})
     # scalar-GLA family (optimized shared-gram).
     if name.startswith('rola-gla-scalar'):
-        return dict(kernel='gla_scalar', tie_routers=name.endswith('-sym'),
-                    kernel_kwargs={'normalized': '-norm-' in name}, **common)
+        return _routed(name.endswith('-sym'), kernel='gla_scalar',
+                       kernel_kwargs={'normalized': '-norm-' in name})
     if name.startswith('rola-gla-kappa'):
-        return dict(kernel='gla_scalar', tie_routers=name.endswith('-sym'),
-                    kernel_kwargs={'state_norm': 'kappa'}, **common)
+        return _routed(name.endswith('-sym'), kernel='gla_scalar', kernel_kwargs={'state_norm': 'kappa'})
     if name.startswith('rola-gla-ps'):
-        return dict(kernel='gla_scalar', tie_routers=name.endswith('-sym'),
-                    kernel_kwargs={'state_norm': 'per_state'}, **common)
+        return _routed(name.endswith('-sym'), kernel='gla_scalar', kernel_kwargs={'state_norm': 'per_state'})
     raise ValueError(f"unknown RoLA instance: {name!r}")
 
 

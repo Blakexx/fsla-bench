@@ -62,10 +62,9 @@ def _construct_named(cell, dev="cuda"):
     D, b = kwargs.pop("levels_per_head"), kwargs.pop("states_per_level")
     kernel = kwargs.pop("kernel")
     d_model = 8 * 64  # H=8, d_v=64 (flagship geometry)
-    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, num_chunks=b ** D, n_heads=8, routing="square",
+    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, levels_per_head=D, states_per_level=b, n_heads=8,
                  kernel=kernel, level_routing_configs=level_routing_configs, layer_idx=0,
-                 **{k: v for k, v in kwargs.items() if k not in ("levels_per_head", "states_per_level")}
-                 ).to(dev)
+                 **kwargs).to(dev)
     err = getattr(m, "_routing_resolution_error", None)
     if err is None:
         return m, cell["name"], False
@@ -76,10 +75,9 @@ def _construct_named(cell, dev="cuda"):
     fb_lrc = fb_kwargs.pop("level_routing_configs")
     fb_D, fb_b = fb_kwargs.pop("levels_per_head"), fb_kwargs.pop("states_per_level")
     fb_kernel = fb_kwargs.pop("kernel")
-    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, num_chunks=fb_b ** fb_D, n_heads=8, routing="square",
+    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, levels_per_head=fb_D, states_per_level=fb_b, n_heads=8,
                  kernel=fb_kernel, level_routing_configs=fb_lrc, layer_idx=0,
-                 **{k: v for k, v in fb_kwargs.items() if k not in ("levels_per_head", "states_per_level")}
-                 ).to(dev)
+                 **fb_kwargs).to(dev)
     return m, fb.name, True
 
 

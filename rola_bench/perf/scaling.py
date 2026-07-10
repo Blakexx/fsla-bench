@@ -321,7 +321,7 @@ def build_rola_named(kind, nc=256):
         kwargs = dict(cfg_obj.build_kwargs(nc, True))   # use_short_conv=True (paper/LM geometry)
         lrc = kwargs.pop("level_routing_configs")
         D, b = kwargs.pop("levels_per_head"), kwargs.pop("states_per_level")
-        return RoLAMixer(d_model=DM, d_qk=16, d_v=64, num_chunks=b ** D, n_heads=8, routing="square",
+        return RoLAMixer(d_model=DM, d_qk=16, d_v=64, levels_per_head=D, states_per_level=b, n_heads=8,
                          kernel=kwargs.pop("kernel"), level_routing_configs=lrc, layer_idx=0,
                          kernel_kwargs={"state_norm": kwargs.pop("state_norm")},
                          router_bias=kwargs.pop("router_bias"),
