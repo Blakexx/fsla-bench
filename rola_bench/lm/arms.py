@@ -206,6 +206,12 @@ ROLA_BASE_SYM_MIX = [
     {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
 ]
 
+# rola-base-sym-global (user decision, 2026-07-09): rola-base-sym with state_norm='global' (kappa≡0).
+# THE decisive cell for the destroy-kappa hypothesis (user 2026-07-09): kappa/per_state were added to
+# close the sym<->asym gap by repairing read-mass imbalance; tied-sparse-coarse prevents the
+# imbalance structurally, so sym+global should match base-kappa if the hypothesis holds -- then the
+# RESCALED norms (and all their precision/perf machinery) can be deleted.
+
 # arm -> (rola_instance name, per-level routing mix). The instance name picks (kernel, state_norm,
 # conv) only — its own routing_mode default is fully SUPERSEDED by the explicit
 # `level_routing_configs` passthrough (so the '-asym' suffix on rola-base-sym's instance is inert).
@@ -215,6 +221,7 @@ ROLA_BASE_INSTANCE = {
     'rola-base-rla':    ('rola-rla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),        # rla,        kappa
     'rola-base-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_scalar, global
     'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
+    'rola-base-sym-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_SYM_MIX),  # gla_scalar, global, tied-sparse coarse
     # rola-base-noqknorm (user decision, 2026-07-09): rola-base with qk_norm=False. Tests whether the
     # historical LM instability was the projections (needs norm) or old-kernel numerics (now fixed,
     # per_state/rt bf16 defect 3c6567f2) — one-seed probe with the fp64 canary.

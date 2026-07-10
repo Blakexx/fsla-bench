@@ -47,7 +47,10 @@ Suite wiring (per the coordinator's addition):
                     symmetric-coarse ablation, MQAR flagship addition 2026-07-09 -- sym-on-MQAR is
                     the informative cell for coarse tying: recall is where read/write routing
                     asymmetry should matter most -- sym≈base ⇒ max-skip is free; sym≪base ⇒ tying
-                    costs recall specifically).
+                    costs recall specifically), plus RoLA-base-sym-global (destroy-kappa hypothesis
+                    cell, 2026-07-09 -- sym+global vs base-kappa isolates whether kappa/per_state
+                    were only compensating for read-mass imbalance that tied-sparse-coarse already
+                    removes structurally).
   * Perf suite   : RoLA-base, RoLA-tied.
 """
 from __future__ import annotations
@@ -161,11 +164,21 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
         'RoLA-base-sym', requires_c8=True,
         build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'kappa'),
         fallback='RoLA-tied'),
+    # RoLA-base-sym-global (MQAR addition, 2026-07-09): RoLA-base-sym with state_norm='global'
+    # (kappa≡0). THE decisive cell for the destroy-kappa hypothesis (user 2026-07-09): kappa/per_state
+    # were added to close the sym<->asym gap by repairing read-mass imbalance; tied-sparse-coarse
+    # prevents the imbalance structurally, so sym+global should match base-kappa if the hypothesis
+    # holds -- then the RESCALED norms (and all their precision/perf machinery) can be deleted.
+    'RoLA-base-sym-global': NamedConfig(
+        'RoLA-base-sym-global', requires_c8=True,
+        build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'global'),
+        fallback='RoLA-tied'),
 }
 
-# Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09).
+# Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09;
+# RoLA-base-sym-global added to MQAR 2026-07-09, destroy-kappa hypothesis cell).
 LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global')   # kappa-vs-global ablation row
-MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym')   # use_short_conv forced False regardless of preset
+MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym', 'RoLA-base-sym-global')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base', 'RoLA-tied')
 
 
