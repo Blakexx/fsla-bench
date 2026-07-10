@@ -50,7 +50,12 @@ Suite wiring (per the coordinator's addition):
                     costs recall specifically), plus RoLA-base-sym-global (destroy-kappa hypothesis
                     cell, 2026-07-09 -- sym+global vs base-kappa isolates whether kappa/per_state
                     were only compensating for read-mass imbalance that tied-sparse-coarse already
-                    removes structurally).
+                    removes structurally), plus RoLA-base-union-global (candidate-C union-split
+                    cell, 2026-07-10 -- coarse level UNTIED sparse/sparse, the engine's union-split
+                    realization of that previously-rejected combo: shared entmax support from
+                    z_r+z_w, sigmoid role split -- completes the coarse A⊂C ablation triple with
+                    RoLA-base (untied sparse-write/dense-read) and RoLA-base-sym (tied sparse/sparse
+                    = the sigma≡1/2 special case)).
   * Perf suite   : RoLA-base, RoLA-tied.
 """
 from __future__ import annotations
@@ -127,6 +132,28 @@ def _sym_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'k
     )
 
 
+def _union_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'global') -> dict:
+    """RoLA-base-union-global: the candidate-C UNION-SPLIT cell (mirrors `rola_bench.lm.arms`
+    ROLA_BASE_UNION_MIX byte-for-byte). Coarse level is UNTIED sparse/sparse — NO new vocabulary
+    (settled 2026-07-10, workflows/union-split/findings.txt): union-split IS the engine's
+    realization of the existing combo tied=False + read='sparse' + write='sparse', whose
+    `LevelRoutingConfig.__post_init__` rejection ("untied double-sparse") is LIFTED. The engine
+    executes it as union-split (p = entmax_1.5(z_r+z_w) shared support — no read/write dead-ends;
+    sigma = sigmoid(z_r−z_w) role split; read = p·sigma unnormalized, write = p·(1−sigma)
+    renormalized; dag_tasks/C-union-split.md). Fine level stays untied dense/dense, same as
+    RoLA-base."""
+    from fla_rola.layers.rola import LevelRoutingConfig
+    D, b = _square_topology(nc)
+    return dict(
+        levels_per_head=D, states_per_level=b, kernel=kernel, state_norm=state_norm,
+        router_bias=True, use_short_conv=use_short_conv,
+        level_routing_configs=[
+            LevelRoutingConfig(tied=False, read='sparse', write='sparse'),
+            LevelRoutingConfig(tied=False, read='dense', write='dense'),
+        ],
+    )
+
+
 NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-base': NamedConfig(
         'RoLA-base', requires_c8=True,
@@ -173,12 +200,27 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
         'RoLA-base-sym-global', requires_c8=True,
         build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'global'),
         fallback='RoLA-tied'),
+    # RoLA-base-union-global (MQAR addition, 2026-07-10): the candidate-C UNION-SPLIT cell — see
+    # `_union_kwargs`. Completes the coarse A⊂C ablation triple on MQAR (base = untied
+    # sparse-write/dense-read; sym = tied sparse/sparse, the sigma≡1/2 special case; union = untied
+    # sparse/sparse with the sum/diff bijection — asymmetry earned per-state, not assumed). Global
+    # norm (kappa≡0) is the primary cell per the C acceptance criteria. NOTE: on a pre-union-lift
+    # engine tree, `LevelRoutingConfig(tied=False, read='sparse', write='sparse')` raises
+    # NotImplementedError at CONSTRUCTION (inside build_kwargs) — the construct-gate's C8 fallback
+    # never fires there and the cell fails loud, which is correct: this cell is only meaningful once
+    # the engine-side lift lands. The pinned fallback covers only the (historical) C8
+    # heterogeneous-activation gap, mirroring RoLA-base-sym(-global).
+    'RoLA-base-union-global': NamedConfig(
+        'RoLA-base-union-global', requires_c8=True,
+        build_kwargs=lambda nc, conv: _union_kwargs(nc, conv, 'gla_scalar', 'global'),
+        fallback='RoLA-tied'),
 }
 
 # Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09;
-# RoLA-base-sym-global added to MQAR 2026-07-09, destroy-kappa hypothesis cell).
+# RoLA-base-sym-global added to MQAR 2026-07-09, destroy-kappa hypothesis cell;
+# RoLA-base-union-global added to MQAR 2026-07-10, candidate-C union-split cell).
 LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global')   # kappa-vs-global ablation row
-MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym', 'RoLA-base-sym-global')   # use_short_conv forced False regardless of preset
+MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym', 'RoLA-base-sym-global', 'RoLA-base-union-global')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base', 'RoLA-tied')
 
 

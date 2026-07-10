@@ -212,6 +212,24 @@ ROLA_BASE_SYM_MIX = [
 # imbalance structurally, so sym+global should match base-kappa if the hypothesis holds -- then the
 # RESCALED norms (and all their precision/perf machinery) can be deleted.
 
+# rola-base-union-global (candidate C, 2026-07-10): the UNION-SPLIT routing cell — coarse level
+# UNTIED sparse/sparse. NO new vocabulary (settled 2026-07-10, workflows/union-split/findings.txt):
+# union-split IS the engine's realization of the existing per-level combo tied=False + read='sparse'
+# + write='sparse' (previously rejected in `LevelRoutingConfig.__post_init__` as the ill-posed
+# "untied double-sparse"; the rejection is LIFTED — the engine executes the combo as union-split:
+# p = entmax_1.5(z_r+z_w) shared support, sigma = sigmoid(z_r−z_w) role split, read = p·sigma
+# unnormalized, write = p·(1−sigma) renormalized; dag_tasks/C-union-split.md). The coarse-level
+# A⊂C ablation triple: rola-base = untied sparse-write/dense-read; rola-base-sym = TIED
+# sparse/sparse (the sigma≡1/2 special case); rola-base-union-global = UNTIED sparse/sparse
+# (asymmetry earned per-state, not assumed away). Global norm (kappa≡0) is the primary cell per the
+# C acceptance criteria. Everything else (kernel=gla_scalar, router_bias, conv-on, qk_norm=True,
+# the [8,16]-with-fallback geometry probe) is identical to the other flagship arms;
+# recurrent_state_floats UNCHANGED — union changes routing, not state shape (same nc/topology).
+ROLA_BASE_UNION_MIX = [
+    {'tied': False, 'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): union-split
+    {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
+]
+
 # arm -> (rola_instance name, per-level routing mix). The instance name picks (kernel, state_norm,
 # conv) only — its own routing_mode default is fully SUPERSEDED by the explicit
 # `level_routing_configs` passthrough (so the '-asym' suffix on rola-base-sym's instance is inert).
@@ -222,6 +240,7 @@ ROLA_BASE_INSTANCE = {
     'rola-base-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_scalar, global
     'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
     'rola-base-sym-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_SYM_MIX),  # gla_scalar, global, tied-sparse coarse
+    'rola-base-union-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_UNION_MIX),  # gla_scalar, global, union-split coarse
     # rola-base-noqknorm (user decision, 2026-07-09): rola-base with qk_norm=False. Tests whether the
     # historical LM instability was the projections (needs norm) or old-kernel numerics (now fixed,
     # per_state/rt bf16 defect 3c6567f2) — one-seed probe with the fp64 canary.
