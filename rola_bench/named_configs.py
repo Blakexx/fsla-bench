@@ -27,22 +27,11 @@ row for the paper, otherwise identical to RoLA-base.
 **MQAR variants**: RoLA-base(-rla) minus short conv (`use_short_conv=False`) — convs confound
 short-offset recall in MQAR; everything else identical.
 
-Per-level HETEROGENEOUS activation (the write mix) needs the C8 shim-lift landing in the engine (in
-flight as of this writing — `_resolve_uniform_activation` in fla_rola/layers/rola.py raises
-NotImplementedError for it on the current rola-cute tip, verified 2026-07-08). `construct()` below
-CONSTRUCT-GATES every named config: it tries the real config first and, on that specific
-NotImplementedError, reports `requires_c8=True` rather than silently substituting something else —
-callers decide whether to fall back.
-
-**RoLA-base-sw** ("sparse-write", both levels write='sparse'/read='dense', untied) is the RUNNABLE
-pre-C8 fallback for RoLA-base — same coarse+fine skip intent, uniform activation, executes today.
-
 **RoLA-tied** (perf suite's max-perf variant): tied=True, read=write='sparse' at every level — the
-shared-solve double-sparse form (ONE entmax per level, half the routing cost). Executes today (no C8
-dependency — tied+sparse+sparse is homogeneous per level).
 
 Suite wiring (per the coordinator's addition):
-  * LM suite     : RoLA-base, RoLA-base-rla, RoLA-base-global (the kappa-vs-global ablation row).
+  * LM suite     : RoLA-base, RoLA-base-rla, RoLA-base-global, RoLA-base-union-global, and
+                   RoLA-multiscale (static hard-support decay, [8,16], global norm).
   * MQAR suite   : the conv-free variants of RoLA-base, RoLA-base-rla, plus RoLA-base-sym (the
                     symmetric-coarse ablation, MQAR flagship addition 2026-07-09 -- sym-on-MQAR is
                     the informative cell for coarse tying: recall is where read/write routing
@@ -61,7 +50,7 @@ Suite wiring (per the coordinator's addition):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 
@@ -75,10 +64,7 @@ def _square_topology(nc: int) -> tuple[int, int]:
 @dataclass(frozen=True)
 class NamedConfig:
     name: str
-    requires_c8: bool          # True iff this config needs the (in-flight) per-level heterogeneous
-                                # activation shim-lift to construct on the current engine tip.
     build_kwargs: Callable[[int, bool], dict]   # (nc, use_short_conv) -> RoLA(**kwargs) (minus hidden/heads/dims)
-    fallback: str | None = None                # name of the pre-C8 runnable substitute, if any
 
 
 def _base_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'kappa') -> dict:
@@ -91,16 +77,6 @@ def _base_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = '
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
             LevelRoutingConfig(tied=False, read='dense', write='dense'),
         ],
-    )
-
-
-def _base_sw_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'kappa') -> dict:
-    from fla_rola.layers.rola import LevelRoutingConfig
-    D, b = _square_topology(nc)
-    return dict(
-        levels_per_head=D, states_per_level=b, kernel=kernel, state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
-        level_routing_configs=LevelRoutingConfig(tied=False, read='dense', write='sparse'),
     )
 
 
@@ -154,81 +130,67 @@ def _union_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 
     )
 
 
+def _multiscale_kwargs(nc: int, use_short_conv: bool) -> dict:
+    """Production static-decay cell: required [8,16] topology, with no substitute."""
+    from fla_rola.layers.rola import LevelRoutingConfig
+    if nc != 128:
+        raise ValueError(f"RoLA-multiscale requires mixed-radix nc=128 ([8,16]), got nc={nc}")
+    return dict(
+        levels_per_head=2, states_per_level=[8, 16], kernel='gla_static', state_norm='global',
+        router_bias=True, qk_norm=True, use_short_conv=use_short_conv,
+        level_routing_configs=[
+            LevelRoutingConfig(tied=False, read='dense', write='sparse'),
+            LevelRoutingConfig(tied=False, read='dense', write='dense'),
+        ],
+    )
+
+
 NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-base': NamedConfig(
-        'RoLA-base', requires_c8=True,
-        build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_scalar', 'kappa'),
-        fallback='RoLA-base-sw'),
+        'RoLA-base', build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_scalar', 'kappa')),
     'RoLA-base-rla': NamedConfig(
-        'RoLA-base-rla', requires_c8=True,
-        build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'rla', 'kappa'),
-        fallback='RoLA-base-sw-rla'),
+        'RoLA-base-rla', build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'rla', 'kappa')),
     'RoLA-base-global': NamedConfig(
         # kappa-vs-global ablation row: identical to RoLA-base except state_norm='global' (kappa≡0).
-        'RoLA-base-global', requires_c8=True,
-        build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_scalar', 'global'),
-        fallback='RoLA-base-sw-global'),
-    'RoLA-base-sw': NamedConfig(
-        'RoLA-base-sw', requires_c8=False,
-        build_kwargs=lambda nc, conv: _base_sw_kwargs(nc, conv, 'gla_scalar', 'kappa')),
-    'RoLA-base-sw-rla': NamedConfig(
-        'RoLA-base-sw-rla', requires_c8=False,
-        build_kwargs=lambda nc, conv: _base_sw_kwargs(nc, conv, 'rla', 'kappa')),
-    'RoLA-base-sw-global': NamedConfig(
-        'RoLA-base-sw-global', requires_c8=False,
-        build_kwargs=lambda nc, conv: _base_sw_kwargs(nc, conv, 'gla_scalar', 'global')),
+        'RoLA-base-global', build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_scalar', 'global')),
     'RoLA-tied': NamedConfig(
-        'RoLA-tied', requires_c8=False,
-        build_kwargs=lambda nc, conv: _tied_kwargs(nc, conv, 'gla_scalar', 'kappa')),
+        'RoLA-tied', build_kwargs=lambda nc, conv: _tied_kwargs(nc, conv, 'gla_scalar', 'kappa')),
     # RoLA-base-sym (MQAR flagship addition, 2026-07-09): the symmetric-coarse ablation pair with
     # RoLA-base -- see `_sym_kwargs` and `rola_bench.lm.arms.ROLA_BASE_SYM_MIX` (same mix, LM side).
     # sym-on-MQAR is the informative cell for coarse tying: recall is where read/write routing
     # asymmetry should matter most -- sym≈base ⇒ max-skip is free; sym≪base ⇒ tying costs recall
-    # specifically. Per-level heterogeneous activation (sparse coarse / dense fine) needs the same
-    # C8 shim-lift as RoLA-base; falls back to RoLA-tied (already-runnable, homogeneous tied
-    # sparse/sparse) pre-C8 -- the closest existing max-skip analog.
+    # specifically. Per-level heterogeneous activation is a required production capability.
     'RoLA-base-sym': NamedConfig(
-        'RoLA-base-sym', requires_c8=True,
-        build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'kappa'),
-        fallback='RoLA-tied'),
+        'RoLA-base-sym', build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'kappa')),
     # RoLA-base-sym-global (MQAR addition, 2026-07-09): RoLA-base-sym with state_norm='global'
     # (kappa≡0). THE decisive cell for the destroy-kappa hypothesis (user 2026-07-09): kappa/per_state
     # were added to close the sym<->asym gap by repairing read-mass imbalance; tied-sparse-coarse
     # prevents the imbalance structurally, so sym+global should match base-kappa if the hypothesis
     # holds -- then the RESCALED norms (and all their precision/perf machinery) can be deleted.
     'RoLA-base-sym-global': NamedConfig(
-        'RoLA-base-sym-global', requires_c8=True,
-        build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'global'),
-        fallback='RoLA-tied'),
+        'RoLA-base-sym-global', build_kwargs=lambda nc, conv: _sym_kwargs(nc, conv, 'gla_scalar', 'global')),
     # RoLA-base-union-global (MQAR addition, 2026-07-10): the candidate-C UNION-SPLIT cell — see
     # `_union_kwargs`. Completes the coarse A⊂C ablation triple on MQAR (base = untied
     # sparse-write/dense-read; sym = tied sparse/sparse, the sigma≡1/2 special case; union = untied
     # sparse/sparse with the sum/diff bijection — asymmetry earned per-state, not assumed). Global
-    # norm (kappa≡0) is the primary cell per the C acceptance criteria. NOTE: on a pre-union-lift
-    # engine tree this cell must fail loudly: union has no compatibility substitute because swapping it
-    # to a tied or independent support would change the ablation being measured.
+    # norm (kappa≡0) is the primary cell per the C acceptance criteria.
     'RoLA-base-union-global': NamedConfig(
-        'RoLA-base-union-global', requires_c8=True,
-        build_kwargs=lambda nc, conv: _union_kwargs(nc, conv, 'gla_scalar', 'global'),
-        fallback=None),
+        'RoLA-base-union-global', build_kwargs=lambda nc, conv: _union_kwargs(nc, conv, 'gla_scalar', 'global')),
+    'RoLA-multiscale': NamedConfig(
+        'RoLA-multiscale', build_kwargs=_multiscale_kwargs),
 }
 
 # Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09;
 # RoLA-base-sym-global added to MQAR 2026-07-09, destroy-kappa hypothesis cell;
 # RoLA-base-union-global added to MQAR 2026-07-10, candidate-C union-split cell).
-LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global', 'RoLA-base-union-global')
+LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global', 'RoLA-base-union-global', 'RoLA-multiscale')
 MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym', 'RoLA-base-sym-global', 'RoLA-base-union-global')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base', 'RoLA-tied')
 
 
 def construct(name: str, *, hidden_size: int, num_heads: int, head_k_dim: int, head_v_dim: int,
               nc: int = 256, use_short_conv: bool | None = None, layer_idx: int | None = 0, **extra):
-    """Build the named config's `fla_rola.layers.RoLA` layer. `RoLA.__init__` resolves the per-level
-    activation BEST-EFFORT (a genuinely unexecutable config still constructs; the raise is deferred to
-    first forward()) -- so the C8 gap is detected here by checking `layer._routing_resolution_error`
-    right after construction, no forward() call needed. On a hit, falls back to the config's pinned
-    `.fallback` (if any) and returns `(layer, used_name, requires_c8_hit: bool)`. Any OTHER deferred
-    resolution error is re-raised (fails loud — this only papers over the ONE known, tracked C8 gap)."""
+    """Build one named config and fail loudly if the engine cannot resolve its production routing."""
     from fla_rola.layers import RoLA
     cfg = NAMED_CONFIGS[name]
     conv = True if use_short_conv is None else use_short_conv
@@ -236,12 +198,6 @@ def construct(name: str, *, hidden_size: int, num_heads: int, head_k_dim: int, h
     layer = RoLA(hidden_size=hidden_size, num_heads=num_heads, head_k_dim=head_k_dim,
                  head_v_dim=head_v_dim, layer_idx=layer_idx, **kwargs, **extra)
     err = getattr(layer, '_routing_resolution_error', None)
-    if err is None:
-        return layer, name, False
-    if 'per-level heterogeneous routing activation' not in str(err) or cfg.fallback is None:
+    if err is not None:
         raise err
-    fb = NAMED_CONFIGS[cfg.fallback]
-    fb_kwargs = fb.build_kwargs(nc, conv)
-    layer = RoLA(hidden_size=hidden_size, num_heads=num_heads, head_k_dim=head_k_dim,
-                 head_v_dim=head_v_dim, layer_idx=layer_idx, **fb_kwargs, **extra)
-    return layer, fb.name, True
+    return layer, name

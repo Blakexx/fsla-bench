@@ -309,10 +309,8 @@ def build_rola_named(kind, nc=256):
     """Build a flagship named-config RoLA layer (`rola_bench.named_configs`) as a scaling arm, at ITS
     OWN fixed geometry (H=8, d_qk=16, d_v=64, square topology) rather than the (d, nc) sweep axis --
     same rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis. Goes
-    through the `RoLAMixer` `level_routing_configs` passthrough (same construct-gate pattern as
-    `rola_bench.suites.mqar._construct_named`): falls back to the named config's pinned pre-C8
-    substitute on the per-level-heterogeneous-activation gap, returns
-    `(module, used_name, requires_c8_hit)`."""
+    through the `RoLAMixer` `level_routing_configs` passthrough and fails loudly if production routing
+    cannot be resolved. Returns `(module, name)`."""
     from rola_bench.named_configs import NAMED_CONFIGS
     name = {"rola-base": "RoLA-base", "rola-base-rla": "RoLA-base-rla"}[kind]
     cfg = NAMED_CONFIGS[name]
@@ -329,12 +327,9 @@ def build_rola_named(kind, nc=256):
 
     m = _mixer(cfg)
     err = getattr(m, "_routing_resolution_error", None)
-    if err is None:
-        return m, name, False
-    if cfg.fallback is None or "per-level heterogeneous routing activation" not in str(err):
+    if err is not None:
         raise err
-    fb = NAMED_CONFIGS[cfg.fallback]
-    return _mixer(fb), fb.name, True
+    return m, name
 
 
 def build_monolith(gla, nc, d):
@@ -769,7 +764,7 @@ def _build_scaling_arm(spec, L, d, nc):
     if spec["kind"] in _FLA_BASELINE_KINDS:
         return _build_fla_baseline(spec["kind"])
     if spec["kind"] in _NAMED_ROLA_ARM_KINDS:
-        module, _used, _requires_c8 = build_rola_named(spec["kind"])
+        module, _used = build_rola_named(spec["kind"])
         return module
     return build_monolith(spec["gla"], nc, d)
 

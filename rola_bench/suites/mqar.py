@@ -5,8 +5,8 @@ the LOCKED zoo — numbers/semantics unchanged by the #config-refactor, only the
 kwargs were translated, see `zoology.mixers.rola.RoLAMixer` / `rola_bench.rola_compat`) crossed with
 the three routing topologies {flat, square, tree}, PLUS the new pinned flagship named configs
 (`rola_bench.named_configs`) in their MQAR (conv-free) form, including the base, symmetric-coarse,
-and union-split ablations. The construction gate records any compatibility fallback rather than
-silently swapping a cell; union-split itself has no fallback because that would change the ablation.
+and union-split ablations. Unsupported production capabilities fail loudly rather than changing a
+cell's topology or semantics.
 
 Real runs go through the existing fleet machinery (`rola_bench/mqar/run_rla_sweep.py`,
 `rola_bench/mqar/job.py`) and land in the MQAR results tree / zoology run ids — this entry point is
@@ -50,9 +50,7 @@ def _construct_pinned(cell, dev="cuda"):
 
 
 def _construct_named(cell, dev="cuda"):
-    """MQAR (conv-free) form of a named flagship config, via the RoLAMixer level_routing_configs
-    passthrough (zoology.mixers.rola). Falls back the same way `rola_bench.named_configs.construct`
-    does (checks `_routing_resolution_error` post-construction, no forward() needed)."""
+    """MQAR (conv-free) form of a named flagship config via the level-routing passthrough."""
     from rola_bench.named_configs import NAMED_CONFIGS
     from zoology.mixers.rola import RoLAMixer
     cfg = NAMED_CONFIGS[cell["name"]]
@@ -65,19 +63,9 @@ def _construct_named(cell, dev="cuda"):
                  kernel=kernel, level_routing_configs=level_routing_configs, layer_idx=0,
                  **kwargs).to(dev)
     err = getattr(m, "_routing_resolution_error", None)
-    if err is None:
-        return m, cell["name"], False
-    if cfg.fallback is None or "per-level heterogeneous routing activation" not in str(err):
+    if err is not None:
         raise err
-    fb = NAMED_CONFIGS[cfg.fallback]
-    fb_kwargs = fb.build_kwargs(cell["nc"], False)
-    fb_lrc = fb_kwargs.pop("level_routing_configs")
-    fb_D, fb_b = fb_kwargs.pop("levels_per_head"), fb_kwargs.pop("states_per_level")
-    fb_kernel = fb_kwargs.pop("kernel")
-    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, levels_per_head=fb_D, states_per_level=fb_b, n_heads=8,
-                 kernel=fb_kernel, level_routing_configs=fb_lrc, layer_idx=0,
-                 **fb_kwargs).to(dev)
-    return m, fb.name, True
+    return m, cell["name"]
 
 
 def run_smoke():
@@ -98,12 +86,11 @@ def run_smoke():
             print(f"FAIL pinned {cell['name']:24s} {cell['routing']:7s} -> {type(e).__name__}: {e}")
     for cell in named_cells():
         try:
-            m, used, requires_c8 = _construct_named(cell)
+            m, used = _construct_named(cell)
             x = torch.randn(1, 4, 8 * 64, device="cuda")
             with torch.no_grad():
                 o = m(x)
-            tag = f"(fallback -> {used}, requires_c8)" if requires_c8 else ""
-            print(f"OK  named  {cell['name']:24s} -> {tuple(o.shape)} {tag}")
+            print(f"OK  named  {cell['name']:24s} -> {tuple(o.shape)}")
         except Exception as e:
             ok = False
             print(f"FAIL named  {cell['name']:24s} -> {type(e).__name__}: {e}")

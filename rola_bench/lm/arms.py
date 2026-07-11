@@ -95,7 +95,7 @@ GDNISO_GEOM = dict(num_heads=_GDNISO_NH, head_dim=_GDNISO_HEAD_DIM, expand_v=_GD
 GLAISO_GEOM = dict(num_heads=_GLAISO_NH, expand_k=_GLAISO_EK, expand_v=_GLAISO_EV, gate_logit_normalizer=16)
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
 MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
-ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]  # 8192, asym/kappa only
+ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]
 
 # Uniform component policy across the sub-quadratic arms: short conv OFF for ALL (isolate the mixer;
 # attention has no conv, so conv-off keeps the only difference the mixer itself). This runs GDN
@@ -107,17 +107,15 @@ ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA
 # architecture (`rola_bench.named_configs`), independent of USE_SHORT_CONV.
 USE_SHORT_CONV = False
 
-# --- published-flagship arms (F3, pre-E1 gap fix) -----------------------------------------------
+# --- published-flagship arms --------------------------------------------------------------------
 # RoLA-base / RoLA-base-rla / RoLA-base-global (`rola_bench.named_configs`): router_bias=True,
 # two-level topology (levels_per_head=2; branching per the GEOMETRY block below), UNTIED, per-level
 # heterogeneous write (sparse@coarse level0, dense@fine level1), dense read at both levels, conv ON. These
 # are the PUBLISHED cells, reachable through the HF `AutoModelForCausalLM` path now that
 # `RoLAConfig` carries `routing_mode`/`level_routing_configs`
 # (`fla_rola/models/rola/configuration_rola.py`) and `rola_instance()`/`RoLABlock` thread them into
-# the layer kwargs (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). The C8 per-level
-# heterogeneous activation shim-lift (engine-side, `_resolve_uniform_activation` in
-# `fla_rola/layers/rola.py`) is what makes the sparse/dense write mix actually EXECUTE (not just
-# construct) — verified 2026-07-08 against the rola-cute working tree.
+# the layer kwargs (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). Per-level heterogeneous
+# activation is a required production capability for the sparse/dense write mix.
 #
 # qk_norm (user decision, 2026-07-09): the canonical/published model runs qk_norm=True (RMSNorm on
 # q/k pre-feature-map). Pinned EXPLICITLY per flagship arm (`ROLA_BASE_QKNORM`, below the instance
@@ -130,56 +128,18 @@ USE_SHORT_CONV = False
 # MIXED-RADIX topology states_per_level=[8, 16] (coarse-first: 8 coarse × 16 fine, nc=128) —
 # state = 8·128·16·64 = 1,048,576 floats/layer = EXACT match with the GDN/GLA X=1 iso arms (all at
 # 50% of attention's reference KV cache at block_size=2048). Mixed-radix `states_per_level` is the
-# F4 engine feature (in flight on the rola-cute tree as of this writing) — so the topology is
-# CONSTRUCT-GATED (`_rola_base_topology()`, the `requires_c8` pattern): probe the layer with the
-# real [8,16] config once; if the engine tree doesn't accept the list yet, fall back to square
-# nc=64 (levels_per_head=2, states_per_level=8) with `requires_f4=True`.  # pending F4 mixed-radix
-#
-# Both rationales, recorded per the user decision:
-#   * PREFERRED [8,16] (matched-1M): iso-state with GDN/GLA — the clean like-for-like comparison,
-#     every bounded arm at exactly half of attention's KV.
-#   * FALLBACK nc=64 square (undersized-0.5M): state = 8·64·16·64 = 524,288 floats/layer = 50% of
-#     the baselines — RoLA claims the win under a COMPRESSION HANDICAP (half the baselines' state,
-#     a quarter of attention's KV), a stronger claim than matched, acceptable until F4 lands.
-# GDN/GLA stay at their canonical 1M-float iso geometries in BOTH cases (never rescaled). The PERF
-# suite keeps nc=256 (paper_v1 unchanged): the decode/systems numbers use the bigger state — a
-# different claim under a different config, both documented.
-_ROLA_BASE_SPL = [int(t) for t in _os.environ.get("LM_ROLA_BASE_SPL", "8,16").split(",")]
-_ROLA_BASE_FALLBACK_B = int(_os.environ.get("LM_ROLA_BASE_FALLBACK_B", "8"))   # square fallback: D=2, b=8, nc=64
+# The production flagship topology is mixed-radix [8,16] (coarse-first, nc=128). It is required
+# capability, not a construction probe or a compatibility choice. GDN/GLA retain their canonical
+# 1M-float iso geometries; the RoLA arms use the same matched content state.
+_ROLA_BASE_SPL = [8, 16]
 _ROLA_BASE_DQK = int(_os.environ.get("LM_ROLA_BASE_DQK", "16"))
 _ROLA_BASE_DV  = int(_os.environ.get("LM_ROLA_BASE_DV", "64"))
 _ROLA_BASE_NH  = int(_os.environ.get("LM_ROLA_BASE_NH", "8"))
 _ROLA_BASE_D   = len(_ROLA_BASE_SPL)
 
-_rola_base_f4_gate: bool | None = None    # None = not yet probed
-
-
-def _rola_base_topology() -> tuple[int, "int | list[int]", int, bool]:
-    """Return (levels_per_head, states_per_level, nc, requires_f4) for the flagship arms —
-    construct-gated on the F4 mixed-radix engine feature (probe cached per process). The probe
-    constructs one tiny REAL `fla_rola.layers.RoLA` with the actual [8,16]-shaped topology + the
-    published write mix; a rejection of the list form (the current pre-F4 tree raises at
-    construction) selects the undersized square fallback.  # pending F4 mixed-radix"""
-    global _rola_base_f4_gate
-    import math
-    if _rola_base_f4_gate is None:
-        try:
-            from fla_rola.layers.rola import RoLA
-            RoLA(hidden_size=32, num_heads=2, head_k_dim=8, head_v_dim=8,
-                 levels_per_head=_ROLA_BASE_D, states_per_level=list(_ROLA_BASE_SPL),
-                 kernel='gla_scalar', state_norm='kappa', router_bias=True,
-                 level_routing_configs=_convert_write_mix_for_probe())
-            _rola_base_f4_gate = False
-        except (TypeError, ValueError, NotImplementedError):
-            _rola_base_f4_gate = True   # pending F4 mixed-radix — fall back to square nc=64
-    if _rola_base_f4_gate:
-        return 2, _ROLA_BASE_FALLBACK_B, _ROLA_BASE_FALLBACK_B ** 2, True
-    return _ROLA_BASE_D, list(_ROLA_BASE_SPL), math.prod(_ROLA_BASE_SPL), False
-
-
-def _convert_write_mix_for_probe():
-    from fla_rola.layers.rola import LevelRoutingConfig
-    return [LevelRoutingConfig(tied=c['tied'], read=c['read'], write=c['write']) for c in ROLA_BASE_WRITE_MIX]
+def _rola_base_topology() -> tuple[int, list[int], int]:
+    """Return the required production flagship topology: D=2, b=[8,16], nc=128."""
+    return _ROLA_BASE_D, list(_ROLA_BASE_SPL), 128
 
 # The published write mix: sparse (entmax, fixed alpha=1.5) at the coarse level, dense (softmax) at
 # the fine level; read stays dense at both levels (dead-end-free by construction, ROLA_SEMANTICS.md
@@ -200,7 +160,7 @@ ROLA_BASE_WRITE_MIX = [
 # Quality delta comes from LM/MQAR, perf delta from the skip planes. Note the mixed per-level tied
 # config means the layer's read_W holds ONLY the fine (untied) level — construction verified in the
 # suite smoke. Everything else (kernel=gla_scalar, kappa, bias, conv-on, geometry incl. the
-# [8,16]-with-fallback probe) is identical to rola-base; recurrent_state_floats unchanged (same nc).
+# [8,16] production topology) is identical to rola-base; recurrent_state_floats unchanged (same nc).
 ROLA_BASE_SYM_MIX = [
     {'tied': True,  'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): shared support
     {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
@@ -223,7 +183,7 @@ ROLA_BASE_SYM_MIX = [
 # sparse/sparse (the sigma≡1/2 special case); rola-base-union-global = UNTIED sparse/sparse
 # (asymmetry earned per-state, not assumed away). Global norm (kappa≡0) is the primary cell per the
 # C acceptance criteria. Everything else (kernel=gla_scalar, router_bias, conv-on, qk_norm=True,
-# the [8,16]-with-fallback geometry probe) is identical to the other flagship arms;
+# the required [8,16] geometry) is identical to the other flagship arms;
 # recurrent_state_floats UNCHANGED — union changes routing, not state shape (same nc/topology).
 ROLA_BASE_UNION_MIX = [
     {'tied': False, 'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): union-split
@@ -241,6 +201,9 @@ ROLA_BASE_INSTANCE = {
     'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
     'rola-base-sym-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_SYM_MIX),  # gla_scalar, global, tied-sparse coarse
     'rola-base-union-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_UNION_MIX),  # gla_scalar, global, union-split coarse
+    # The existing global+conv instance owns the flagship topology/routing conventions; the explicit
+    # RoLAConfig.kernel field below is the sole static-decay selector.
+    'rola-multiscale': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_static, global
     # rola-base-noqknorm (user decision, 2026-07-09): rola-base with qk_norm=False. Tests whether the
     # historical LM instability was the projections (needs norm) or old-kernel numerics (now fixed,
     # per_state/rt bf16 defect 3c6567f2) — one-seed probe with the fp64 canary.
@@ -286,12 +249,13 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     """Build the HF config for `arm` on the shared backbone. Raises on an unknown arm (fail loud)."""
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
     if arm in ROLA_BASE_ARMS:
-        D, spl, _nc, _requires_f4 = _rola_base_topology()   # construct-gated: [8,16] or nc=64 fallback
+        D, spl, _nc = _rola_base_topology()
         instance, mix = ROLA_BASE_INSTANCE[arm]
         return RoLAConfig(
             rola_instance=instance, levels_per_head=D, states_per_level=spl,
             d_qk=_ROLA_BASE_DQK, d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
             qk_norm=ROLA_BASE_QKNORM[arm],
+            kernel='gla_static' if arm == 'rola-multiscale' else None,
             level_routing_configs=mix, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
@@ -332,7 +296,7 @@ def recurrent_state_floats(arm: str) -> int | None:
     """Nominal recurrent-state floats/layer for the bounded arms (matched target); None for attn
     (unbounded KV cache). Realized state is read back from the built layer in the result row."""
     if arm in ROLA_BASE_ARMS:
-        _D, _spl, nc, _requires_f4 = _rola_base_topology()   # [8,16]->1,048,576; fallback nc=64->524,288
+        _D, _spl, nc = _rola_base_topology()
         return _ROLA_BASE_NH * nc * _ROLA_BASE_DQK * _ROLA_BASE_DV
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
@@ -347,3 +311,23 @@ def recurrent_state_floats(arm: str) -> int | None:
     if arm == "gla-isostate":
         return int(_HID * GLAISO_GEOM["expand_k"]) * int(_HID * GLAISO_GEOM["expand_v"]) // GLAISO_GEOM["num_heads"]
     return None  # attn: unbounded
+
+
+def recurrent_state_overhead_floats(arm: str) -> int | None:
+    """Physical denominator-sidecar floats/layer, reported separately from matched content state."""
+    _base, _struct = _parse_rola(arm)
+    if arm in ROLA_BASE_ARMS:
+        _D, _spl, nc = _rola_base_topology()
+        return _ROLA_BASE_NH * nc * _ROLA_BASE_DQK
+    if _base in ROLA_ARMS:
+        g = {**ROLA_GEOM, **_struct}
+        return g["num_heads"] * g["states_per_head"] * g["d_qk"]
+    return None
+
+
+def static_decay_parameter_floats(arm: str) -> int:
+    """Additional fp32 theta parameters owned by the static-decay arm."""
+    if arm == 'rola-multiscale':
+        _D, _spl, nc = _rola_base_topology()
+        return _ROLA_BASE_NH * nc
+    return 0

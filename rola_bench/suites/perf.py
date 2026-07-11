@@ -60,12 +60,11 @@ def _paper_v1_smoke():
     ok = True
     for kind in sc._NAMED_ROLA_ARM_KINDS:
         try:
-            m, used, requires_c8 = sc.build_rola_named(kind, nc=16)
+            m, used = sc.build_rola_named(kind, nc=16)
             with torch.no_grad():
                 o = m(x())
             o = o[0] if isinstance(o, tuple) else o
-            tag = f"(fallback -> {used}, requires_c8)" if requires_c8 else ""
-            print(f"OK   paper_v1 arm {kind:16s} -> {tuple(o.shape)} {tag}")
+            print(f"OK   paper_v1 arm {kind:16s} -> {tuple(o.shape)}")
         except Exception as e:
             ok = False
             print(f"FAIL paper_v1 arm {kind:16s} -> {type(e).__name__}: {e}")

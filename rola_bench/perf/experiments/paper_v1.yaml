@@ -1,8 +1,8 @@
 # paper_v1 — the paper's systems numbers: FINAL RoLA vs REAL EXTERNAL implementations, layer-vs-layer
 # at matched d_model (scaling.py's existing model — round-robin, IQR, OOM sentinels, state-MiB).
 # Arms: attention/SDPA-flash (the unbounded-KV ceiling), the RoLA flagship (rola-base, rola-base-rla —
-# rola_bench.named_configs, construct-gated to the pre-C8 fallback if that hasn't landed on the fleet
-# image's engine), and the REAL canonical `fla_rola.layers` baselines the engine forks: GLA,
+# rola_bench.named_configs, requiring the production per-level heterogeneous routing capability), and
+# the REAL canonical `fla_rola.layers` baselines the engine forks: GLA,
 # GatedDeltaNet, DeltaNet, GSA (Mamba2's layer exists in this engine's `fla_rola/layers/mamba2.py` but
 # is NOT wired here -- it needs an SSM-shaped state cache the scaling.py decode/prefill harness doesn't
 # build; add it only alongside that harness change, not by hacking it into this cell shape).

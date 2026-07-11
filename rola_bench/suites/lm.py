@@ -3,18 +3,16 @@
 Pinned configs = `rola_bench.lm.arms.ARMS` (RoLA kappa comparison variants, the published-flagship
 RoLA-base(-rla/-global/-sym) arms, gdn/gdn-isostate, gla/gla-isostate, attn).
 
-F3 (pre-E1 gap, CLOSED 2026-07-08): the published flagship — `rola-base` / `rola-base-rla` /
+The published flagship — `rola-base` / `rola-base-rla` / `rola-multiscale` /
 `rola-base-global` (the kappa-vs-global ablation row) / `rola-base-sym` (the symmetric-coarse
 max-skip ablation: tied sparse/sparse coarse level, see `arms.ROLA_BASE_SYM_MIX`) — router_bias=True,
-two-level topology (mixed-radix [8,16] target, construct-gated with an nc=64 square fallback until F4
-lands; `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
+two-level topology (required mixed-radix [8,16]; `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
 dense@fine, dense read (asym arms), short conv ON — see `rola_bench.lm.arms.ROLA_BASE_*` — reachable
 through the HF `AutoModelForCausalLM` path like every other arm: `RoLAConfig`
 (`fla_rola/models/rola/configuration_rola.py`) carries `routing_mode`/`level_routing_configs` fields,
 threaded through `rola_instance()`/`RoLABlock` into the RoLA layer kwargs
-(`fla_rola/models/rola/instances.py`, `modeling_rola.py`). The engine's C8 per-level heterogeneous
-activation shim-lift (`_resolve_uniform_activation`, `fla_rola/layers/rola.py`) is what makes the
-sparse/dense write mix actually EXECUTE end-to-end, not just construct.
+(`fla_rola/models/rola/instances.py`, `modeling_rola.py`). Per-level heterogeneous activation support
+is required for the production cell and must execute end-to-end.
 `rola_bench.named_configs`/`construct()` (the LAYER-direct-construction surface used by the MQAR/perf
 suites) is unaffected by this change and still exists as an independent construction path.
 
@@ -78,15 +76,15 @@ def main(argv=None):
     from rola_bench.named_configs import construct, LM_SUITE_CONFIGS
     for name in LM_SUITE_CONFIGS:
         try:
-            layer, used, requires_c8 = construct(
-                name, hidden_size=512, num_heads=8, head_k_dim=16, head_v_dim=64, nc=256,
+            layer, used = construct(
+                name, hidden_size=512, num_heads=8, head_k_dim=16, head_v_dim=64,
+                nc=128 if name == 'RoLA-multiscale' else 256,
                 use_short_conv=True)
             layer = layer.cuda() if torch.cuda.is_available() else layer
             x = torch.randn(1, 8, 512, device=next(layer.parameters()).device)
             with torch.no_grad():
                 o = layer(x)
-            tag = f"(fallback -> {used}, requires_c8)" if requires_c8 else ""
-            print(f"OK   flagship-layer {name:20s} -> {tuple((o[0] if isinstance(o, tuple) else o).shape)} {tag}")
+            print(f"OK   flagship-layer {name:20s} -> {tuple((o[0] if isinstance(o, tuple) else o).shape)}")
         except Exception as e:
             ok = False
             print(f"FAIL flagship-layer {name:20s} -> {type(e).__name__}: {e}")

@@ -215,6 +215,8 @@ def main():
     if a.arm:                                            # iso-backbone registry arm (the LM comparison)
         model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
         state_floats = arms.recurrent_state_floats(a.arm)
+        state_overhead_floats = arms.recurrent_state_overhead_floats(a.arm)
+        static_decay_parameter_floats = arms.static_decay_parameter_floats(a.arm)
     else:                                                # legacy single-RoLA run
         # --num_states (nc) -> flat (levels_per_head=1, states_per_level=nc); RoLAConfig has no
         # states_per_head kwarg anymore (#config-refactor 2026-07-06).
@@ -224,8 +226,12 @@ def main():
                          bos_token_id=eos_id, eos_token_id=eos_id)
         model = AutoModelForCausalLM.from_config(cfg)
         state_floats = a.num_heads * a.num_states * a.d_qk * (a.d_v + 1)
+        state_overhead_floats = None
+        static_decay_parameter_floats = 0
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats}", flush=True)
+    print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats} "
+          f"state-overhead/layer={state_overhead_floats} static-decay-params={static_decay_parameter_floats}",
+          flush=True)
 
     # transformers 5.x expects each module's _tied_weights_keys to be a dict {tied: source}; fla's
     # CausalLM classes (GatedDeltaNet, Transformer) still declare it as a LIST (e.g. ['lm_head.weight']),
@@ -300,6 +306,8 @@ def main():
     if a.results:   # fleet result row — recall-downstream eval is a separate post-hoc pass over the ckpt
         row = dict(run_id=run_id, ok=True, arm=a.arm or a.rola_instance, seed=a.seed,
                    params_m=round(n_params / 1e6, 2), state_floats=state_floats,
+                   state_overhead_floats=state_overhead_floats,
+                   static_decay_parameter_floats=static_decay_parameter_floats,
                    hidden_size=getattr(model.config, "hidden_size", None),
                    num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
                    tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
