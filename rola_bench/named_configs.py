@@ -205,21 +205,18 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
     # sparse-write/dense-read; sym = tied sparse/sparse, the sigma≡1/2 special case; union = untied
     # sparse/sparse with the sum/diff bijection — asymmetry earned per-state, not assumed). Global
     # norm (kappa≡0) is the primary cell per the C acceptance criteria. NOTE: on a pre-union-lift
-    # engine tree, `LevelRoutingConfig(tied=False, read='sparse', write='sparse')` raises
-    # NotImplementedError at CONSTRUCTION (inside build_kwargs) — the construct-gate's C8 fallback
-    # never fires there and the cell fails loud, which is correct: this cell is only meaningful once
-    # the engine-side lift lands. The pinned fallback covers only the (historical) C8
-    # heterogeneous-activation gap, mirroring RoLA-base-sym(-global).
+    # engine tree this cell must fail loudly: union has no compatibility substitute because swapping it
+    # to a tied or independent support would change the ablation being measured.
     'RoLA-base-union-global': NamedConfig(
         'RoLA-base-union-global', requires_c8=True,
         build_kwargs=lambda nc, conv: _union_kwargs(nc, conv, 'gla_scalar', 'global'),
-        fallback='RoLA-tied'),
+        fallback=None),
 }
 
 # Suite wiring (coordinator addition, 2026-07-08; RoLA-base-sym added to MQAR 2026-07-09;
 # RoLA-base-sym-global added to MQAR 2026-07-09, destroy-kappa hypothesis cell;
 # RoLA-base-union-global added to MQAR 2026-07-10, candidate-C union-split cell).
-LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global')   # kappa-vs-global ablation row
+LM_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-global', 'RoLA-base-union-global')
 MQAR_SUITE_CONFIGS = ('RoLA-base', 'RoLA-base-rla', 'RoLA-base-sym', 'RoLA-base-sym-global', 'RoLA-base-union-global')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base', 'RoLA-tied')
 
