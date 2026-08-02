@@ -117,12 +117,9 @@ USE_SHORT_CONV = False
 # the layer kwargs (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). Per-level heterogeneous
 # activation is a required production capability for the sparse/dense write mix.
 #
-# qk_norm (user decision, 2026-07-09): the canonical/published model runs qk_norm=True (RMSNorm on
-# q/k pre-feature-map). Pinned EXPLICITLY per flagship arm (`ROLA_BASE_QKNORM`, below the instance
-# table), not via the `LM_QK_NORM` env default -- that env stays for the legacy `ROLA_ARMS` cells.
-# `rola-base-noqknorm` is the one deliberate exception: rola-base with qk_norm=False, a one-seed
-# ablation probing whether historical LM instability traced to the projections (needing norm) or to
-# old-kernel numerics (now fixed — the per_state/rt bf16 defect, 3c6567f2).
+# qk_norm (RETIRED, campaign-prereqs E1, 2026-08-01): the V3 layer owns no Q/K surface at all, so
+# there is no q/k RMSNorm to pin and no `rola-base-noqknorm` ablation to run. `LM_QK_NORM` survives
+# only as the softmax-attention baseline's own stabilizer knob (see the `attn` arm below).
 #
 # GEOMETRY (user decision, 2026-07-08, REVISED same day): the flagship LM arms TARGET the
 # MIXED-RADIX topology states_per_level=[8, 16] (coarse-first: 8 coarse × 16 fine, nc=128) —
@@ -150,27 +147,10 @@ ROLA_BASE_WRITE_MIX = [
     {'tied': False, 'read': 'dense', 'write': 'dense'},    # level 1 (fine)
 ]
 
-# rola-base-sym (user decision, 2026-07-08): the SYMMETRIC-COARSE ablation — the needle-threading
-# ablation pair with rola-base:
-#   * rola-base     = ASYMMETRIC coarse routing + dead-end-free dense read (write-only block skip).
-#   * rola-base-sym = SHARED coarse support: TIED sparse/sparse at the coarse level (read region ≡
-#     write region — still dead-end-safe: identical logits + identical activation ⇒ identical
-#     support, the trainability-safe double-sparse form; fine level stays dense/dense untied) =
-#     the MAX-SKIP cell: shared-support state blocks are never loaded on EITHER side.
-# Quality delta comes from LM/MQAR, perf delta from the skip planes. Note the mixed per-level tied
-# config means the layer's read_W holds ONLY the fine (untied) level — construction verified in the
-# suite smoke. Everything else (kernel=gla_scalar, kappa, bias, conv-on, geometry incl. the
-# [8,16] production topology) is identical to rola-base; recurrent_state_floats unchanged (same nc).
-ROLA_BASE_SYM_MIX = [
-    {'tied': True,  'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): shared support
-    {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
-]
-
-# rola-base-sym-global (user decision, 2026-07-09): rola-base-sym with state_norm='global' (kappa≡0).
-# THE decisive cell for the destroy-kappa hypothesis (user 2026-07-09): kappa/per_state were added to
-# close the sym<->asym gap by repairing read-mass imbalance; tied-sparse-coarse prevents the
-# imbalance structurally, so sym+global should match base-kappa if the hypothesis holds -- then the
-# RESCALED norms (and all their precision/perf machinery) can be deleted.
+# The symmetric-coarse cells rola-base-sym / rola-base-sym-global (2026-07-08/09) are RETIRED
+# (campaign-prereqs E3, see RETIRED_LM_ARMS): both were gla_scalar cells, and the destroy-kappa
+# hypothesis rola-base-sym-global existed to test is moot now that E2 retired kappa outright. Their
+# tied-sparse-coarse mix survives, in the depth-hybrid family, as ROLA_BASE_HYBRID_TIEDTOP_MIX.
 
 # rola-base-union-global (candidate C, 2026-07-10): the UNION-SPLIT routing cell — coarse level
 # UNTIED sparse/sparse. NO new vocabulary (settled 2026-07-10, workflows/union-split/findings.txt):
@@ -179,51 +159,102 @@ ROLA_BASE_SYM_MIX = [
 # "untied double-sparse"; the rejection is LIFTED — the engine executes the combo as union-split:
 # p = entmax_1.5(z_r+z_w) shared support, sigma = sigmoid(z_r−z_w) role split, read = p·sigma
 # unnormalized, write = p·(1−sigma) renormalized; dag_tasks/C-union-split.md). The coarse-level
-# A⊂C ablation triple: rola-base = untied sparse-write/dense-read; rola-base-sym = TIED
-# sparse/sparse (the sigma≡1/2 special case); rola-base-union-global = UNTIED sparse/sparse
-# (asymmetry earned per-state, not assumed away). Global norm (kappa≡0) is the primary cell per the
-# C acceptance criteria. Everything else (kernel=gla_scalar, router_bias, conv-on, qk_norm=True,
-# the required [8,16] geometry) is identical to the other flagship arms;
+# A⊂C ablation triple: rola-base-rla = untied sparse-write/dense-read; the tied-sparse/sparse
+# sigma≡1/2 special case (now carried by the hybrid-tiedtop cell); rola-base-union-global = UNTIED
+# sparse/sparse (asymmetry earned per-state, not assumed away). Everything else (kernel='rla',
+# state_norm='global', router_bias, conv-on, the required [8,16] geometry) is identical to the
+# other flagship arms;
 # recurrent_state_floats UNCHANGED — union changes routing, not state shape (same nc/topology).
 ROLA_BASE_UNION_MIX = [
     {'tied': False, 'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): union-split
     {'tied': False, 'read': 'dense', 'write': 'dense'},     # level 1 (fine)
 ]
 
-# arm -> (rola_instance name, per-level routing mix). The instance name picks (kernel, state_norm,
-# conv) only — its own routing_mode default is fully SUPERSEDED by the explicit
-# `level_routing_configs` passthrough (so the '-asym' suffix on rola-base-sym's instance is inert).
-# Topology/router_bias are shared across all four (see _ROLA_BASE_* above).
+# rola-base-hybrid-global (candidate D, 2026-07-11, dag_tasks/D-and-E-tail.md CANDIDATE D): the
+# DEPTH-HYBRID cell — union at block level, decoupled commitment in-block. Coarse level is UNTIED
+# sparse/sparse (candidate C's union-split: total block removal + read/write alignment via sigma).
+# Fine level is UNTIED dense-read/sparse-write (candidate B's decoupled combo: sharp fine writes =
+# sparse x sparse folded events, dense in-block reads = no fine dead-ends). Everything else
+# (state_norm='global', router_bias, conv-on, the required [8,16]
+# geometry) is identical to the other flagship arms; recurrent_state_floats UNCHANGED — the hybrid
+# mix changes routing only, not state shape (same nc/topology).
+#
+# GATED vs RLA (campaign-prereqs E4, 2026-08-01, supersedes the 2026-07-11 kernel-selector
+# correction): "gated" for this family meant kernel='gla_static', which the V3 engine refuses by
+# name — its defining non-detached clock has no V3 expression. The gla_static cells
+# rola-base-hybrid-global / rola-base-hybrid-tiedtop-global are RETIRED; only their kernel='rla'
+# (ungated, no decay) siblings survive. If a gated depth-hybrid cell is wanted again it must be
+# kernel='gla_mass_detached' (detached leaf-mass decay), which is a DIFFERENT experiment and a
+# coordinator decision.
+#
+# E1 descope (D-and-E-tail.md, 2026-07-11): published LM/MQAR data = hybrid-global {gated, rla}
+# (both kernels); hybrid-tiedtop-global is a FIXED-SIZE ablation only (no full sweep).
+ROLA_BASE_HYBRID_MIX = [
+    {'tied': False, 'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): union-split combo
+    {'tied': False, 'read': 'dense',  'write': 'sparse'},   # level 1 (fine): sparse-write/dense-read (B-combo)
+]
+
+# rola-base-hybrid-tiedtop-global (user decision, 2026-07-11): the canonical D-vs-tied-top ablation
+# pair with rola-base-hybrid-global. Coarse level is TIED sparse/sparse (candidate A's shared-support
+# combo, the sigma≡1/2 special case of union-split) instead of hybrid's UNTIED sparse/sparse
+# (union-split, asymmetry earned per-state). Fine level is IDENTICAL to the hybrid arm (untied
+# dense-read/sparse-write). This isolates whether block-level sigma-untying earns its parameters --
+# everything else (state_norm='global', router_bias, conv-on, qk_norm=True, the
+# required [8,16] geometry) held fixed; recurrent_state_floats UNCHANGED (same nc/topology). Gated vs
+# rla kernel selection mirrors rola-base-hybrid-global (see the note above ROLA_BASE_HYBRID_MIX).
+# E1 descope: this is a FIXED-SIZE ablation cell only (no full sweep).
+ROLA_BASE_HYBRID_TIEDTOP_MIX = [
+    {'tied': True,  'read': 'sparse', 'write': 'sparse'},   # level 0 (coarse): TIED sym combo (the ablation axis)
+    {'tied': False, 'read': 'dense',  'write': 'sparse'},   # level 1 (fine): identical to the hybrid arm
+]
+
+# arm -> (rola_instance name, per-level routing mix). The instance name picks (state_norm, conv)
+# only — its own routing default is fully SUPERSEDED by the explicit `level_routing_configs`
+# passthrough (so the '-asym' suffix is inert). Topology/router_bias are shared across all four
+# (see _ROLA_BASE_* above).
+#
+# RECONCILED onto the V3 mainline engine, 2026-08-01 (campaign-prereqs E1/E3/E4/E5): every arm now
+# names one of mainline's own `fla_rola.models.rola.instances.ROLA_INSTANCES`
+# ('rola-rla-asym', 'rola-rla-sym', 'rola-rla-asym-conv'). The flagship cells are conv-ON, so they
+# all take 'rola-rla-asym-conv' (state_norm='global', conv=True, dense default routing that the
+# explicit mix supersedes). See RETIRED_LM_ARMS below for what E3/E4 removed and why.
 ROLA_BASE_INSTANCE = {
-    'rola-base':        ('rola-gla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),       # gla_scalar, kappa
-    'rola-base-rla':    ('rola-rla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),        # rla,        kappa
-    'rola-base-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_scalar, global
-    'rola-base-sym':    ('rola-gla-kappa-asym-conv', ROLA_BASE_SYM_MIX),          # gla_scalar, kappa, tied-sparse coarse
-    'rola-base-sym-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_SYM_MIX),  # gla_scalar, global, tied-sparse coarse
-    'rola-base-union-global': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_UNION_MIX),  # gla_scalar, global, union-split coarse
-    # The existing global+conv instance owns the flagship topology/routing conventions; the explicit
-    # RoLAConfig.kernel field below is the sole static-decay selector.
-    'rola-multiscale': ('rola-gla-scalar-norm-asym-conv', ROLA_BASE_WRITE_MIX),  # gla_static, global
-    # rola-base-noqknorm (user decision, 2026-07-09): rola-base with qk_norm=False. Tests whether the
-    # historical LM instability was the projections (needs norm) or old-kernel numerics (now fixed,
-    # per_state/rt bf16 defect 3c6567f2) — one-seed probe with the fp64 canary.
-    'rola-base-noqknorm': ('rola-gla-kappa-asym-conv', ROLA_BASE_WRITE_MIX),
+    'rola-base-rla':    ('rola-rla-asym-conv', ROLA_BASE_WRITE_MIX),        # rla, global — ablation ARM 1
+    'rola-base-union-global': ('rola-rla-asym-conv', ROLA_BASE_UNION_MIX),  # rla, global, union-split coarse — ARM 2
+    # The candidate-D depth-hybrid cell and its D-vs-tied-top ablation. Only the ungated (kernel=
+    # 'rla') spellings survive: their 'gla_static' siblings are retired by E4 (V3's clock is
+    # unconditionally detached, so the engine refuses 'gla_static' by name).
+    'rola-base-hybrid-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_MIX),  # rla (ungated), global, depth-hybrid (union coarse + B-combo fine)
+    'rola-base-hybrid-tiedtop-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_TIEDTOP_MIX),  # rla (ungated), global, depth-hybrid ablation: TIED-sparse coarse + B-combo fine
 }
 ROLA_BASE_ARMS = tuple(ROLA_BASE_INSTANCE)
-# qk_norm is PINNED explicitly per flagship arm (user decision, 2026-07-09): the canonical/published
-# model runs with qk_norm=True (RMSNorm on q/k pre-feature-map) — pinned here, NOT via the LM_QK_NORM
-# env default (which stays env-overridable for the legacy ROLA_ARMS comparison cells below).
-# rola-base-noqknorm is the one deliberate exception (see comment above).
-ROLA_BASE_QKNORM = {arm: True for arm in ROLA_BASE_ARMS}
-ROLA_BASE_QKNORM['rola-base-noqknorm'] = False
 
-# arm name -> RoLA variants share geometry + backbone, differ only in rola_instance. The "-conv"
-# variants are the asym RLA/GLA cells with RoLA's short convolution enabled.
-# All use KAPPA normalization (state_norm='kappa') for consistency with the paper-canonical RLA cell:
-# kappa-sym/kappa-asym (RLA) + gla-kappa-asym (scalar GLA, decayed per-state mass).
-ROLA_ARMS = ("rola-rla-kappa-sym", "rola-rla-kappa-asym",
-             "rola-gla-kappa-asym", "rola-gla-kappa-sym",
-             "rola-rla-kappa-asym-conv", "rola-gla-kappa-asym-conv")
+# RETIRED LM arms (campaign-prereqs E1/E3/E4, 2026-08-01) — arm name -> reason. Each was DEFINED by
+# a knob the V3 architecture no longer has, so re-pinning it to a live knob would publish a
+# different cell under an old name. `arm_config` refuses these by name.
+RETIRED_LM_ARMS = {
+    'rola-base': "E3: kernel='gla_scalar' (+ E2 state_norm='kappa'). Its mix survives as 'rola-base-rla'.",
+    'rola-base-global': "E3: kernel='gla_scalar'. Its global-norm base mix survives as 'rola-base-rla'.",
+    'rola-base-sym': "E3: kernel='gla_scalar' (+ E2 state_norm='kappa').",
+    'rola-base-sym-global': "E3: kernel='gla_scalar'; and E2 retired kappa outright, so the destroy-kappa cell is moot.",
+    'rola-base-hybrid-global': "E4: the GATED sibling via kernel='gla_static', which V3 refuses by name. Ungated sibling: 'rola-base-hybrid-global-rla'.",
+    'rola-base-hybrid-tiedtop-global': "E4: kernel='gla_static'. Ungated sibling: 'rola-base-hybrid-tiedtop-global-rla'.",
+    'rola-multiscale': "E4: kernel='gla_static' was its entire definition and V3 has no non-detached clock.",
+    'rola-base-noqknorm': "E1: defined solely by qk_norm=False, and the V3 layer owns no Q/K surface at all.",
+    # Legacy iso-conv comparison cells: every one of them is a kappa and/or gla_scalar instance
+    # string, and mainline's ROLA_INSTANCES contains neither (E5).
+    'rola-rla-kappa-sym': "E2/E5: state_norm='kappa' instance string; not in mainline ROLA_INSTANCES.",
+    'rola-rla-kappa-asym': "E2/E5: state_norm='kappa' instance string; not in mainline ROLA_INSTANCES.",
+    'rola-gla-kappa-asym': "E2/E3/E5: kappa + gla_scalar instance string; not in mainline ROLA_INSTANCES.",
+    'rola-gla-kappa-sym': "E2/E3/E5: kappa + gla_scalar instance string; not in mainline ROLA_INSTANCES.",
+    'rola-rla-kappa-asym-conv': "E2/E5: state_norm='kappa' instance string; not in mainline ROLA_INSTANCES.",
+    'rola-gla-kappa-asym-conv': "E2/E3/E5: kappa + gla_scalar instance string; not in mainline ROLA_INSTANCES.",
+}
+
+# Legacy (non-flagship) RoLA comparison cells: the dense-router arms, named by the mainline engine's
+# own instance strings (E5 — mainline `ROLA_INSTANCES` is exactly this set). The historical
+# `rola-*-kappa-*` / `rola-gla-*` spellings of these cells are retired above.
+ROLA_ARMS = ("rola-rla-sym", "rola-rla-asym", "rola-rla-asym-conv")
 ARMS = ROLA_ARMS + ROLA_BASE_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
 
 
@@ -248,19 +279,23 @@ def _parse_rola(arm: str):
 def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_id: int = 50256):
     """Build the HF config for `arm` on the shared backbone. Raises on an unknown arm (fail loud)."""
     common = dict(vocab_size=vocab_size, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **BACKBONE)
+    if arm in RETIRED_LM_ARMS:
+        raise ValueError(f"LM arm {arm!r} is RETIRED: {RETIRED_LM_ARMS[arm]}")
     if arm in ROLA_BASE_ARMS:
         D, spl, _nc = _rola_base_topology()
         instance, mix = ROLA_BASE_INSTANCE[arm]
+        # E1: no d_qk / qk_norm — the V3 layer owns no Q/K surface. Every surviving flagship arm is
+        # ungated, so kernel='rla' is PINNED here rather than left to the instance string's default.
         return RoLAConfig(
             rola_instance=instance, levels_per_head=D, states_per_level=spl,
-            d_qk=_ROLA_BASE_DQK, d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
-            qk_norm=ROLA_BASE_QKNORM[arm],
-            kernel='gla_static' if arm == 'rola-multiscale' else None,
+            d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
+            kernel='rla',
             level_routing_configs=mix, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
         g = {**ROLA_GEOM, **_struct}
         nc = g.pop("states_per_head")   # -> flat (D=1, b=nc); RoLAConfig has no states_per_head kwarg.
+        g.pop("d_qk"); g.pop("qk_norm")  # E1: state-accounting keys only, not construction kwargs.
         return RoLAConfig(rola_instance=_base, levels_per_head=1, states_per_level=nc, **g, **common)
     if arm == "gdn":
         from fla.models.gated_deltanet import GatedDeltaNetConfig
@@ -277,12 +312,9 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if arm == "attn":
         from fla.models.transformer import TransformerConfig
         # Softmax-attention ceiling: full causal attention (window_size=None), RoPE positions.
-        # qk_norm mirrors _QKNORM (LM_QK_NORM env, default off) -- fair stabilizer parity for the
-        # legacy iso-conv comparison (ROLA_ARMS + fla baselines), which is still env-controlled.
-        # fla.layers.attn supports qk_norm natively. NOTE: the published-flagship arms
-        # (ROLA_BASE_ARMS) now PIN qk_norm=True explicitly (ROLA_BASE_QKNORM, see above) independent
-        # of this env knob -- attn's qk_norm no longer auto-tracks the flagship arms' setting; if a
-        # flagship-vs-attn qk_norm-matched comparison is needed, set LM_QK_NORM=1 explicitly.
+        # qk_norm mirrors _QKNORM (LM_QK_NORM env, default off); fla.layers.attn supports it
+        # natively. It is attention's own stabilizer knob only -- the RoLA arms have no Q/K surface
+        # to normalize any more (campaign-prereqs E1), so there is nothing to match it against.
         return TransformerConfig(num_heads=ATTN_HEADS, window_size=None, qk_norm=_QKNORM, **common)
     raise ValueError(f"unknown arm {arm!r}; known: {ARMS}")
 
@@ -326,8 +358,12 @@ def recurrent_state_overhead_floats(arm: str) -> int | None:
 
 
 def static_decay_parameter_floats(arm: str) -> int:
-    """Additional fp32 theta parameters owned by the static-decay arm."""
-    if arm == 'rola-multiscale':
-        _D, _spl, nc = _rola_base_topology()
-        return _ROLA_BASE_NH * nc
+    """Additional fp32 theta parameters owned by a static-decay arm.
+
+    Always 0 since campaign-prereqs E4 (2026-08-01) retired the only static-decay arm
+    (`rola-multiscale`, kernel='gla_static'): V3's clock is unconditionally detached, so no arm on
+    the live slate owns per-state decay parameters. Kept (and still reported by `train_lm`) so the
+    result rows carry an explicit zero rather than a missing field, and so a future
+    kernel='gla_mass_detached' arm has one place to declare its parameter cost.
+    """
     return 0

@@ -50,22 +50,22 @@ def _construct_pinned(cell, dev="cuda"):
 
 
 def _construct_named(cell, dev="cuda"):
-    """MQAR (conv-free) form of a named flagship config via the level-routing passthrough."""
-    from rola_bench.named_configs import NAMED_CONFIGS
-    from zoology.mixers.rola import RoLAMixer
-    cfg = NAMED_CONFIGS[cell["name"]]
-    kwargs = cfg.build_kwargs(cell["nc"], False)   # use_short_conv=False -- MQAR convs confound recall
-    level_routing_configs = kwargs.pop("level_routing_configs")
-    D, b = kwargs.pop("levels_per_head"), kwargs.pop("states_per_level")
-    kernel = kwargs.pop("kernel")
-    d_model = 8 * 64  # H=8, d_v=64 (flagship geometry)
-    m = RoLAMixer(d_model=d_model, d_qk=16, d_v=64, levels_per_head=D, states_per_level=b, n_heads=8,
-                 kernel=kernel, level_routing_configs=level_routing_configs, layer_idx=0,
-                 **kwargs).to(dev)
-    err = getattr(m, "_routing_resolution_error", None)
-    if err is not None:
-        raise err
-    return m, cell["name"]
+    """MQAR (conv-free) form of a named flagship config via the level-routing passthrough.
+
+    BLOCKED on a zoology-side migration (campaign-prereqs E1, 2026-08-01). `named_configs` now
+    speaks the V3 layer surface (`decay`, no `head_k_dim`/`d_qk`/`qk_norm`), but
+    `zoology.mixers.rola.RoLAMixer` (zoology @ efe1a0b) still takes a REQUIRED `d_qk` and forwards
+    `head_k_dim=d_qk`, `kernel=...`, `qk_norm=...` into `fla_rola.layers.RoLA` — the pre-V3 Q/K
+    surface the mainline engine deleted. There is no translation that preserves the cell: `d_qk` has
+    no V3 meaning at all. Refusing loudly here rather than silently constructing a different cell
+    against a stale engine.
+    """
+    raise NotImplementedError(
+        "MQAR named-config construction is blocked on migrating zoology.mixers.rola.RoLAMixer to "
+        "the V3 layer surface (it still requires d_qk and passes head_k_dim/kernel/qk_norm into "
+        "fla_rola.layers.RoLA, none of which exist on the mainline V3 layer). See "
+        "workflows/20260801-campaign-prereqs/prereqs.md E1. Layer-level construction of the same "
+        "named configs is gated by rola_bench/test_named_config_construction.py.")
 
 
 def run_smoke():

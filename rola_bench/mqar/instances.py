@@ -8,10 +8,10 @@ kernel (rla / gla_scalar) is the only parameterized axis; tie_routers => symmetr
 convenient state-count-ladder + topology-name vocabulary used throughout the MQAR grid builders
 (`rola_bench.mqar.build_configs`, `rola_bench.suites.mqar`) — but the returned dict speaks
 `zoology.mixers.rola.RoLAMixer`'s NEW structural surface directly (`levels_per_head`/
-`states_per_level`/`routing_mode`; #config-refactor 2026-07-06), via the shared
+`states_per_level`/`level_routing_configs`; #config-refactor 2026-07-06), via the shared
 `rola_bench.rola_compat` translators. No shim lives in the mixer itself anymore.
 """
-from rola_bench.rola_compat import routing_mode_from_tie_routers, topology_from_legacy
+from rola_bench.rola_compat import level_routing_config_from_tie_routers, topology_from_legacy
 
 
 def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4, routing='flat'):
@@ -22,7 +22,8 @@ def rola_instance(name, d_qk, d_v, num_chunks, n_heads=4, routing='flat'):
                   use_short_conv=False)
 
     def _routed(tie_routers, **extra):
-        return dict(routing_mode=routing_mode_from_tie_routers(tie_routers), **extra, **common)
+        return dict(level_routing_configs=level_routing_config_from_tie_routers(tie_routers),
+                    **extra, **common)
 
     # RLA family (phi = feature map; global/per_state/kappa norm).
     if name == 'rola-rla-asym':                              # global-norm RLA (explicit; was default)

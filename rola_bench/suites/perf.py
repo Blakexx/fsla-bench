@@ -9,8 +9,9 @@ Two DISTINCT things live under `rola_bench/perf/`, and this suite smoke-gates bo
     smoke exercises `build_rola_named` + the FLA baseline builders directly (construct+one-tiny-fwd),
     not a full `scaling.sweep()` (that's the fleet job's job).
   * **engine_regression** (engineering-only, NOT paper material): the internal CuTe-vs-Triton bake-off,
-    `rola_bench.perf.engine_bench` at the flagship geometry — `RoLA-base`/`RoLA-tied` per
-    `rola_bench.named_configs.PERF_SUITE_CONFIGS`.
+    `rola_bench.perf.engine_bench` at the flagship geometry — per
+    `rola_bench.named_configs.PERF_SUITE_CONFIGS` (`RoLA-base-rla`; the gla_scalar/kappa
+    `RoLA-base` and `RoLA-tied` cells were retired by campaign-prereqs E2/E3).
 
 Real (non-smoke) results land in `results/perf/` (CSVs from `scaling.py`) and as JSON lines from
 `engine_bench.py`/`decode_bench.py` (pipe `--out` to a file under `results/perf/`). See
@@ -92,7 +93,8 @@ def run_smoke():
         argv = [
             "rola_bench.perf.engine_bench", "--worktree", _WORKTREE,
             "--levels", "2", "--b", "16", "--H", "8", "--d_qk", "16", "--d_v", "64",
-            "--kernel", "gla_scalar", "--state_norm", "kappa", "--smoke",
+            # campaign-prereqs E2/E3: 'gla_scalar'/'kappa' exist in no engine checkout.
+            "--kernel", "rla", "--state_norm", "global", "--smoke",
         ]
         if "tied" in name.lower():
             argv.append("--tied")

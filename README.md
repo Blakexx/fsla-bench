@@ -81,11 +81,9 @@ substitution. **C8 has since landed** on the engine tip this migration verified 
 `--smoke`, `requires_c8=False` for every named config as of this writing) — the gate/fallback code
 stays in place as a no-op safety net in case a future engine checkout regresses it.
 
-**Known gap**: the flagship is not yet reachable through the HF LM path — `RoLAConfig` has no
-`routing_mode`/`level_routing_configs` field, so `rola_bench.suites.lm --smoke` verifies the flagship
-at the LAYER level only (`rola_bench.named_configs.construct`), separately from the `ARMS` registry
-models. Wiring `RoLAConfig`/`modeling_rola.py` to accept per-level routing config is an engine-side
-follow-up, not done here.
+The HF LM path carries `level_routing_configs` through `RoLAConfig` and the named-instance boundary.
+The field accepts a broadcast routing config dict for homogeneous levels or an explicit per-level list;
+the latter is used by the flagship's heterogeneous sparse-coarse/dense-fine routing.
 
 ### Perf bench files (`rola_bench/perf/`)
 

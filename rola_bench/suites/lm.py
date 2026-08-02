@@ -1,15 +1,16 @@
 """LM suite entry point.
 
-Pinned configs = `rola_bench.lm.arms.ARMS` (RoLA kappa comparison variants, the published-flagship
-RoLA-base(-rla/-global/-sym) arms, gdn/gdn-isostate, gla/gla-isostate, attn).
+Pinned configs = `rola_bench.lm.arms.ARMS` (the dense-router RoLA comparison variants, the
+published-flagship RoLA-base arms, gdn/gdn-isostate, gla/gla-isostate, attn). The kappa /
+gla_scalar / gla_static arms are RETIRED — see `arms.RETIRED_LM_ARMS` and the campaign-prereqs
+E1-E7 migration.
 
-The published flagship — `rola-base` / `rola-base-rla` / `rola-multiscale` /
-`rola-base-global` (the kappa-vs-global ablation row) / `rola-base-sym` (the symmetric-coarse
-max-skip ablation: tied sparse/sparse coarse level, see `arms.ROLA_BASE_SYM_MIX`) — router_bias=True,
+The published flagship — `rola-base-rla` / `rola-base-union-global` /
+`rola-base-hybrid-global-rla` / `rola-base-hybrid-tiedtop-global-rla` — router_bias=True,
 two-level topology (required mixed-radix [8,16]; `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
 dense@fine, dense read (asym arms), short conv ON — see `rola_bench.lm.arms.ROLA_BASE_*` — reachable
 through the HF `AutoModelForCausalLM` path like every other arm: `RoLAConfig`
-(`fla_rola/models/rola/configuration_rola.py`) carries `routing_mode`/`level_routing_configs` fields,
+(`fla_rola/models/rola/configuration_rola.py`) carries the `level_routing_configs` field,
 threaded through `rola_instance()`/`RoLABlock` into the RoLA layer kwargs
 (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). Per-level heterogeneous activation support
 is required for the production cell and must execute end-to-end.
@@ -36,14 +37,13 @@ def main(argv=None):
     p.add_argument("--list", action="store_true")
     a = p.parse_args(argv)
 
-    sys.path.insert(0, "/home/blake/flash-linear-attention-rola-cuda-p0")
     from rola_bench.lm import arms
 
     if a.list:
         for arm in arms.ARMS:
             print(arm)
         from rola_bench.named_configs import LM_SUITE_CONFIGS
-        print("(flagship, layer-level only, see docstring): " + " ".join(LM_SUITE_CONFIGS))
+        print("(flagship layer configs, see docstring): " + " ".join(LM_SUITE_CONFIGS))
         return
 
     if not a.smoke:
@@ -77,8 +77,7 @@ def main(argv=None):
     for name in LM_SUITE_CONFIGS:
         try:
             layer, used = construct(
-                name, hidden_size=512, num_heads=8, head_k_dim=16, head_v_dim=64,
-                nc=128 if name == 'RoLA-multiscale' else 256,
+                name, hidden_size=512, num_heads=8, head_v_dim=64, nc=256,
                 use_short_conv=True)
             layer = layer.cuda() if torch.cuda.is_available() else layer
             x = torch.randn(1, 8, 512, device=next(layer.parameters()).device)

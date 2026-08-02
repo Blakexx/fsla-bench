@@ -6,11 +6,12 @@ entmax/softmax on its OWN projected logits. See `rola_bench.named_configs._level
 
 Everything here runs on CPU in fp64 against the ENGINE's own canonical references
 (`fla_rola.ops.rola.routing.reference.routing_factor_levels` and
-`fla_rola.ops.rola.naive.naive_rola_routed`) — never against a freshly written reimplementation
-(memory: `matching-the-naive-antipattern`). The engine's CUDA consumer is forward-only
-(`fla_rola/ops/rola/cuda/chunk.py::_RoLASharedGramForwardOnlyFn.backward` raises), so the
-forward+backward gate necessarily exercises the differentiable canonical oracle, which is the only
-implemented training path for this engine.
+`fla_rola.ops.rola.naive.naive_rola_v3`) — never against a freshly written reimplementation
+(memory: `matching-the-naive-antipattern`). The engine's CUDA consumer is forward-only, so the
+forward+backward gate necessarily exercises the differentiable canonical oracle, which is exactly
+what the V3 layer's own `'oracle'` backend runs under `self.training` — the only implemented
+training path for this engine. Migrated off the V2 `naive_rola_routed` (q/k/route_W) surface onto
+the V3 oracle (routing simplices, no q/k, no feature map) by campaign-prereqs E1, 2026-08-01.
 
 Declared tolerances and their derivation:
 
@@ -69,20 +70,21 @@ def test_levelsplit_named_config_is_registered_with_opposite_per_level_duties():
     ]
 
 
-def test_levelsplit_kernel_is_live_vocabulary():
-    """'gla_scalar' is retired in every current fla_rola checkout; this arm must be constructible."""
+def test_levelsplit_decay_is_live_v3_vocabulary():
+    """E4 (2026-08-01): this arm was first registered on the dead 'gla_static'. It must now speak
+    the V3 layer's own `decay` surface, and be ungated like the other two ablation arms."""
     kwargs = named_configs.NAMED_CONFIGS['RoLA-base-levelsplit-global'].build_kwargs(256, False)
-    from fla_rola.ops.rola.internal.decay import PUBLIC_DECAY_KERNELS
-    assert kwargs['kernel'] in PUBLIC_DECAY_KERNELS
+    assert 'kernel' not in kwargs
+    assert kwargs['decay'] == 'none'
 
 
 def test_levelsplit_matches_the_union_arm_shape_and_router_parameter_count():
     """Matched addressing entropy: same topology, same bias/norm/conv, same untied-everywhere
     router parameter shape. Only the per-side activation assignment differs."""
-    union = named_configs._union_kwargs(256, False, 'gla_static', 'global')
-    split = named_configs._levelsplit_kwargs(256, False, 'gla_static', 'global')
+    union = named_configs._union_kwargs(256, False, 'rla', 'global')
+    split = named_configs._levelsplit_kwargs(256, False, 'rla', 'global')
     for key in ('levels_per_head', 'states_per_level', 'router_bias', 'state_norm',
-                'use_short_conv', 'kernel'):
+                'use_short_conv', 'decay'):
         assert union[key] == split[key], key
     # untied on every level in both arms => identical packed-projection logit-set count
     assert [cfg.tied for cfg in union['level_routing_configs']] == [False, False]
@@ -95,7 +97,7 @@ def test_levelsplit_resolves_to_independent_routing_never_union():
     from fla_rola.ops.rola.routing.types import (
         EntmaxActivation, IndependentRouting, SoftmaxActivation, UnionRouting)
 
-    routing = _resolved_routing(named_configs._levelsplit_kwargs(256, False, 'gla_static', 'global'))
+    routing = _resolved_routing(named_configs._levelsplit_kwargs(256, False, 'rla', 'global'))
     coarse, fine = routing.levels
     assert type(coarse) is IndependentRouting and type(fine) is IndependentRouting
     assert not isinstance(coarse, UnionRouting) and not isinstance(fine, UnionRouting)
@@ -106,7 +108,7 @@ def test_levelsplit_resolves_to_independent_routing_never_union():
     # untied + not shares_solve => read and write are solved separately, from separate logits
     assert coarse.shares_solve is False and fine.shares_solve is False
 
-    union = _resolved_routing(named_configs._union_kwargs(256, False, 'gla_static', 'global'))
+    union = _resolved_routing(named_configs._union_kwargs(256, False, 'rla', 'global'))
     assert type(union.levels[0]) is UnionRouting   # the contrast case
 
 
@@ -130,7 +132,7 @@ def test_levelsplit_sparse_write_duty_is_an_exact_point_mass_at_the_corner():
     from fla_rola.ops.rola.routing.reference import routing_factor_levels
 
     width = 16
-    kwargs = named_configs._levelsplit_kwargs(width * width, False, 'gla_static', 'global')
+    kwargs = named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global')
     routing = _resolved_routing(kwargs)
     read_logits, write_logits = _corner_logits(width, write_corner=3, read_corner=11)
     reads, writes = routing_factor_levels(read_logits, write_logits, routing)
@@ -157,8 +159,8 @@ def test_union_split_write_cannot_reach_the_corner_the_level_split_write_reaches
     width = 16
     read_logits, write_logits = _corner_logits(width, write_corner=3, read_corner=11)
 
-    split = _resolved_routing(named_configs._levelsplit_kwargs(width * width, False, 'gla_static', 'global'))
-    union = _resolved_routing(named_configs._union_kwargs(width * width, False, 'gla_static', 'global'))
+    split = _resolved_routing(named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global'))
+    union = _resolved_routing(named_configs._union_kwargs(width * width, False, 'rla', 'global'))
 
     _, split_writes = routing_factor_levels(read_logits, write_logits, split)
     _, union_writes = routing_factor_levels(read_logits, write_logits, union)
@@ -195,7 +197,7 @@ def test_levelsplit_write_purity_is_independent_of_the_read_logits():
 
     width = 8
     routing = _resolved_routing(
-        named_configs._levelsplit_kwargs(width * width, False, 'gla_static', 'global'))
+        named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global'))
     for read_corner in range(width):
         read_logits, write_logits = _corner_logits(width, write_corner=5, read_corner=read_corner)
         _, writes = routing_factor_levels(read_logits, write_logits, routing)
@@ -216,7 +218,7 @@ def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
 
     width = 16
     degenerate = named_configs._levelsplit_dense_degenerate_kwargs(
-        width * width, False, 'gla_static', 'global')
+        width * width, False, 'rla', 'global')
     assert _mix_rows(degenerate['level_routing_configs']) == [
         (False, 'dense', 'dense'), (False, 'dense', 'dense')]
     degenerate_routing = _resolved_routing(degenerate)
@@ -247,29 +249,49 @@ def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
 # (b) forward + backward step, against the engine's differentiable canonical oracle
 # --------------------------------------------------------------------------------------------
 
-def _run_reference_step(kwargs, *, B=1, T=6, H=2, K=4, V=4, dm=8, seed=0):
-    """One forward+backward through `naive_rola_routed`, the engine's canonical fp64 oracle and
-    its only differentiable path (the CUDA consumer is forward-only)."""
-    from fla_rola.ops.rola.naive import naive_rola_routed
+def _run_reference_step(kwargs, *, B=1, T=6, H=2, V=4, seed=0):
+    """One forward+backward through `naive_rola_v3`, the mainline engine's canonical fp64 oracle
+    (and, via the layer's `'oracle'` backend, its only differentiable path — the CUDA consumer is
+    forward-only). Routing factors come from the engine's own producer reference, so nothing about
+    the arm's semantics is reimplemented here.
+
+    There is no q, no k and no feature map in V3: the routing simplices ARE the addressing.
+    """
+    from fla_rola.ops.rola.naive import naive_rola_v3
+    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from fla_rola.ops.rola.routing.types import LevelConfig, Topology
 
     routing = _resolved_routing(kwargs)
+    assert kwargs['state_norm'] == 'global'   # spec §4.2 fixes g_read := 1 there (g_read=None)
     torch.manual_seed(seed)
-    q = torch.rand(B, T, H, K, dtype=torch.float64).add_(0.5).requires_grad_(True)
-    k = torch.rand(B, T, H, K, dtype=torch.float64).add_(0.5).requires_grad_(True)
+    read_logits = torch.randn(B, T, routing.D, routing.real_width,
+                              dtype=torch.float64, requires_grad=True)
+    write_logits = torch.randn(B, T, routing.D, routing.real_width,
+                               dtype=torch.float64, requires_grad=True)
     v = torch.randn(B, T, H, V, dtype=torch.float64, requires_grad=True)
-    h = torch.randn(B, T, dm, dtype=torch.float64, requires_grad=True)
-    route_W = torch.randn(
-        H, routing.packed_slot_count, dm, routing.real_width,
-        dtype=torch.float64).mul_(0.5).requires_grad_(True)
-    theta = None
-    if kwargs['kernel'] != 'rla':
-        theta = torch.zeros(H, sum(routing.branches), dtype=torch.float64).requires_grad_(True)
-    out, _ = naive_rola_routed(
-        q, k, v, h, route_W, routing, norm=kwargs['state_norm'], kernel=kwargs['kernel'],
-        decay_theta=theta)
+    g_write = torch.ones(B, T, H, dtype=torch.float64, requires_grad=True)
+
+    reads, writes = routing_factor_levels(read_logits, write_logits, routing)
+    # producer factors are [B,T,width] per level; the oracle takes [B,T,H,width].
+    reads = tuple(r.unsqueeze(2).expand(B, T, H, r.shape[-1]) for r in reads)
+    writes = tuple(w.unsqueeze(2).expand(B, T, H, w.shape[-1]) for w in writes)
+
+    topology = Topology(
+        levels=tuple(LevelConfig(width=int(b), routing=level)
+                     for b, level in zip(routing.branches, routing.levels)),
+        d_v=V)
+    out, _ = naive_rola_v3(v, reads, writes, None, g_write, topology,
+                           None if kwargs['decay'] == 'none' else _leaf_mass_decay(topology),
+                           kwargs['state_norm'])
     assert torch.isfinite(out).all()
     out.sum().backward()
-    return out, dict(q=q, k=k, v=v, h=h, route_W=route_W, theta=theta)
+    return out, dict(read_logits=read_logits, write_logits=write_logits, v=v, g_write=g_write)
+
+
+def _leaf_mass_decay(topology):
+    from fla_rola.ops.rola.routing.types import LeafMassDecay
+    return LeafMassDecay(rates=tuple(torch.full((w,), 0.5, dtype=torch.float64)
+                                     for w in topology.widths))
 
 
 def test_levelsplit_forward_and_backward_run_without_error():
@@ -277,12 +299,11 @@ def test_levelsplit_forward_and_backward_run_without_error():
     out, tensors = _run_reference_step(kwargs)
     assert out.shape == (1, 6, 2, 4)
     for name, t in tensors.items():
-        if t is None:
-            continue
         assert t.grad is not None, f"{name} received no gradient"
         assert torch.isfinite(t.grad).all(), f"{name} gradient is not finite"
-    # the sparse duties must actually train: routing gradient must be nonzero somewhere
-    assert tensors['route_W'].grad.abs().max() > 0
+    # the sparse duties must actually train: routing gradient must be nonzero on both sides
+    assert tensors['read_logits'].grad.abs().max() > 0
+    assert tensors['write_logits'].grad.abs().max() > 0
 
 
 def test_levelsplit_runs_at_the_union_arms_pinned_routing_width():
