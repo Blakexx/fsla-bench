@@ -44,16 +44,20 @@ pre-sweep cache-warm pass (the old warm_gate was net-negative: its capture phase
 autotune in-process so the parallel phase only re-hit cache, and it warmed the raw-forward kernels
 while this bench fires the kappa-norm kernels — 0/4 overlap).
 
-**STATUS 2026-08-02 — the RoLA arms are BLOCKED on the zoology mixer migration.** The V3 mainline
-engine owns no Q/K surface, and `zoology.mixers.rola.RoLAMixer` still forwards `head_k_dim=d_qk`,
-`kernel=`, `phi=`, `qk_norm=` into `fla_rola.layers.RoLA` — every one of those kwargs was deleted by
-V3. So `build_rola` / `build_rola_named` cannot construct a RoLA layer against the campaign engine,
-whatever this file writes; they raise `_zoology_blocker()` by name instead of TypeError-ing deep in
-the layer, exactly as `rola_bench.suites.mqar._construct_named` does. No V2 back-translation is
-written here on purpose: the V2 spellings (`kernel`, `kernel_kwargs={'state_norm': 'kappa'}`,
-`d_qk`) are retired vocabulary and would be dead code the moment the mixer is migrated
-(rola-bench-audit §3, Phase 1.2/1.4). The `attn`, `monolith` and `gla/gdn/deltanet/gsa` arms are
-unaffected and still run.
+**STATUS 2026-08-02 (Phase 1.6) — the RoLA arms are UNBLOCKED.** `zoology.mixers.rola.RoLAMixer`
+now speaks the V3 layer surface directly (no `d_qk`/`head_k_dim`/`kernel`/`phi`/`qk_norm`; kwargs are
+validated against `fla_rola.layers.RoLA.__init__`'s own signature), so both builders construct
+again. Two consequences for what this harness MEASURES:
+
+  * `build_rola`'s sweep axis lost `d_qk`. A V3 RoLA state is `[N, d_v]`, so the (d, nc, routing)
+    sweep is over the VALUE width, the state count and the factor topology — three axes, not four.
+    The `d_qk` ladder survives on the ATTENTION arm only, where it is that method's own capacity
+    dimension (`_CausalMHA(d_model, n_heads)` -> `head_dim = d_model // n_heads`).
+  * `build_rola`'s `gla` flag is now the layer's `decay` kwarg: `decay='leaf_mass'` (the detached
+    leaf-mass clock) vs `decay='none'`. The pre-V3 `kernel='gla_scalar'` it used to mean is retired
+    vocabulary in every engine checkout, and `'gla_static'` has no V3 spelling at all
+    (`named_configs._decay_from_kernel` refuses it by name) — so this is a different clock, not a
+    rename, and a pre-V3 `gla` curve must not be pooled with a post-V3 one.
 
 The NAMED-CONFIG arms are derived from `rola_bench.named_configs.PERF_SUITE_CONFIGS`, not hardcoded.
 Hardcoding is precisely how this file silently rotted: it pinned `'RoLA-base'`, which the E1-E7
@@ -80,15 +84,21 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.environ["HF_HUB_CACHE"])
 
 import torch
 
-# NOTE: `zoology.mixers.rola.RoLAMixer` and `rola_bench.mqar.instances.rola_instance` are no longer
-# imported here — the RoLA arms are blocked on the mixer migration (module docstring) and an unused
-# import of a V2-surface module would keep this file coupled to it for nothing. Restore both when
-# Phase 1.2 lands.
-
 from . import _common as C
 import rola_bench.mqar.experiments.canonical_baselines as cb
 
 DM = 512  # d_model backbone for the scaling layers
+#: Value width for the NAMED-config perf arms. The registry (`named_configs`) pins topology,
+#: routing, decay and normalization but not `head_v_dim` — that is a caller geometry, and the perf
+#: harness's is stated here rather than inherited from whatever the LM tier happens to run.
+PERF_NAMED_DV = 64
+#: The readout tile, PINNED rather than inherited from the finest branch width. The V3 CUDA consumer
+#: instantiates `BC in (16, 64)` only, and `state_block` defaults to `topology.widths[-1]` — so a
+#: flat nc=256 arm would ask for BC=256 and be refused, i.e. the sweep's own topology axis would
+#: decide which cells are launchable. Pinning it makes the tile a constant across the sweep instead
+#: of a covariate that moves with the axis under test (found by the Phase 1 MQAR smoke; the same
+#: constant is `mqar.instances.MQAR_STATE_BLOCK`).
+PERF_STATE_BLOCK = 16
 ROUTINGS = ("flat", "square", "tree")  # the per-head factor topologies the RoLA layer supports
 DECODE_STEPS = 100
 DECODE_WARMUP = 20
@@ -278,30 +288,34 @@ def _e2e_rep(forward, leaves, module):
 
 
 # ------------------------------------------------------------------ builders
-_ZOOLOGY_BLOCKER = (
-    "the perf scaling harness's RoLA arms are blocked on the zoology mixer migration: "
-    "zoology.mixers.rola.RoLAMixer forwards head_k_dim=d_qk, kernel=, phi= and qk_norm= into "
-    "fla_rola.layers.RoLA, and the V3 mainline engine deleted all four (it owns no Q/K surface). "
-    "d_qk has no V3 meaning to translate to, so there is no construction that preserves the cell. "
-    "Migrate zoology/mixers/rola.py onto the V3 layer surface first (rola-bench-audit §3, "
-    "Phase 1.2/1.4); reuse named_configs._decay_from_kernel for the kernel->decay mapping. "
-    "The attn / monolith / gla / gdn / deltanet / gsa arms are unaffected.")
-
-
-def _zoology_blocker(detail: str) -> NotImplementedError:
-    return NotImplementedError(f"{detail}: {_ZOOLOGY_BLOCKER}")
-
-
 def build_rola(gla, nc, d, routing="flat"):
-    """Routed RoLA LAYER at d_v=d, nc states, `routing` factor topology, perf backbone.
+    """Routed RoLA LAYER at `d_v=d`, `nc` states, `routing` factor topology, on the perf backbone.
 
-    BLOCKED — see the module docstring. The presets this used to name
-    (`rola-rla-kappa-asym` / `rola-gla-kappa-asym`) are doubly dead: `state_norm='kappa'` is not a
-    normalization in any engine checkout (campaign-prereqs E2) and the whole `gla_*` family is
-    `kernel='gla_scalar'` (E3). Re-pinning them to live presets would still not construct, because
-    the mixer's own signature is the blocker."""
-    raise _zoology_blocker(
-        f"build_rola(gla={gla}, nc={nc}, d={d}, routing={routing!r})")
+    The (d, nc, routing) SWEEP arm -- deliberately not a named config: this arm exists to move the
+    kernel's structural axes, and the flagship's fixed geometry is `build_rola_named`'s job.
+
+    UNBLOCKED 2026-08-02 (Phase 1.6). Two things changed with the mixer migration:
+      * the sweep lost its `d_qk` axis. A V3 RoLA state is `[N, d_v]`, so the axes are the VALUE
+        width, the state count and the factor topology. `d_qk` survives on the attention arm only.
+      * `gla` now selects the CLOCK -- `decay='leaf_mass'` (the V3 detached leaf-mass decay) vs
+        `'none'`. It is NOT the pre-V3 `kernel='gla_scalar'` this flag used to mean (retired, E3;
+        `'gla_static'` has no V3 expression at all), so a `gla=True` curve measured here is a
+        different operation from one measured before this date and the two must not be pooled.
+
+    Routing is the untied dense/dense router at every level (`rola_compat`'s legacy flat/square/tree
+    translation), which is this sweep's own control: the arm varies STRUCTURE, so the per-side
+    activation assignment is held fixed across it.
+    """
+    from zoology.mixers.rola import RoLAMixer
+    from rola_bench.rola_compat import level_routing_config_from_tie_routers, topology_from_legacy
+    D, b = topology_from_legacy(nc, routing)
+    return RoLAMixer(
+        d_model=DM, layer_idx=0, n_heads=C.H, d_v=d,
+        levels_per_head=D, states_per_level=b,
+        level_routing_configs=[level_routing_config_from_tie_routers(False)] * D,
+        decay=("leaf_mass" if gla else "none"), state_norm="global", router_bias=True,
+        use_short_conv=False, gain_bias_init=None, state_block=PERF_STATE_BLOCK,
+    ).to(C.DEV, C.DT)
 
 
 # --- REAL external linear-attention baselines (paper_v1: RoLA vs the FLA library's own canonical
@@ -390,13 +404,21 @@ def resolve_named_arm(kind, nc=256):
 
 def build_rola_named(kind, nc=256):
     """Build a flagship named-config RoLA layer (`rola_bench.named_configs`) as a scaling arm, at ITS
-    OWN fixed geometry (H=8, d_v=64, square topology) rather than the (d, nc) sweep axis -- same
-    rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis.
+    OWN fixed geometry (H=8, d_v=`PERF_NAMED_DV`, square topology) rather than the (d, nc) sweep
+    axis -- same rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis.
 
-    The registry resolution runs FIRST, so a dangling/retired arm name fails with its own message;
-    the construction itself is BLOCKED on the zoology mixer (see the module docstring)."""
-    name, _kwargs = resolve_named_arm(kind, nc)
-    raise _zoology_blocker(f"build_rola_named({kind!r}, nc={nc}) -> {name!r}")
+    The registry resolution runs FIRST, so a dangling or retired arm name fails with its own message
+    rather than deep inside the layer.
+
+    The registry emits V3 layer kwargs and the mixer is a thin alias-and-unwrap adapter over the
+    same layer, so this constructs the IDENTICAL module `named_configs.construct()` builds. That
+    identity is gated bit-exactly on CPU by `rola_bench/test_zoology_mixer.py`, and it is what lets
+    the perf row and the layer-path row of one published name be the same cell rather than two
+    experiments sharing a string ([[matching-the-naive-antipattern]])."""
+    from zoology.mixers.rola import RoLAMixer
+    name, kwargs = resolve_named_arm(kind, nc)
+    return RoLAMixer(d_model=DM, layer_idx=0, n_heads=C.H, d_v=PERF_NAMED_DV,
+                     state_block=PERF_STATE_BLOCK, **kwargs).to(C.DEV, C.DT)
 
 
 def build_monolith(gla, nc, d):

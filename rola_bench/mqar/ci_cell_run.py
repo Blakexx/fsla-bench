@@ -43,7 +43,7 @@ def main():
         cfg = _set_epochs(copy.deepcopy(c), 1)
         r = run_one(900 + i, cfg.run_id, cfg, {})
         ok = bool(r.get("ok")) and r.get("returncode") == 0
-        print(f"  {'PASS' if ok else 'FAIL'}  {key[0]} kernel={key[1]} norm={key[3]} "
+        print(f"  {'PASS' if ok else 'FAIL'}  {key[0]} decay={key[1]} norm={key[2]} "
               f"-> ok={r.get('ok')} rc={r.get('returncode')} max_acc={r.get('max_acc')}")
         if not ok:
             print("    stderr_tail:", str(r.get("stderr_tail", ""))[-500:])

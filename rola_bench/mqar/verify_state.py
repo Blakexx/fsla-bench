@@ -25,26 +25,29 @@ def _instantiate(kc):
     return M(**kw)
 
 
-def _realized(method, m, fm):
-    """Realized recurrent-state floats from the instantiated module's true dims."""
-    if method in ("rla", "hedgehog"):       # LinearAttention: nh * (fm*k_head) * v_head
-        return fm * m.key_dim * m.value_dim // m.num_heads, (m.key_dim, m.value_dim, m.num_heads)
-    if method == "gla":
-        return m.key_dim * m.value_dim // m.num_heads, (m.key_dim, m.value_dim, m.num_heads)
-    if method == "gdn":
-        vh = m.value_dim // m.num_heads
-        return m.num_heads * m.head_dim * vh, (m.head_dim, vh, m.num_heads)
-    if method == "based":
-        fd = m.feature_dim
-        return (cb.DMODEL + 1) * (fd * (fd + 1) // 2 + fd + 1), (fd,)
-    raise ValueError(method)
+def _realized(method, m):
+    """Realized recurrent-state floats from the instantiated module's true dims.
+
+    Delegates to `rola_bench.mqar.realized_state`, the single readback definition the whole MQAR
+    tier now shares (build_configs stamps `st` from it too) — a second copy here is exactly how the
+    matched-state axis and the reported axis drift apart."""
+    from rola_bench.mqar.realized_state import _readback
+    content, _overhead = _readback(_KERNEL_CLASS[method], m)
+    if method in ("rla", "gla"):
+        return content, (m.key_dim, m.value_dim, m.num_heads)
+    return content, (m.head_dim, m.value_dim // m.num_heads, m.num_heads)
+
+
+#: method -> the dotted class name `realized_state._readback` dispatches on.
+_KERNEL_CLASS = {"rla": "fla_rola.layers.LinearAttention",
+                 "gla": "zoology.mixers.gla.GatedLinearAttention",
+                 "gdn": "fla.layers.GatedDeltaNet"}
 
 
 def verify(state_tol=0.12):
     """Return (n_checked, bad) where bad is a list of (cell, reason)."""
     bad, n = [], 0
     for method in cb.METHODS:
-        fm = 2 if method == "hedgehog" else 1
         for shape in cb.SHAPES:
             for nc in cb.NCS:
                 cell = cb.baseline_cell(method, shape, nc)
@@ -55,7 +58,7 @@ def verify(state_tol=0.12):
                 tag = f"{method}/{shape}/nc{nc}"
                 try:
                     m = _instantiate(kc)
-                    rs, dims = _realized(method, m, fm)
+                    rs, dims = _realized(method, m)
                 except Exception as e:                       # build failure is itself a finding
                     bad.append((tag, f"build error {type(e).__name__}: {e}")); continue
                 kw = kc["kwargs"]

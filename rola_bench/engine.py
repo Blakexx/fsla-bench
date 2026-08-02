@@ -105,6 +105,16 @@ _SYMBOLS: dict[str, str] = {
 
     # --- routing vocabulary + the canonical CPU/fp64 references the gates check against ---
     "resolve_b_spec": "ops.rola.routing.topology",
+    # The engine's own structural CAPS on the routing tree. rola-bench reads them rather than
+    # re-declaring them, so a preset that cannot be built at a rung says so with the engine's number
+    # (mqar.instances.PresetRungUnavailable) instead of failing deep inside `resolve_b_spec`.
+    "MAX_ROUTING_DEPTH": "ops.rola.routing.topology",
+    "MAX_BRANCH_WIDTH": "ops.rola.routing.topology",
+    # The (BC, d_v) the CUDA consumer INSTANTIATES. Private to the engine by name, but it is a
+    # hard buildability constraint on any EVAL-mode cell, so the benches read it rather than
+    # rediscovering it as a NotImplementedError on a rented box.
+    "_SUPPORTED_BC": "ops.rola.routing.schedule_v3",
+    "_SUPPORTED_DV": "ops.rola.routing.schedule_v3",
     "ResolvedRouting": "ops.rola.routing.types",
     "IndependentRouting": "ops.rola.routing.types",
     "UnionRouting": "ops.rola.routing.types",

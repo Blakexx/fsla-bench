@@ -1,34 +1,55 @@
-# Canonical MQAR matched-state grid — every method on one accuracy-vs-state plot, each scaling
-# along its own natural axis. Tier-ordered (strongest competition first). Port of the former
-# canonical_mqar_grid.py; expanded by rola_bench.mqar.build_configs. GRID_TIERS selects tiers.
+# CANONICAL MQAR MATCHED-STATE GRID — every method on one accuracy-vs-REALIZED-STATE plot, each
+# scaling along its own natural axis, on the LITERATURE-STANDARD `ext` data protocol.
+# RE-PINNED 2026-08-02 (Phase 1.5) onto the V3 preset registry and the contender ladder.
+#
+#   launch.py mqar canonical
+#
+# RELATIONSHIP TO law_grid.yaml: this spec is the literature-protocol comparison point, not the law
+# test. It holds the `ext` preset fixed — the same train-short/test-long ladder the MQAR baselines
+# were published on — so its rows are directly comparable to prior work. It CANNOT test the capacity
+# boundary, because `ext` bakes L in and ties item count to sequence length; that is exactly what
+# law_grid.yaml exists for. Keeping both is deliberate: one is comparable, one is unconfounded.
+#
+# WHAT THE RE-PIN CHANGED, and why every pre-V3 row here is superseded rather than extended:
+#   * the routed arms named `rola-rla-kappa-asym` / `rola-gla-scalar-sym` / `rola-gla-kappa-asym`,
+#     all three defined by knobs V3 deleted (state_norm='kappa', kernel='gla_scalar'). Retired by
+#     name in `mqar.instances.RETIRED_INSTANCES`; replaced by the three canonical wirings plus the
+#     D1 dense control.
+#   * `d_qk: 12` on every arm line. There is no d_qk in V3; a state is [N, d_v].
+#   * the matched-state reference `REF(nc) = 624*nc` was written in d_qk and over-sized every
+#     baseline by 12x at the same rung. `st` in each run_id is now the REALIZED content-state
+#     readback (`rola_bench.mqar.realized_state`), so the x-axis of this plot MOVED.
+#   * `hedgehog`, `based` and the SSE ladder left the contender set (one occupant per
+#     transition-structure rung; no routing-family reimplementations).
+#   * single seed -> three seeds.
+# Consequence: no row produced by this file before 2026-08-02 shares an x-coordinate, an arm set, or
+# a seed policy with a row produced after it. They are different experiments and must not be pooled.
 project_name: canonical-mqar-grid
-backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 1024}
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 4096}
 data:     {preset: ext, train_batch: 128, test_batch: 8, cache_dir: /tmp/zoology_cache_rwext}
 train:
   max_epochs: 40
   weight_decay: 0.0
-  seed: 1337
+  seeds: [0, 1, 2]                       # >= 3 seeds (build_configs.MIN_SEEDS)
   early_stopping_threshold: 2.0          # never triggers — want full training
   early_stopping_metric: valid/accuracy
-  slice_keys: [num_kv_pairs]
+  slice_keys: [num_kv_pairs, input_seq_len]
   eval_every: 10
 lrs: [0.0003, 0.001, 0.003, 0.01, 0.03]  # canonical 5-LR grid (3e-4 .. 3e-2)
 ncs: [2, 4, 8, 16, 32, 64, 128, 256]
 tiers:
-  # T1: routed RoLA ladders + same-kernel wide-RLA control
-  "12":
-    - {build: routed, instance: rola-rla-kappa-asym, tag: rla, d_qk: 12, d_v: 12, n_heads: 4}
-    - {build: routed, instance: rola-gla-scalar-sym, tag: gla, d_qk: 12, d_v: 12, n_heads: 4}        # unnormalized (v1)
-    - {build: routed, instance: rola-gla-kappa-asym, tag: glakappa, d_qk: 12, d_v: 12, n_heads: 4}   # normalized (paper)
-    - {build: baselines, methods: [rla], shapes: [wide]}
-    # T2: Based + SSE (nearest prior method) + RLA square/heads
-    - {build: baselines, methods: [based], shapes: [wide]}
-    - {build: sse_ladder}
-    - {build: baselines, methods: [rla], shapes: [square, heads]}
-  # T3: Hedgehog + GLA monoliths;  T4: GDN + MHA oracle
-  "34":
-    - {build: baselines, methods: [hedgehog, gla], shapes: [wide, square, heads]}
-    - {build: baselines, methods: [gdn], shapes: [wide, square, heads]}
-    - {build: attn}
+  # T1 — the RoLA slate: three canonical wirings + the D1 dense (map-family) control.
+  "rola":
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1}
+    - {build: routed, instance: rola-arm2-union,                tag: arm2}
+    - {build: routed, instance: rola-arm3-levelsplit,           tag: arm3}
+    - {build: routed, instance: rola-d1-dense,                  tag: d1}
+  # T2 — the contender ladder, all three shapes (this is the shape-robustness plot).
+  "contenders":
+    - {build: baselines, methods: [rla, gla, gdn], shapes: [wide, square, heads]}
+  # T3 — the attention oracle, plus its d_qk ladder (the exchange-rate row: attention's capacity
+  # dimension is the per-head key width, and d_qk = d_model // num_heads for zoology's MHA).
+  "attn":
+    - {build: attn, head_dims: [2, 4, 8, 16, 32]}
 fleet:                                   # launch knobs (rola_bench.jobs.make_job)
-  env: {GRID_TIERS: "12"}                # which tiers a box runs; manager queue matches
+  env: {GRID_TIERS: "rola"}              # which tier a box runs; manager queue matches

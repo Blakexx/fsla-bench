@@ -21,10 +21,18 @@ import torch
 
 
 def family_of(cfg):
-    """(family_key, num_chunks) for a cell. Family = the non-base_conv mixer (recursing into Hybrid),
-    keyed by the fields that select distinct code paths: the mixer name + (for RoLA) the inner
-    kernel / feature-map / state-norm. Splitting on these is what makes routed-rla vs routed-gla vs
-    the norm variants each get exercised, instead of collapsing into one RoLA family."""
+    """(family_key, N) for a cell. Family = the non-base_conv mixer (recursing into Hybrid), keyed by
+    the fields that select distinct CODE PATHS.
+
+    RE-KEYED 2026-08-02 (Phase 1.6). The pre-V3 key was `(name, kernel, phi, kernel_kwargs.
+    state_norm)` and `num_chunks` — four fields of which three no longer exist on any config this
+    repo emits, so every routed cell would have collapsed into ONE family `(name, None, None, None)`
+    and the gate would have exercised a single RoLA path while reporting full coverage.
+
+    The V3 key is `(name, decay, state_norm, routing signature)`, where the routing signature is the
+    per-level `(tied, read, write, alpha)` tuple list — that IS the structural axis that selects
+    between `IndependentRouting` and `UnionRouting` and between the entmax orders, i.e. the thing
+    that makes ARM 1, ARM 2, ARM 3 and the D1 control four distinct kernel paths rather than one."""
     sm = cfg.model.sequence_mixer
     kw = sm.kwargs or {}
     main, mk = {"name": sm.name}, kw
@@ -36,15 +44,31 @@ def family_of(cfg):
             if nm and "base_conv" not in nm:
                 main, mk = {"name": nm}, ik
                 break
-    kk = mk.get("kernel_kwargs") or {}
-    key = (main["name"], mk.get("kernel"), mk.get("phi"), kk.get("state_norm"))
-    return key, mk.get("num_chunks", 1)
+    rows = mk.get("level_routing_configs") or []
+    signature = tuple(
+        (r.get("tied"), r.get("read"), r.get("write"), r.get("alpha")) if isinstance(r, dict)
+        else (r.tied, r.read, r.write, r.alpha)
+        for r in (rows if isinstance(rows, (list, tuple)) else [rows]))
+    key = (main["name"], mk.get("decay"), mk.get("state_norm"), signature)
+    levels = mk.get("states_per_level")
+    if isinstance(levels, (list, tuple)):
+        N = 1
+        for b in levels:
+            N *= int(b)
+    elif levels is None:
+        N = 1
+    else:
+        N = int(levels) ** int(mk.get("levels_per_head", 1))
+    return key, N
 
 
 def main():
-    from rola_bench.mqar.experiments import canonical_mqar_grid as g
+    # The SAME work-list the dispatcher launches, so this gate cannot drift from it.
+    # (Was `experiments.canonical_mqar_grid`, a module deleted when the specs became YAML.)
+    from rola_bench.mqar.run_rla_sweep import load_configs
+    g_configs, _ = load_configs(os.environ.get("CI_CELL_CONFIG", "canonical"))
     fams = {}
-    for c in g.configs:
+    for c in g_configs:
         key, nc = family_of(c)
         size = c.model.d_model * (nc or 1)
         if key not in fams or size < fams[key][0]:
@@ -54,7 +78,7 @@ def main():
     print(f"cell families: {len(fams)} | device: {dev}")
     bad, skipped = [], []
     for key, (_, c) in sorted(fams.items(), key=lambda x: str(x[0])):
-        label = f"{key[0]} kernel={key[1]} phi={key[2]} norm={key[3]}"
+        label = f"{key[0]} decay={key[1]} norm={key[2]} routing={key[3]}"
         try:
             sm = c.model.sequence_mixer
             d_model = c.model.d_model

@@ -1,10 +1,24 @@
 """Clean-room canonical baselines for the MQAR matched-state comparison.
 
-Every baseline is the method's OWN published implementation, sharing ZERO code with
-RoLA: RLA and Hedgehog are FLA's `LinearAttention` (feature_map 'elu'/'hedgehog'),
-GLA is zoology's `GatedLinearAttention`, GDN is zoology's `GatedDeltaNet`, Based is
-zoology's `Based` (the Based paper's own MQAR mixer). No routing, no virtual heads,
-no shared feature-map or normalization scaffold.
+**THE CONTENDER LADDER (ruling, 2026-08-02).** The baseline set is the TAXONOMY LADDER — one
+canonical occupant per TRANSITION-STRUCTURE rung, and nothing else:
+
+  | rung | transition structure `S_t = f(S_{t-1}, k_t, v_t)` | occupant |
+  |---|---|---|
+  | vanilla linear attention | `S + k v^T` (no forgetting)             | `rla`  (FLA `LinearAttention`, elu feature map, normalized readout) |
+  | gated linear attention   | `diag(g) S + k v^T` (elementwise decay) | `gla`  (zoology `GatedLinearAttention`) |
+  | gated delta rule         | `g(I - b k k^T) S + b k v^T` (state-dependent erasure) | `gdn` (FLA `GatedDeltaNet`) |
+  | attention                | unbounded KV cache                      | `attn` (the MHA oracle, in `build_configs`) |
+
+RETIRED from the ladder, with reasons (`RETIRED_METHODS`): `hedgehog` and `based` occupy the
+vanilla-LA rung ALREADY held by `rla` — they differ only in the feature map phi, which is a
+map-family axis, not a transition-structure rung, and RoLA's own map-family control is the D1-dense
+preset (`mqar.instances.rola-d1-dense`). `sse_ladder` is a ROUTING-family reimplementation and the
+ruling excludes those outright: a second routed method is not a baseline for the routed method, it
+is an unratified competitor implementation whose cells nobody here can defend.
+
+Every surviving baseline is the method's OWN published implementation, sharing ZERO code with RoLA.
+No routing, no virtual heads, no shared feature-map or normalization scaffold.
 
 Conv policy (option A, the literature-standard MQAR form): mixer-internal short conv
 is OFF. The harness wraps every model as Hybrid([BaseConv, mixer]) over 2 layers, so
@@ -14,9 +28,17 @@ papers (zoology's own GLA defaults use_short_conv=False for exactly this reason)
 Method-defining non-conv defaults (GLA output gate, GDN gate, Based taylor map, norms)
 are kept.
 
-Matched state: reference recurrent floats S(nc) = 624*nc, the RoLA-RLA cell at
-d_qk=d_v=12, H=4 with its (d_v+1) normalizer column. Baselines spend the same total
-recurrent floats on content (d_k*d_v), three ways, in their own parameterization:
+**Matched state, RE-DERIVED 2026-08-02 (Phase 1.2).** `REF(nc)` is the RoLA CONTENT state at the
+pinned MQAR geometry, read from `rola_bench.mqar.instances.content_state_floats` — `H*N*d_v` with
+`H=4, d_v=64`, i.e. `256*nc`. The previous `REF(nc) = 624*nc` was written in the DELETED dimension
+(`624 = H*d_qk*(d_v+1)` at `d_qk=d_v=12`): a V3 RoLA state is `[N, d_v]`, so that reference
+over-sized every baseline by a factor of `d_qk = 12` at the same nc. This is finding F1's error on
+the MQAR tier, and it invalidates the matched-state x-coordinate of every pre-V3 row in
+`results/mqar/` (see `mqar-retrospective.md`). The denominator sidecar (`H*N` under
+`state_norm='global'`) is reported as separate overhead, never on the matched axis (#126).
+
+Baselines spend the same total recurrent floats on content (d_k*d_v), three ways, in their own
+parameterization:
   wide   = widen key/feature dim, d_v held ~12, H=4
   square = key dim = value dim, H=4
   heads  = base d_qk=d_v=12, scale head count
@@ -26,13 +48,25 @@ state (not the nominal target) is the matched-state x-coordinate in the table.
 """
 import math
 
-DV = 12
+from rola_bench.mqar.instances import MQAR_GEOM, content_state_floats
+
+#: The HELD value width for the `wide` and `heads` shapes. Pinned to RoLA's own `d_v` at the MQAR
+#: geometry so "wide" means "same value width as RoLA, wider keys" rather than "a different value
+#: width AND wider keys" — one axis moves per shape, which is what makes the shape family readable.
+DV = MQAR_GEOM["d_v"]
 DMODEL = 128
-BASE_H = 4
-# REF includes the (d_v+1) denominator column: content 576*nc + den 48*nc. It is baked into MQAR
-# run_ids, so it stays. For any CROSS-benchmark plot use the shared convention in rola_bench.state
-# (content_state / mqar_ref_to_content) — den is reported as separate overhead, not on the axis (#126).
-REF = lambda nc: 624 * nc
+#: Realized head-count cap for the `heads` shape. This is an ACTIVATION-memory bound, not a taste
+#: threshold: baseline activations scale as H*L*B and the grid runs at train_batch 128, where H
+#: beyond ~64 does not fit on a 24 GB box. Expressed on the realized head count (the thing that
+#: actually costs), never on `nc` (which no longer determines it after the REF re-derivation).
+MAX_BASELINE_HEADS = 64
+#: FLA's GatedDeltaNet kernel caps `head_dim`; a cell above it is a kernel refusal, not a run failure.
+MAX_GDN_HEAD_DIM = 256
+BASE_H = MQAR_GEOM["n_heads"]
+#: The matched-state reference: RoLA's CONTENT recurrent floats at the pinned MQAR geometry.
+#: Derived from `instances.MQAR_GEOM`, never a literal — a geometry re-pin moves the baselines with
+#: it, which is the property the pre-V3 `624*nc` constant did not have. `st` in every run_id.
+REF = lambda nc: int(content_state_floats(nc))
 
 
 def _gla(d_k_total, d_v_total, num_heads):
@@ -66,74 +100,74 @@ def _gdn(head_dim, num_heads, dv_head):
                             expand_v=dv_head / head_dim, use_short_conv=False))
 
 
-def _based(feature_dim, num_heads=1, train_view="quadratic"):
-    # Canonical Based-paper MQAR config (arxiv24_based_figure2): single head
-    # (num_heads = num_key_value_heads = 1), taylor_exp feature map, quadratic train view.
-    # feature_dim is the sole state knob. num_key_value_heads must equal num_heads (head_dim =
-    # d_model//kv_heads drives the value reshape); num_heads must divide d_model=128.
-    return dict(name="zoology.mixers.based.Based",
-                kwargs=dict(feature_dim=feature_dim, num_heads=num_heads,
-                            num_key_value_heads=num_heads, train_view=train_view,
-                            feature_name="taylor_exp", use_short_conv=False))
-
-
 def baseline_cell(method, shape, nc):
     """(kernel_dict, target_state) for a canonical baseline cell, or None if (method, shape)
-    is not well-defined. Dims solved to the nominal target; realized state is verified."""
+    is not well-defined or is structurally out of reach. Dims are solved to the nominal target
+    `REF(nc)`; the realized state is read back and verified by the companion verifier.
+
+    A `None` return is NEVER a run failure. It is one of two things, and both are reportable
+    columns rather than missing data: an UNDEFINED cell (the method has no such shape) or a
+    STRUCTURAL EXIT (the method's own kernel/memory bound is reached at this rung — GDN's
+    `head_dim` cap, the `heads` shape's activation bound). `build_configs` logs every omission.
+    """
+    if method in RETIRED_METHODS:
+        raise ValueError(f"MQAR baseline method {method!r} is RETIRED: {RETIRED_METHODS[method]}")
     S = REF(nc)
     H = BASE_H
-    if method in ("rla", "hedgehog"):
-        fmap = "elu" if method == "rla" else "hedgehog"
-        fm = 2 if method == "hedgehog" else 1            # hedgehog softmax([x,-x]) doubles feat dim
-        if shape == "wide":                              # H*fm*dk_head*DV = S
-            dk = max(1, round(S / (H * DV * fm)));        return _lin(fmap, dk * H, DV * H, H), S
-        if shape == "square":                            # H*fm*d*d = S
-            d = max(1, round(math.sqrt(S / (H * fm))));   return _lin(fmap, d * H, d * H, H), S
-        if shape == "heads":                             # h*fm*DV*DV = S; head-scaling OOMs (act ~ H*L*B)
-            if nc > 32: return None                       # H>~140 infeasible at batch 128 on 24GB
-            h = max(1, round(S / (DV * DV * fm)));        return _lin(fmap, DV * h, DV * h, h), S
-    if method == "gla":
+    if method == "rla":                                   # vanilla LA rung, elu feature map
+        if shape == "wide":                               # H*dk_head*DV = S
+            dk = max(1, round(S / (H * DV)));             return _lin("elu", dk * H, DV * H, H), S
+        if shape == "square":                             # H*d*d = S
+            d = max(1, round(math.sqrt(S / H)));          return _lin("elu", d * H, d * H, H), S
+        if shape == "heads":                              # h*DV*DV = S
+            h = max(1, round(S / (DV * DV)))
+            return (None if h > MAX_BASELINE_HEADS else (_lin("elu", DV * h, DV * h, h), S))
+    if method == "gla":                                   # gated LA rung
         if shape == "wide":
-            dk = max(1, round(S / (H * DV)));            return _gla(dk * H, DV * H, H), S
+            dk = max(1, round(S / (H * DV)));             return _gla(dk * H, DV * H, H), S
         if shape == "square":
-            d = max(1, round(math.sqrt(S / H)));         return _gla(d * H, d * H, H), S
+            d = max(1, round(math.sqrt(S / H)));          return _gla(d * H, d * H, H), S
         if shape == "heads":
-            if nc > 32: return None                       # head-scaling OOMs beyond H~140 at batch 128
-            h = max(1, round(S / (DV * DV)));            return _gla(DV * h, DV * h, h), S
-    if method == "gdn":
-        # FLA GatedDeltaNet, head_dim widens KEYS (recall axis), d_v held via expand_v.
-        # head_dim kernel-capped at 256, so wide tops out ~nc<=19; square/heads run full.
-        if shape == "wide":                               # H*head_dim*DV = S, d_v=12 held
+            h = max(1, round(S / (DV * DV)))
+            return (None if h > MAX_BASELINE_HEADS else (_gla(DV * h, DV * h, h), S))
+    if method == "gdn":                                   # gated delta-rule rung
+        # FLA GatedDeltaNet, head_dim widens KEYS (the recall axis), d_v held via expand_v.
+        if shape == "wide":                               # H*head_dim*DV = S, d_v=DV held
             hd = max(1, round(S / (H * DV)))
-            return (None if hd > 256 else (_gdn(hd, H, DV), S))
+            return (None if hd > MAX_GDN_HEAD_DIM else (_gdn(hd, H, DV), S))
         if shape == "square":                             # H*d*d = S, head_dim=d_v=d
             d = max(1, round(math.sqrt(S / H)))
-            return (None if d > 256 else (_gdn(d, H, d), S))
+            return (None if d > MAX_GDN_HEAD_DIM else (_gdn(d, H, d), S))
         if shape == "heads":                              # h*DV*DV = S, head_dim=DV
-            if nc > 32: return None                       # head-scaling OOMs beyond H~140 at batch 128
-            h = max(1, round(S / (DV * DV)));            return _gdn(DV, h, DV), S
-    if method == "based":
-        # Canonical Based (num_heads = num_key_value_heads = 1). Recurrent state (based.py:230):
-        #   S = num_kv_heads*head_dim*feat + num_kv_heads*feat = (d_model + H)*feat   [H=1 -> 129*feat]
-        # where feat = TaylorExp.expanded_size = fd*(fd+1)/2 + fd + 1 (taylor.py:41) and
-        # head_dim = d_model/H = d_model. feature_dim (fd) is the sole state knob; the value dim is
-        # head_dim=d_model (single head sees the full model — Based has no independent small d_v).
-        # square/heads don't change Based's state -> undefined.
-        HB = 1
-        feat = lambda fd: fd * (fd + 1) / 2 + fd + 1
-        state = lambda fd: (DMODEL + HB) * feat(fd)
-        if shape == "wide":
-            tgt_feat = S / (DMODEL + HB)                  # invert feat(fd): fd = (-3+sqrt(1+8*feat))/2
-            d0 = max(2, int(round((-3 + math.sqrt(max(1.0, 1 + 8 * tgt_feat))) / 2)))
-            d = min((d0 - 1, d0, d0 + 1), key=lambda x: abs(state(max(2, x)) - S))
-            return _based(max(2, d), HB), S
-        return None                                       # square/heads not defined for Based
-    # GDN: delta-rule state = d_k*d_v with d_k bounded by d_model; at fixed d_model and held
-    # d_v it cannot scale (state pinned at d_model*d_v=1536). Omitted from the matched-state
-    # grid (architectural, not hobbling). See note; decision pending.
+            h = max(1, round(S / (DV * DV)))
+            return (None if h > MAX_BASELINE_HEADS else (_gdn(DV, h, DV), S))
     return None
 
 
-METHODS = ["rla", "hedgehog", "gla", "based", "gdn"]   # competition order
+#: THE CONTENDER LADDER, in taxonomy order (weakest transition structure first). One occupant per
+#: rung; `attn` is the fourth rung and is built by `build_configs.attn` (it has no state to match).
+METHODS = ["rla", "gla", "gdn"]
 SHAPES = ["wide", "square", "heads"]
 NCS = [2, 4, 8, 16, 32, 64, 128, 256]
+
+#: Retirement ledger for the contender set (ruling 2026-08-02: one occupant per transition-structure
+#: rung; no routing-family reimplementations). `baseline_cell` refuses these by name so a stale spec
+#: fails loudly instead of quietly running a different comparison.
+RETIRED_METHODS: dict[str, str] = {
+    "hedgehog":
+        "occupies the VANILLA-LA rung, which `rla` already holds. It differs from `rla` only in the "
+        "feature map phi (softmax([x,-x]) vs elu) — a map-family axis, not a transition-structure "
+        "rung. RoLA's own map-family control is the D1-dense preset "
+        "(mqar.instances.'rola-d1-dense'), so the comparison the hedgehog arm was making is now made "
+        "inside the RoLA family at matched geometry.",
+    "based":
+        "also the vanilla-LA rung (taylor_exp feature map), and additionally it has no independent "
+        "value width — its single head sees the full d_model, so `square`/`heads` were undefined and "
+        "its state ladder was never shape-matched to the others. Retired for the same rung-collision "
+        "reason as hedgehog.",
+    "sse":
+        "a ROUTING-family method. The ruling excludes routing-family reimplementations from the "
+        "baseline set outright: a second routed method is not a control for the routed method under "
+        "test, and its cells would be an unratified third-party implementation this repo cannot "
+        "defend at publication. The `sse_ladder` arm builder retires with it.",
+}

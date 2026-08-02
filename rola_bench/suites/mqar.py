@@ -1,19 +1,24 @@
-"""MQAR suite entry point.
+"""MQAR suite entry point — the construct-gate + a thin smoke driver, not a second sweep engine.
 
-Pinned configs = the 13 named `rola_instance()` presets (`rola_bench.mqar.instances.ROLA_INSTANCES`,
-the LOCKED zoo — numbers/semantics unchanged by the #config-refactor, only the construction-boundary
-kwargs were translated, see `zoology.mixers.rola.RoLAMixer` / `rola_bench.rola_compat`) crossed with
-the three routing topologies {flat, square, tree}, PLUS the new pinned flagship named configs
-(`rola_bench.named_configs`) in their MQAR (conv-free) form, including the base, symmetric-coarse,
-and union-split ablations. Unsupported production capabilities fail loudly rather than changing a
-cell's topology or semantics.
+Pinned cells, REBUILT 2026-08-02 (Phase 1.6):
 
-Real runs go through the existing fleet machinery (`rola_bench/mqar/run_rla_sweep.py`,
-`rola_bench/mqar/job.py`) and land in the MQAR results tree / zoology run ids — this entry point is
-the construct-gate + a thin driver, not a second sweep engine.
+  * the PRESET cells — `rola_bench.mqar.instances.ROLA_INSTANCES`, the V3 registry: the three
+    canonical wirings (dense-read/sparse-write, union, level split), the D1 DENSE CONTROL, and the
+    variants a grid axis demands (the alpha-2 write split; the tied spellings for the
+    coupling-independence cells). The pre-V3 zoo of 13 presets x {flat,square,tree} is gone: those
+    presets were keyed on `d_qk`, `kernel='gla_scalar'` and `state_norm in {'kappa','per_state'}`,
+    all deleted by V3, and each retires by name in `instances.RETIRED_INSTANCES`. Topology is no
+    longer a separate cross — it is part of the preset's own wiring (D=1 for the control, D=2 for
+    the wirings), which is what makes the wirings comparable at matched N.
+
+  * the NAMED cells — `rola_bench.named_configs.MQAR_SUITE_CONFIGS` in their MQAR (conv-free) form,
+    constructed through the migrated `zoology.mixers.rola.RoLAMixer`.
+
+Real runs go through the fleet machinery (`rola_bench/mqar/run_rla_sweep.py`, `rola_bench/mqar/
+job.py`) and the `experiments/*.yaml` specs.
 
     python -m rola_bench.suites.mqar --smoke      # construct every pinned config, one tiny fwd+bwd
-    python -m rola_bench.suites.mqar --list        # print the pinned config table (name, cell schema)
+    python -m rola_bench.suites.mqar --list       # print the pinned config table
 """
 from __future__ import annotations
 
@@ -22,15 +27,20 @@ import json
 import sys
 
 SEEDS = (0, 1, 2)          # MQAR seed convention (matches rola_bench.mqar.experiments.seed_confirm)
-ROUTINGS = ("flat", "square", "tree")
+#: Head geometry for the NAMED cells' smoke construction. `named_configs` pins routing, topology,
+#: decay and normalization; `head_v_dim`/`num_heads` are a caller geometry and are stated here.
+NAMED_SMOKE_HEADS, NAMED_SMOKE_DV = 8, 64
 
 
 def pinned_cells():
-    """Yield {name, routing, d_qk, d_v, num_chunks, n_heads} for every LOCKED preset x topology."""
+    """Yield {name, nc, n_heads, d_v} for every preset in the V3 registry.
+
+    `nc=16` is a smoke rung, not a published one: it is the smallest state count that factorizes for
+    every preset in the registry (D=1 -> b=[16]; D=2 -> b=[4,4]). The published rungs are the `ncs`
+    ladders in `mqar/experiments/*.yaml`."""
     from rola_bench.mqar.instances import ROLA_INSTANCES
     for name in ROLA_INSTANCES:
-        for routing in ROUTINGS:
-            yield dict(name=name, routing=routing, d_qk=16, d_v=16, num_chunks=16, n_heads=2)
+        yield dict(name=name, nc=16, n_heads=2, d_v=16)
 
 
 def named_cells():
@@ -43,29 +53,28 @@ def named_cells():
 def _construct_pinned(cell, dev="cuda"):
     from rola_bench.mqar.instances import rola_instance
     from zoology.mixers.rola import RoLAMixer
-    kw = rola_instance(cell["name"], d_qk=cell["d_qk"], d_v=cell["d_v"], num_chunks=cell["num_chunks"],
-                       n_heads=cell["n_heads"], routing=cell["routing"])
+    kw = rola_instance(cell["name"], cell["nc"], n_heads=cell["n_heads"], d_v=cell["d_v"])
     d_model = cell["n_heads"] * cell["d_v"]
     return RoLAMixer(d_model=d_model, layer_idx=0, **kw).to(dev)
 
 
 def _construct_named(cell, dev="cuda"):
-    """MQAR (conv-free) form of a named flagship config via the level-routing passthrough.
+    """MQAR (conv-free) form of a named flagship config, through the migrated mixer.
 
-    BLOCKED on a zoology-side migration (campaign-prereqs E1, 2026-08-01). `named_configs` now
-    speaks the V3 layer surface (`decay`, no `head_k_dim`/`d_qk`/`qk_norm`), but
-    `zoology.mixers.rola.RoLAMixer` (zoology @ efe1a0b) still takes a REQUIRED `d_qk` and forwards
-    `head_k_dim=d_qk`, `kernel=...`, `qk_norm=...` into `fla_rola.layers.RoLA` — the pre-V3 Q/K
-    surface the mainline engine deleted. There is no translation that preserves the cell: `d_qk` has
-    no V3 meaning at all. Refusing loudly here rather than silently constructing a different cell
-    against a stale engine.
+    UNBLOCKED 2026-08-02 (Phase 1.6). `named_configs.NAMED_CONFIGS[...].build_kwargs` emits V3 layer
+    kwargs and `RoLAMixer` forwards them verbatim (aliasing only the three zoology names), so this
+    is the same layer `named_configs.construct()` builds. Convs are forced OFF regardless of the
+    registry's default: short convs confound short-offset recall in MQAR, which is the whole task.
     """
-    raise NotImplementedError(
-        "MQAR named-config construction is blocked on migrating zoology.mixers.rola.RoLAMixer to "
-        "the V3 layer surface (it still requires d_qk and passes head_k_dim/kernel/qk_norm into "
-        "fla_rola.layers.RoLA, none of which exist on the mainline V3 layer). See "
-        "workflows/20260801-campaign-prereqs/prereqs.md E1. Layer-level construction of the same "
-        "named configs is gated by rola_bench/test_named_config_construction.py.")
+    from rola_bench.named_configs import NAMED_CONFIGS, RETIRED_CONFIGS
+    from zoology.mixers.rola import RoLAMixer
+    name = cell["name"]
+    if name in RETIRED_CONFIGS:
+        raise ValueError(f"named config {name!r} is RETIRED: {RETIRED_CONFIGS[name]}")
+    kwargs = NAMED_CONFIGS[name].build_kwargs(cell["nc"], False)     # conv OFF, MQAR form
+    mixer = RoLAMixer(d_model=NAMED_SMOKE_HEADS * NAMED_SMOKE_DV, layer_idx=0,
+                      n_heads=NAMED_SMOKE_HEADS, d_v=NAMED_SMOKE_DV, **kwargs).to(dev)
+    return mixer, name
 
 
 def run_smoke():
@@ -80,14 +89,14 @@ def run_smoke():
             x = torch.randn(1, 4, cell["n_heads"] * cell["d_v"], device="cuda")
             with torch.no_grad():
                 o = m(x)
-            print(f"OK  pinned {cell['name']:24s} {cell['routing']:7s} -> {tuple(o.shape)}")
+            print(f"OK  pinned {cell['name']:32s} nc={cell['nc']:<4d} -> {tuple(o.shape)}")
         except Exception as e:
             ok = False
-            print(f"FAIL pinned {cell['name']:24s} {cell['routing']:7s} -> {type(e).__name__}: {e}")
+            print(f"FAIL pinned {cell['name']:32s} nc={cell['nc']:<4d} -> {type(e).__name__}: {e}")
     for cell in named_cells():
         try:
             m, used = _construct_named(cell)
-            x = torch.randn(1, 4, 8 * 64, device="cuda")
+            x = torch.randn(1, 4, NAMED_SMOKE_HEADS * NAMED_SMOKE_DV, device="cuda")
             with torch.no_grad():
                 o = m(x)
             print(f"OK  named  {cell['name']:24s} -> {tuple(o.shape)}")

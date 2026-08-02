@@ -23,11 +23,35 @@ PYTHON = sys.executable
 _EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "experiments")
 
 
+#: RETIRED experiment specs (Phase 1.5, 2026-08-02). A spec whose AXIS was deleted by the V3
+#: architecture cannot be re-pinned — re-pointing it at a live knob would publish a different
+#: experiment under a name that already has result rows attached to it. Same contract as
+#: `named_configs.RETIRED_CONFIGS` and `instances.RETIRED_INSTANCES`: refuse by name, with the reason.
+RETIRED_SPECS = {
+    "qknorm_ablation":
+        "its ENTIRE axis was `qk_norm=True` vs False. V3 deleted the Q/K surface (ROLA_V3_SPEC.md "
+        "§1.2) — there is no q_norm/k_norm module on the layer, so the ablation has no subject. No "
+        "successor: the question does not exist in the V3 architecture.",
+    "normsym":
+        "swept 3 normalizations (global / per_state / kappa) x tied/untied. Two of the three "
+        "normalizations are retired vocabulary (campaign-prereqs E2: the live set is {'raw', "
+        "'global'}, and kappa's motivation dissolved with "
+        "[[rola-self-normalizing-dead-leaves-inert]]), so the surviving 1x2 cell is not a norm "
+        "sweep. SUCCESSOR: the tied/untied half lives on as the coupling-independence presets "
+        "'rola-arm1-tied' / 'rola-d1-dense-tied' (mqar.instances), runnable inside law_grid.yaml; "
+        "the normalization half is a registry axis on the layer path "
+        "(named_configs 'RoLA-base-rla-raw' / 'RoLA-base-levelsplit-raw') and is not yet an MQAR "
+        "spec — recorded as an open gap, not silently dropped.",
+}
+
+
 def load_configs(name):
     """Load (configs, configs_envs) for an experiment. `name` is a declarative spec — a basename
     resolving to experiments/<name>.yaml (or a path), expanded by the generic generator
     (rola_bench.mqar.build_configs). A bare name with no matching .yaml falls back to importing a
     legacy experiment module (back-compat)."""
+    if name in RETIRED_SPECS:
+        raise ValueError(f"MQAR spec {name!r} is RETIRED: {RETIRED_SPECS[name]}")
     spec = name if name.endswith((".yaml", ".yml")) else os.path.join(_EXP_DIR, f"{name}.yaml")
     if os.path.exists(spec):
         from rola_bench.mqar.build_configs import build_configs, load_spec
@@ -39,6 +63,21 @@ def load_configs(name):
 def load_configs_and_envs():
     """Shard-runner entry point. Uses RLA_CONFIG env var (default: the canonical spec)."""
     return load_configs(os.environ.get('RLA_CONFIG', 'canonical'))
+
+
+
+_JSON_DECODER = json.JSONDecoder()
+
+
+def _decode_json_at(text, start):
+    r"""Decode ONE JSON object beginning at `text[start]`, however deeply it nests.
+
+    Replaces `r'TAG (\{.*?\})'`. The non-greedy regex stopped at the FIRST `}`, so it silently
+    truncated any record containing a nested object — which is every RoLA record since the mixer's
+    provenance grew a `config` block with a `level_routing_configs` list of dicts. The symptom was a
+    parse warning and `state_floats = None` on every routed row, i.e. the capacity coordinate
+    missing from exactly the arms the grid is about."""
+    return _JSON_DECODER.raw_decode(text, start)[0]
 
 
 def parse_stdout(stdout):
@@ -98,9 +137,9 @@ def parse_stdout(stdout):
     # num_chunks × per_entry from each. For state-axis we use the per-layer
     # state (all kernel layers are identical), so just take the first.
     state_records = []
-    for m in re.finditer(r'STATE_FLOATS_JSON (\{.*?\})', stdout):
+    for m in re.finditer(r'STATE_FLOATS_JSON ', stdout):
         try:
-            state_records.append(json.loads(m.group(1)))
+            state_records.append(_decode_json_at(stdout, m.end()))
         except Exception as e:
             print(f"WARN: STATE_FLOATS_JSON parse failed: {e}", flush=True)
     state_floats = state_records[0]['state_floats'] if state_records else None
@@ -112,10 +151,10 @@ def parse_stdout(stdout):
     # MODEL_STATS_JSON line emitted by zoology/logger.py.
     n_params = None
     model_state_total = None
-    m = re.search(r'MODEL_STATS_JSON (\{.*?\})', stdout)
+    m = re.search(r'MODEL_STATS_JSON ', stdout)
     if m:
         try:
-            ms = json.loads(m.group(1))
+            ms = _decode_json_at(stdout, m.end())
             n_params = ms.get('num_parameters')
             model_state_total = ms.get('state_size')
         except Exception as e:

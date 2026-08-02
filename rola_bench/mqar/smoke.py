@@ -20,8 +20,11 @@ def main():
     from rola_bench.engine import RoLA
     torch.manual_seed(0)
     dev = "cuda"
-    # states_per_head=4 (flat) -> levels_per_head=1, states_per_level=4 (#config-refactor, rola_compat).
-    m = RoLA(hidden_size=64, head_k_dim=16, head_v_dim=16, levels_per_head=1, states_per_level=4,
+    # V3 surface (2026-08-02): `head_k_dim` is GONE — the layer owns no Q/K projection, and a state
+    # is [N, d_v]. This call carried it until today, which means the fleet boot gate would have
+    # TypeError'd on every box the moment the mainline engine was pinned. N = 4 via
+    # levels_per_head=1, states_per_level=4 (the D1 factorization).
+    m = RoLA(hidden_size=64, head_v_dim=16, levels_per_head=1, states_per_level=4,
              num_heads=2).to(dev)
     x = torch.randn(2, 64, 64, device=dev, requires_grad=True)
     o = m(x)

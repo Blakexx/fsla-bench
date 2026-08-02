@@ -20,6 +20,7 @@ retirement can never again leave a dangling arm name behind.
 import pytest
 
 from rola_bench import named_configs
+from rola_bench.perf import _common as C
 from rola_bench.perf import scaling
 
 
@@ -100,20 +101,57 @@ def test_arm_kinds_are_accepted_by_the_SCALE_ARMS_validator(monkeypatch):
     assert scaling._arm_kinds() == kinds
 
 
-# ---------------------------------------------------------------- the honest blocker
+# ---------------------------------------------------------------- construction (Phase 1.6)
+# These two tests replaced the "the builder is blocked" pair when the zoology mixer was migrated to
+# the V3 layer surface, DELIBERATELY: the old ones asserted a NotImplementedError and would have
+# gone on passing forever if the migration had never happened, so they named themselves as the
+# thing to rewrite. What they now assert is that the RoLA arms build the cell they claim.
+#
+# CPU-only. The builders move the module to `C.DEV`/`C.DT` (cuda/bf16), so the assertions run on the
+# same kwargs through the mixer directly; a GPU-only end-to-end build is the `--smoke` cell's job.
 
 @pytest.mark.parametrize("kind", list(scaling.named_rola_arm_kinds()))
-def test_build_is_blocked_loudly_on_the_zoology_mixer(kind):
-    """Construction is blocked, and it says so BY NAME rather than TypeError-ing inside the layer.
+def test_named_arm_builds_the_registry_cell(kind):
+    """The perf arm and the layer-path arm of one published name must be ONE cell."""
+    from zoology.mixers.rola import RoLAMixer
+    from rola_bench.named_configs import NAMED_CONFIGS
+    name, kwargs = scaling.resolve_named_arm(kind, nc=256)
+    assert kwargs == dict(NAMED_CONFIGS[name].build_kwargs(256, True))
+    mixer = RoLAMixer(d_model=scaling.DM, layer_idx=0, n_heads=C.H,
+                      d_v=scaling.PERF_NAMED_DV, **kwargs)
+    cfg = mixer.resolved_config()
+    assert cfg["N"] == 256 and cfg["head_v_dim"] == scaling.PERF_NAMED_DV
+    assert cfg["num_heads"] == C.H and cfg["hidden_size"] == scaling.DM
+    assert cfg["decay"] == kwargs["decay"] and cfg["state_norm"] == kwargs["state_norm"]
 
-    `zoology.mixers.rola.RoLAMixer` forwards `head_k_dim=d_qk`, `kernel=`, `phi=`, `qk_norm=` into
-    `fla_rola.layers.RoLA`; V3 deleted all four. When Phase 1.2 migrates the mixer, this test is
-    what must be rewritten into a real construction assertion — deliberately, not by accident.
-    """
-    with pytest.raises(NotImplementedError, match="zoology"):
-        scaling.build_rola_named(kind)
+
+@pytest.mark.parametrize("routing,nc,expect", [
+    ("flat", 256, [256]), ("square", 256, [16, 16]), ("tree", 256, [2] * 8)])
+def test_sweep_arm_topology_axis(routing, nc, expect):
+    """The (d, nc, routing) sweep arm's STRUCTURE axis. `d_qk` is gone from it — a V3 state is
+    [N, d_v] — and `gla` now selects `decay`, not the retired `kernel='gla_scalar'`."""
+    from zoology.mixers.rola import RoLAMixer
+    from rola_bench.rola_compat import level_routing_config_from_tie_routers, topology_from_legacy
+    from rola_bench.engine import MAX_ROUTING_DEPTH
+    D, b = topology_from_legacy(nc, routing)
+    if D > MAX_ROUTING_DEPTH:
+        pytest.skip(f"routing={routing!r} at nc={nc} needs depth {D} > engine cap {MAX_ROUTING_DEPTH}")
+    mixer = RoLAMixer(d_model=scaling.DM, layer_idx=0, n_heads=C.H, d_v=16,
+                      levels_per_head=D, states_per_level=b,
+                      level_routing_configs=[level_routing_config_from_tie_routers(False)] * D,
+                      decay="none", state_norm="global", router_bias=True,
+                      use_short_conv=False, gain_bias_init=None)
+    cfg = mixer.resolved_config()
+    assert cfg["states_per_level"] == expect and cfg["N"] == nc
+    assert cfg["decay"] == "none"
 
 
-def test_build_rola_sweep_arm_is_blocked_loudly():
-    with pytest.raises(NotImplementedError, match="zoology"):
-        scaling.build_rola(False, 256, 16, routing="flat")
+def test_sweep_arm_gla_flag_selects_the_leaf_mass_clock():
+    from zoology.mixers.rola import RoLAMixer
+    from rola_bench.rola_compat import level_routing_config_from_tie_routers
+    mixer = RoLAMixer(d_model=scaling.DM, layer_idx=0, n_heads=C.H, d_v=16,
+                      levels_per_head=2, states_per_level=16,
+                      level_routing_configs=[level_routing_config_from_tie_routers(False)] * 2,
+                      decay="leaf_mass", state_norm="global", router_bias=True,
+                      use_short_conv=False, gain_bias_init=None)
+    assert mixer.resolved_config()["decay"] == "leaf_mass"
