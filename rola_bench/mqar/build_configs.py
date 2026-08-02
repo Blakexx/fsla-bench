@@ -40,16 +40,21 @@ Spec schema (see experiments/*.yaml):
   lrs:  [..]                  # default LR sweep (an arm may override with its own `lrs`)
   ncs:  [..]                  # default state-rung ladder (an arm may override with `ncs`)
   seq_lens: [..]              # OPTIONAL train-length ladder; requires data.protocol. Crossed with ncs.
+  conditions: [{tag, <cue knob overrides>}, ...]
+                              # OPTIONAL cue-CONTRACT axis (requires data.protocol.kind:
+                              # cue_consistency). Crossed with everything; each condition is trained
+                              # separately. See `_conditions` and `common.make_cue_data`.
   tiers: {"<id>": [arm, ...]} # selected by the GRID_TIERS env (default all)
   arm kinds:
     {build: routed, instance, tag, n_heads?, d_v?, states_per_level?, state_norm?, decay?,
-     router_bias?, kwargs?, lrs?, ncs?, seq_lens?, run_id?}
-        run_id template vars: {tag} {nc} {st} {lr:.0e} {seed} {d_model} {L} {alpha_cap}
+     router_bias?, kwargs?, lrs?, ncs?, seq_lens?, conditions?, run_id?}
+        run_id template vars: {tag} {nc} {st} {lr:.0e} {seed} {d_model} {L} {alpha_cap} {cond}
         default: "grid-routed-{tag}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
     {build: baselines, methods: [..], shapes: [..]}
     {build: attn, head_dims: [..]?}
 """
 import os
+from itertools import product
 
 from zoology.config import TrainConfig, ModelConfig, ModuleConfig, LoggerConfig
 
@@ -74,9 +79,50 @@ RETIRED_BUILDERS = {
 }
 
 
-def _data_for(spec, bb, L):
+def _conditions(spec):
+    """The CUE-CONDITION axis: `[(tag, knobs), ...]`, or `[(None, {})]` when a spec declares none.
+
+    A condition is one setting of the cue-consistency knobs (`common.CUE_KNOBS`). It is a DATA axis
+    like `seq_lens`, crossed with everything else, and it exists because the paper's second boundary
+    (address agreement, Sec. 7.1 / Eq. (7)) is a property of the retrieval CONTRACT, which no
+    capacity axis can move.
+    """
+    conds = spec.get("conditions")
+    if not conds:
+        return [(None, {})]
+    out, seen = [], set()
+    for c in conds:
+        c = dict(c)
+        tag = c.pop("tag", None)
+        if not tag:
+            raise ValueError("every entry of `conditions:` needs a `tag:` — it is the only thing "
+                             "that separates the cells in the result rows.")
+        if tag in seen:
+            raise ValueError(f"duplicate condition tag {tag!r}; tags key the results.")
+        seen.add(tag)
+        out.append((tag, c))
+    return out
+
+
+def _data_for(spec, bb, L, knobs):
     """The DataConfig for train length `L` (or the spec's fixed preset when L is None)."""
     dat = spec["data"]
+    proto0 = dat.get("protocol") or {}
+    if proto0.get("kind") == "cue_consistency":
+        if L is None:
+            raise ValueError("the cue_consistency protocol makes L explicit; declare `seq_lens:`.")
+        merged = {k: v for k, v in proto0.items()
+                  if k not in ("kind", "train_examples", "test_examples", "test_seq_lens")}
+        merged.update(knobs)
+        return C.make_cue_data(
+            bb["vocab"], dat["train_batch"], dat["test_batch"], dat["cache_dir"],
+            train_seq_len=L, test_seq_lens=[int(x) for x in proto0["test_seq_lens"]],
+            train_examples=proto0["train_examples"], test_examples=proto0["test_examples"],
+            **merged)
+    if knobs:
+        raise ValueError(
+            f"spec declares cue conditions {sorted(knobs)} but its data protocol is not "
+            "`kind: cue_consistency`; the knobs would be silently ignored.")
     if L is None:
         if "preset" not in dat:
             raise ValueError(
@@ -138,17 +184,29 @@ def build_configs(spec):
     l_max = bb["l_max"]
     env = {"EVAL_EVERY_N": str(tr["eval_every"])} if tr.get("eval_every") else {}
 
+    conds = _conditions(spec)
+    if len(conds) > 1 or conds[0][0] is not None:
+        # With a condition axis every default run_id template becomes ambiguous. Refuse rather than
+        # emit colliding ids: two conditions writing one result row is indistinguishable from noise.
+        for tier in spec["tiers"].values():
+            for arm in tier:
+                rid = arm.get("run_id")
+                if rid is not None and "{cond}" not in rid:
+                    raise ValueError(
+                        f"spec declares a `conditions:` axis, so arm run_id {rid!r} must contain "
+                        "{cond} — otherwise every condition writes the same result row.")
+
     configs, envs = [], []
     _data_cache = {}
 
-    def data_for(L):
-        if L not in _data_cache:
-            _data_cache[L] = _data_for(spec, bb, L)
-        return _data_cache[L]
+    def data_for(L, cond_tag, knobs):
+        if (L, cond_tag) not in _data_cache:
+            _data_cache[(L, cond_tag)] = _data_for(spec, bb, L, knobs)
+        return _data_cache[(L, cond_tag)]
 
-    def add(kernel, run_id, lr, seed, L):
+    def add(kernel, run_id, lr, seed, L, cond_tag, knobs):
         configs.append(TrainConfig(
-            data=data_for(L),
+            data=data_for(L, cond_tag, knobs),
             model=ModelConfig(block_type="TransformerBlock",
                               sequence_mixer=C.wrap_hybrid(kernel, l_max),
                               state_mixer=ModuleConfig(name="torch.nn.Identity", kwargs={}),
@@ -167,12 +225,31 @@ def build_configs(spec):
         return (arm.get("lrs", def_lrs), arm.get("ncs", def_ncs),
                 arm.get("seq_lens", def_seq_lens))
 
-    def _fmt(rid, **kw):
+    def _arm_conds(arm):
+        """The cue conditions this arm runs: all of them, or the named subset in `arm['conditions']`.
+
+        The subset exists so an expensive reference tier (the contender ladder) can run the SPINE of
+        the knob ladder while the arms the theory makes claims about run all of it. Naming an unknown
+        tag refuses — a typo would silently shrink the grid."""
+        want = arm.get("conditions")
+        if want is None:
+            return conds
+        want = list(want)
+        unknown = [t for t in want if t not in {c[0] for c in conds}]
+        if unknown:
+            raise ValueError(f"arm names condition tag(s) {unknown} that the spec does not declare; "
+                             f"declared: {[c[0] for c in conds]}")
+        return [c for c in conds if c[0] in want]
+
+    def _fmt(rid, cond_tag=None, **kw):
         # `alpha_cap = N/L` is the capacity ratio the boundary claim is stated in; it is available to
         # every run_id template so a cell names its own position relative to the N = L diagonal.
         L, nc = kw.get("L"), kw.get("nc")
         kw.setdefault("alpha_cap", (f"{nc / L:g}" if (L and nc) else "na"))
         kw.setdefault("L", "preset")
+        kw["cond"] = cond_tag
+        if cond_tag is not None and "{cond}" not in rid:
+            rid = rid + "-{cond}"        # DEFAULT templates predate the axis; explicit ones are checked
         return rid.format(**kw)
 
     def realized_st(kernel):
@@ -190,8 +267,9 @@ def build_configs(spec):
                                          "decay", "router_bias", "decay_target_leaf_rate")
                      if k in arm}
         a_lrs, a_ncs, a_lens = _axes(arm)
+        a_conds = _arm_conds(arm)
         dropped = []
-        for seed in seeds:
+        for seed, (ctag, cknobs) in product(seeds, a_conds):
             for L in a_lens:
                 for nc in a_ncs:
                     try:
@@ -199,15 +277,15 @@ def build_configs(spec):
                     except PresetRungUnavailable as e:
                         # Structural, not a failure: a D=2 wiring has no spelling at N=2. Reported
                         # exactly like a baseline's kernel ceiling — an omitted cell with a reason.
-                        if seed == seeds[0] and L == a_lens[0]:
+                        if seed == seeds[0] and L == a_lens[0] and ctag == a_conds[0][0]:
                             dropped.append(f"{arm['tag']}/nc{nc}: {e}")
                         continue
                     kw.update(extra)
                     kernel = dict(name="zoology.mixers.rola.RoLAMixer", kwargs=kw)
                     st = realized_st(kernel)
                     for lr in a_lrs:
-                        add(kernel, _fmt(rid, tag=arm["tag"], nc=nc, st=st, lr=lr, seed=seed,
-                                         d_model=bb["d_model"], L=L), lr, seed, L)
+                        add(kernel, _fmt(rid, ctag, tag=arm["tag"], nc=nc, st=st, lr=lr, seed=seed,
+                                         d_model=bb["d_model"], L=L), lr, seed, L, ctag, cknobs)
         if dropped:
             print(f"[build_configs] {len(dropped)} routed cell(s) omitted -- the preset has no "
                   f"spelling at that rung (NOT a run failure): {dropped}", flush=True)
@@ -215,8 +293,9 @@ def build_configs(spec):
     def baselines(arm):
         rid = arm.get("run_id", _BASELINE_RUNID)
         a_lrs, a_ncs, a_lens = _axes(arm)
+        a_conds = _arm_conds(arm)
         dropped = []
-        for seed in seeds:
+        for seed, (ctag, cknobs) in product(seeds, a_conds):
             for L in a_lens:
                 for method in arm["methods"]:
                     for shape in arm["shapes"]:
@@ -226,15 +305,15 @@ def build_configs(spec):
                                 # NOT a run failure: an undefined shape or a STRUCTURAL EXIT (the
                                 # method's own kernel/memory bound). Logged once, and it is a
                                 # reportable cost column for that method, never missing data.
-                                if seed == seeds[0] and L == a_lens[0]:
+                                if seed == seeds[0] and L == a_lens[0] and ctag == a_conds[0][0]:
                                     dropped.append(f"{method}/{shape}/nc{nc}")
                                 continue
                             kernel, _nominal = cell
                             st = realized_st(kernel)
                             for lr in a_lrs:
-                                add(kernel, _fmt(rid, method=method, shape=shape, nc=nc, st=st,
+                                add(kernel, _fmt(rid, ctag, method=method, shape=shape, nc=nc, st=st,
                                                  lr=lr, seed=seed, d_model=bb["d_model"], L=L),
-                                    lr, seed, L)
+                                    lr, seed, L, ctag, cknobs)
         if dropped:
             print(f"[build_configs] {len(dropped)} baseline cell(s) omitted — matched-state "
                   f"undefined / structural exit (NOT a run failure): {dropped}", flush=True)
@@ -263,12 +342,12 @@ def build_configs(spec):
                         "so the ladder must be built from divisors.")
                 cells.append((dict(name="zoology.mixers.attention.MHA",
                                    kwargs=dict(num_heads=bb["d_model"] // d_qk, dropout=0.1)), d_qk))
-        for seed in seeds:
+        for seed, (ctag, cknobs) in product(seeds, _arm_conds(arm)):
             for L in a_lens:
                 for kernel, d_qk in cells:
                     for lr in a_lrs:
-                        add(kernel, _fmt(rid, d_qk=d_qk, lr=lr, seed=seed,
-                                         d_model=bb["d_model"], L=L), lr, seed, L)
+                        add(kernel, _fmt(rid, ctag, d_qk=d_qk, lr=lr, seed=seed,
+                                         d_model=bb["d_model"], L=L), lr, seed, L, ctag, cknobs)
 
     builders = {"routed": routed, "baselines": baselines, "attn": attn}
 

@@ -101,6 +101,47 @@ def make_law_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, t
                       batch_size=(train_batch, test_batch), cache_dir=cache_dir)
 
 
+# --- THE CUE-CONSISTENCY PROTOCOL (added 2026-08-02, Phase 2) -------------------------------------
+# The law protocol above sweeps CAPACITY (N, L, kv). It cannot move the paper's SECOND named boundary
+# (Sec. 7.1), address agreement: standard MQAR's key IS its cue, so Eq. (7) holds by construction at
+# every capacity and the axis is structurally absent. `zoology.data.cue_consistency` makes the cue
+# structure the independent variable; this builder is the spec-side surface for it. See that module's
+# docstring for the knob->mechanism table.
+#
+# One DataConfig per (train length, CONDITION), where a condition is one setting of the cue knobs.
+# Conditions are TRAINED separately rather than mixed and sliced apart: the claim is about whether a
+# given retrieval contract is servable, and a model trained on a mixture of contracts is answering a
+# different question (it may learn a union strategy that no single contract demanded).
+CUE_KNOBS = ("key_digits", "cue_digits", "digit_vocab", "slot_consistency", "matches_per_cue",
+             "match_resolution", "num_kv_pairs", "power_a")
+
+
+def make_cue_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, test_seq_lens,
+                  train_examples, test_examples, **knobs):
+    """One `DataConfig` for a single (train length, cue condition) pair.
+
+    `knobs` is any subset of `CUE_KNOBS`; the generator owns every structural check (m | kv, the
+    q = D => m = 1 law, pool sizing, episode geometry) and raises by name, so this function does not
+    re-implement them -- two copies of a validation rule is how the matched axis and the reported
+    axis drift apart (Phase 1 finding P6).
+    """
+    from zoology.data.cue_consistency import CueConsistencyConfig
+
+    unknown = set(knobs) - set(CUE_KNOBS)
+    if unknown:
+        raise ValueError(
+            f"unknown cue-consistency knob(s) {sorted(unknown)}; the axis set is {list(CUE_KNOBS)}. "
+            "An unrecognised key would otherwise be dropped silently and the cell would report a "
+            "condition it did not run.")
+    def _cell(seq_len, n_examples):
+        return CueConsistencyConfig(vocab_size=vocab, input_seq_len=seq_len,
+                                    num_examples=n_examples, **knobs)
+    train = [_cell(train_seq_len, train_examples)]
+    test = [_cell(L, test_examples) for L in test_seq_lens]
+    return DataConfig(train_configs=train, test_configs=test,
+                      batch_size=(train_batch, test_batch), cache_dir=cache_dir)
+
+
 # --- hybrid backbone (short conv + the sequence mixer) --------------------------------------------
 def base_conv_mixer(l_max):
     return dict(name="zoology.mixers.base_conv.BaseConv",
