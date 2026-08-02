@@ -66,7 +66,7 @@ def main(argv=None):
     eager_ms, eager_peak = sc._decode_layer_sample(module, a.L)
     graph_kind, graphed_ms, graphed_peak, graph_error = "none", None, None, None
     try:
-        from fla_rola.layers.rola import RoLADecodeGraph  # noqa: F401
+        from rola_bench.engine import RoLADecodeGraph  # noqa: F401
         graph_kind = "RoLADecodeGraph"
     except ImportError:
         graph_kind = "generic_cuda_graph"

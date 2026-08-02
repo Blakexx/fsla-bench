@@ -35,7 +35,7 @@ def _check(layer, build_extractor, dbound):
 
 @pytest.mark.parametrize("fmap", ["elu", "hedgehog"])
 def test_fla_linear_attn_extractor(fmap):
-    from fla_rola.layers import LinearAttention
+    from rola_bench.engine import LinearAttention
     la = LinearAttention(hidden_size=DM, expand_k=1.0, expand_v=1.0, num_heads=H,
                          feature_map=fmap, do_feature_map_norm=True)
     dbound = la.head_k_dim * (2 if fmap == "hedgehog" else 1)

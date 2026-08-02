@@ -14,8 +14,10 @@ def main():
     if not torch.cuda.is_available():
         print("VERIFY FAILED: torch.cuda.is_available() is False")
         return 1
-    import fla.ops.simple_gla, fla.layers, fla_rola  # noqa: F401  — load the kernel stack
-    from fla_rola.layers import RoLA
+    import fla.ops.simple_gla, fla.layers  # noqa: F401  — load the kernel stack
+    from rola_bench import engine
+    engine.import_engine()        # the engine package itself (kernel stack side effect)
+    from rola_bench.engine import RoLA
     torch.manual_seed(0)
     dev = "cuda"
     # states_per_head=4 (flat) -> levels_per_head=1, states_per_level=4 (#config-refactor, rola_compat).

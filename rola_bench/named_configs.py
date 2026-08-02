@@ -116,7 +116,7 @@ class NamedConfig:
 
 
 def _base_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'global') -> dict:
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -144,7 +144,7 @@ def _union_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 
     before the read channel sees it, and under `state_norm='global'` the read mass cancels exactly in
     num/den. Measured EQUIVALENT at <=8.9e-16 vs a 1e-14 budget on both alphas and both
     normalizations. Hence E7: no semantics edit here."""
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -195,7 +195,7 @@ def _levelsplit_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: s
     levels. `_levelsplit_a2w_kwargs` is its alpha-choice sibling (sparsemax writes, softer reads);
     the two differ in that one knob and nothing else.
     """
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -236,7 +236,7 @@ def _levelsplit_a2w_kwargs(nc: int, use_short_conv: bool, kernel: str, state_nor
     with its own exact solve — same structural path as `_levelsplit_kwargs`, no union anywhere, and
     identical router PARAMETER shape (untied on both levels => matched addressing entropy).
     """
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -257,7 +257,7 @@ def _levelsplit_dense_degenerate_kwargs(nc: int, use_short_conv: bool, kernel: s
     dense/dense routing, with nothing left over from the duty machinery. Same topology, bias, norm
     and kernel as `_levelsplit_kwargs`; only the activations differ.
     """
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -276,7 +276,7 @@ def _hybrid_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str =
     alignment via sigma). Fine level is UNTIED dense-read/sparse-write — candidate B's decoupled
     commitment in-block (sharp fine writes = sparse x sparse folded events; dense in-block reads =
     no fine dead-ends). Only the ungated (kernel='rla') spelling survives E4."""
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -295,7 +295,7 @@ def _hybrid_tiedtop_kwargs(nc: int, use_short_conv: bool, kernel: str, state_nor
     shared-support combo, the sigma≡1/2 special case of union-split) instead of the hybrid arm's
     UNTIED sparse/sparse (union-split). Fine level is identical to the hybrid arm (untied
     dense-read/sparse-write). This isolates whether block-level sigma-untying earns its parameters."""
-    from fla_rola.layers.rola import LevelRoutingConfig
+    from rola_bench.engine import LevelRoutingConfig
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
@@ -392,7 +392,7 @@ def construct(name: str, *, hidden_size: int, num_heads: int, head_v_dim: int,
 
     E1: there is no `head_k_dim` / `d_qk` / `qk_norm` parameter — the V3 layer owns no Q/K surface.
     """
-    from fla_rola.layers import RoLA
+    from rola_bench.engine import RoLA
     if name in RETIRED_CONFIGS:
         raise ValueError(f"named config {name!r} is RETIRED: {RETIRED_CONFIGS[name]}")
     cfg = NAMED_CONFIGS[name]

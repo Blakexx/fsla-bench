@@ -41,9 +41,9 @@ def _mix_rows(configs):
 def _resolved_routing(kwargs):
     """Resolve a named-config kwargs dict to the ops-internal ResolvedRouting, exactly as the
     layer's own constructor does (no reimplementation of the mapping)."""
-    from fla_rola.layers.rola import _resolve_level_routing
-    from fla_rola.ops.rola.routing.topology import resolve_b_spec
-    from fla_rola.ops.rola.routing.types import ResolvedRouting
+    from rola_bench.engine import _resolve_level_routing
+    from rola_bench.engine import resolve_b_spec
+    from rola_bench.engine import ResolvedRouting
 
     branches = resolve_b_spec(kwargs['states_per_level'], kwargs['levels_per_head'])
     return ResolvedRouting(
@@ -94,7 +94,7 @@ def test_levelsplit_matches_the_union_arm_shape_and_router_parameter_count():
 def test_levelsplit_resolves_to_independent_routing_never_union():
     """The engine flag the arm drives: every duty is its own exact solve on its own logits.
     No level may resolve to UnionRouting (shared/averaged logits) — the whole point of the arm."""
-    from fla_rola.ops.rola.routing.types import (
+    from rola_bench.engine import (
         EntmaxActivation, IndependentRouting, SoftmaxActivation, UnionRouting)
 
     routing = _resolved_routing(named_configs._levelsplit_kwargs(256, False, 'rla', 'global'))
@@ -129,7 +129,7 @@ def _corner_logits(width, *, write_corner, read_corner, gap=3.0, device='cpu'):
 def test_levelsplit_sparse_write_duty_is_an_exact_point_mass_at_the_corner():
     """The write duty owns its own entmax, so a corner write logit gives an EXACT delta —
     regardless of where the read logits point."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     width = 16
     kwargs = named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global')
@@ -154,7 +154,7 @@ def test_union_split_write_cannot_reach_the_corner_the_level_split_write_reaches
     """THE contrast. On identical logits, union-split's coarse write is confined to (and
     renormalized over) the shared support of the AVERAGED logits 0.5*z_r+0.5*z_w, so a read logit
     pointing elsewhere keeps the write off its own corner. Level-split's write is exactly there."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     width = 16
     read_logits, write_logits = _corner_logits(width, write_corner=3, read_corner=11)
@@ -193,7 +193,7 @@ def test_union_split_write_cannot_reach_the_corner_the_level_split_write_reaches
 
 def test_levelsplit_write_purity_is_independent_of_the_read_logits():
     """Sweep the read corner across the level width: the sparse write duty stays an exact delta."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     width = 8
     routing = _resolved_routing(
@@ -212,9 +212,9 @@ def test_levelsplit_write_purity_is_independent_of_the_read_logits():
 # --------------------------------------------------------------------------------------------
 
 def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
-    from fla_rola.layers.rola import LevelRoutingConfig
-    from fla_rola.ops.rola.routing.types import ResolvedRouting, IndependentRouting, SoftmaxActivation
+    from rola_bench.engine import routing_factor_levels
+    from rola_bench.engine import LevelRoutingConfig
+    from rola_bench.engine import ResolvedRouting, IndependentRouting, SoftmaxActivation
 
     width = 16
     degenerate = named_configs._levelsplit_dense_degenerate_kwargs(
@@ -257,9 +257,9 @@ def _run_reference_step(kwargs, *, B=1, T=6, H=2, V=4, seed=0):
 
     There is no q, no k and no feature map in V3: the routing simplices ARE the addressing.
     """
-    from fla_rola.ops.rola.naive import naive_rola_v3
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
-    from fla_rola.ops.rola.routing.types import LevelConfig, Topology
+    from rola_bench.engine import naive_rola_v3
+    from rola_bench.engine import routing_factor_levels
+    from rola_bench.engine import LevelConfig, Topology
 
     routing = _resolved_routing(kwargs)
     assert kwargs['state_norm'] == 'global'   # spec §4.2 fixes g_read := 1 there (g_read=None)
@@ -289,7 +289,7 @@ def _run_reference_step(kwargs, *, B=1, T=6, H=2, V=4, seed=0):
 
 
 def _leaf_mass_decay(topology):
-    from fla_rola.ops.rola.routing.types import LeafMassDecay
+    from rola_bench.engine import LeafMassDecay
     return LeafMassDecay(rates=tuple(torch.full((w,), 0.5, dtype=torch.float64)
                                      for w in topology.widths))
 
@@ -310,7 +310,7 @@ def test_levelsplit_runs_at_the_union_arms_pinned_routing_width():
     """The union arm's pinned MQAR shape is nc=256 -> (D=2, b=16). The recurrence oracle is a
     Python loop over nc, so the RECURRENCE gate above runs narrow; this gate runs the arm's real
     routing width through the same producer reference the layer uses."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     kwargs = named_configs.NAMED_CONFIGS['RoLA-base-levelsplit-global'].build_kwargs(256, False)
     assert (kwargs['levels_per_head'], kwargs['states_per_level']) == (2, 16)

@@ -72,7 +72,7 @@ def test_live_kernel_vocabulary_maps_to_the_v3_decay_names():
 
 def test_detached_clock_spelling_also_constructs():
     """The one live gated kernel must construct too, so E4's replacement is real and not notional."""
-    from fla_rola.layers import RoLA
+    from rola_bench.engine import RoLA
     kwargs = named_configs._base_kwargs(_NC, False, 'gla_mass_detached', 'global')
     assert kwargs['decay'] == 'leaf_mass'
     layer = RoLA(hidden_size=_HIDDEN, num_heads=_HEADS, head_v_dim=_DV, layer_idx=0, **kwargs)

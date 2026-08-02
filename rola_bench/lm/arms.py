@@ -32,8 +32,9 @@ from __future__ import annotations
 
 # RoLA is now a first-class FLA model: importing the package registers its HF AutoClasses.
 import os as _os
-import fla_rola.models.rola  # noqa: F401  (registers RoLA AutoClasses)
-from fla_rola.models.rola import RoLAConfig
+from rola_bench import engine as _engine
+_engine.register_hf_models()   # registers RoLA AutoClasses
+from rola_bench.engine import RoLAConfig
 from transformers import AutoModelForCausalLM
 
 # --- env-overridable knobs (defaults = Option-Y headline @ d_model=512). The d_model=128 small-

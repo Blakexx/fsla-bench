@@ -81,7 +81,7 @@ def test_union_named_config_constructs_on_the_v3_layer():
     layer, used = named_configs.construct(
         'RoLA-base-union-global', hidden_size=32, num_heads=2, head_v_dim=16,
         nc=16, use_short_conv=False, layer_idx=0)
-    from fla_rola.ops.rola.routing.types import IndependentRouting, UnionRouting
+    from rola_bench.engine import IndependentRouting, UnionRouting
     assert used == 'RoLA-base-union-global'
     assert getattr(layer, '_routing_resolution_error', None) is None
     # the coarse level really did resolve to union-split, the fine level did not

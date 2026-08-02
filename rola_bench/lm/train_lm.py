@@ -14,8 +14,9 @@ from itertools import chain
 import torch
 from transformers.trainer_utils import get_last_checkpoint
 from transformers import TrainerCallback
-import fla_rola.models.rola  # registers RoLA with HF AutoClasses
-from fla_rola.models.rola import RoLAConfig
+from rola_bench import engine as _engine
+_engine.register_hf_models()   # registers RoLA with HF AutoClasses
+from rola_bench.engine import RoLAConfig
 import arms  # iso-backbone registry (RoLA/GDN/GLA/attention)
 from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments,

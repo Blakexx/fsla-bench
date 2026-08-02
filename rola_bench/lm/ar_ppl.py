@@ -128,7 +128,8 @@ def main():
         ap.error("--pretrained required (or use --selftest)")
 
     import torch
-    import fla_rola.models.rola  # noqa: F401 — register the RoLA architecture for AutoModel
+    from rola_bench import engine
+    engine.register_hf_models()   # register the RoLA architecture for AutoModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(a.pretrained)

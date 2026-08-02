@@ -44,7 +44,7 @@ def _scaling():
 def _chunk_rola_routed():
     global _CHUNK_ROLA_ROUTED
     if _CHUNK_ROLA_ROUTED is None:
-        from fla_rola.ops.rola import chunk_rola_routed
+        from rola_bench.engine import chunk_rola_routed
         _CHUNK_ROLA_ROUTED = chunk_rola_routed
     return _CHUNK_ROLA_ROUTED
 

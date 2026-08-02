@@ -11,7 +11,8 @@ standard, NOT the training corpus's own val split). RECALL suite = the Based/Zoo
 tasks (swde, fda, squad_completion).
 """
 import argparse, json
-import fla_rola.models.rola  # noqa: F401  (registers RoLA AutoClasses so HFLM can load it)
+from rola_bench import engine as _engine
+_engine.register_hf_models()   # registers RoLA AutoClasses so HFLM can load it
 from lm_eval import simple_evaluate
 from lm_eval.models.huggingface import HFLM
 

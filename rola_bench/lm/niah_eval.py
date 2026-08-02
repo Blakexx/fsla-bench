@@ -21,7 +21,8 @@ import argparse, json, random
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import fla_rola.models.rola  # noqa: F401  (registers RoLA AutoClasses so from_pretrained loads RoLA checkpoints)
+from rola_bench import engine
+engine.register_hf_models()   # registers RoLA AutoClasses so from_pretrained loads RoLA checkpoints
 
 # RULER S-NIAH-1 filler: benign, low-entropy sentences repeated to fill the haystack (Mohtashami-style).
 FILLER = ("The grass is green. The sky is blue. The sun is yellow. "

@@ -49,9 +49,9 @@ def _dict_rows(mix):
 
 
 def _resolved_routing(kwargs):
-    from fla_rola.layers.rola import _resolve_level_routing
-    from fla_rola.ops.rola.routing.topology import resolve_b_spec
-    from fla_rola.ops.rola.routing.types import ResolvedRouting
+    from rola_bench.engine import _resolve_level_routing
+    from rola_bench.engine import resolve_b_spec
+    from rola_bench.engine import ResolvedRouting
 
     branches = resolve_b_spec(kwargs['states_per_level'], kwargs['levels_per_head'])
     return ResolvedRouting(
@@ -182,7 +182,7 @@ def test_a2w_resolves_to_independent_routing_with_the_declared_entmax_orders():
     """Every duty is its own exact solve on its own logits — no level may resolve to UnionRouting
     (that is the whole point of the level-split family), and the entmax ORDER must survive the
     resolution rather than being flattened to the 1.5 default."""
-    from fla_rola.ops.rola.routing.types import (
+    from rola_bench.engine import (
         EntmaxActivation, IndependentRouting, SoftmaxActivation, UnionRouting)
 
     routing = _resolved_routing(named_configs._levelsplit_a2w_kwargs(256, False, 'rla', 'global'))
@@ -202,7 +202,7 @@ def test_a2w_sparsemax_write_is_an_exact_point_mass_and_is_STRICTLY_sparser_than
     """The behavioural content of alpha=2 on the write duty. At a corner logit both orders give an
     exact delta; the discriminating case is a FLATTER logit vector, where sparsemax's support is a
     subset of alpha-1.5's."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     width = 16
     a2w = _resolved_routing(named_configs._levelsplit_a2w_kwargs(width * width, False, 'rla', 'global'))
@@ -241,7 +241,7 @@ def test_a2w_sparsemax_write_is_an_exact_point_mass_and_is_STRICTLY_sparser_than
 def test_a2w_read_stays_softer_than_its_write():
     """'Commit hard, address softly': on identical logits the fine level's alpha-1.5 READ must keep
     a WIDER support than the coarse level's sparsemax WRITE."""
-    from fla_rola.ops.rola.routing.reference import routing_factor_levels
+    from rola_bench.engine import routing_factor_levels
 
     width = 16
     routing = _resolved_routing(named_configs._levelsplit_a2w_kwargs(width * width, False, 'rla', 'global'))

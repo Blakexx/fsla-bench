@@ -325,13 +325,13 @@ _FLA_BASELINE_GEOM = {
 def _build_fla_baseline(kind):
     """One canonical `fla_rola.layers` baseline layer at hidden_size=DM. `kind` in `_FLA_BASELINE_GEOM`."""
     if kind == "gla":
-        from fla_rola.layers.gla import GatedLinearAttention as Cls
+        from rola_bench.engine import GatedLinearAttention as Cls
     elif kind == "gdn":
-        from fla_rola.layers.gated_deltanet import GatedDeltaNet as Cls
+        from rola_bench.engine import GatedDeltaNet as Cls
     elif kind == "deltanet":
-        from fla_rola.layers.delta_net import DeltaNet as Cls
+        from rola_bench.engine import DeltaNet as Cls
     elif kind == "gsa":
-        from fla_rola.layers.gsa import GatedSlotAttention as Cls
+        from rola_bench.engine import GatedSlotAttention as Cls
     else:
         raise ValueError(f"unknown fla baseline kind {kind!r}")
     return Cls(hidden_size=DM, use_short_conv=False, layer_idx=0,
@@ -460,7 +460,7 @@ def _prefill_rep(module, x):
 
 def _new_cache():
     """A fresh fla_rola Cache for the layer-level decode arm (carries the per-layer recurrent state)."""
-    from fla_rola.models.utils import Cache
+    from rola_bench.engine import Cache
     return Cache()
 
 
@@ -544,7 +544,7 @@ def _decode_layer_sample_graphed(module, L):
                 "decode arm (graphed): cache NOT seeded after prefill (len==0) -- see "
                 "_decode_layer_sample's identical guard.")
         try:
-            from fla_rola.layers.rola import RoLADecodeGraph
+            from rola_bench.engine import RoLADecodeGraph
             g = RoLADecodeGraph(module, cache, x1)
             step = lambda: g.step(x1)
         except ImportError:

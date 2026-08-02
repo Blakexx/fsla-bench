@@ -8,7 +8,9 @@ Exit 0 = green. No dependency on the local-only oracle package."""
 import sys
 import torch
 import fla.ops.simple_gla, fla.ops.gla, fla.ops.linear_attn  # populate fla.ops (wheel __init__ is a namespace stub)
-import fla, fla_rola
+import fla
+from rola_bench import engine
+fla_rola = engine.import_engine()   # the engine package, through the one seam
 
 TOL_R, TOL_T = 1e-4, 2e-2
 
@@ -43,8 +45,8 @@ def main():
         print(f"regression {name:11s} {r:.1e} {'PASS' if r < TOL_R else 'FAIL'}")
         ok &= r < TOL_R
     # (2) routed Triton vs the fork's torch reference (un-normalized readout, norm='raw')
-    from fla_rola.ops.rola import chunk_rola
-    from fla_rola.ops.rola.interface import _rola_chunk_core
+    from rola_bench.engine import chunk_rola
+    from rola_bench.engine import _rola_chunk_core
     for variant in ('RLA', 'GLA'):
         for nc in (16, 64):
             torch.manual_seed(nc)
@@ -66,7 +68,7 @@ def main():
             print(f"routing {variant} nc={nc:<4d} {rr:.1e} {'PASS' if rr < TOL_T else 'FAIL'}")
             ok &= rr < TOL_T
     # (3) per-state denominator kernels (kappa) vs in-script dense oracle: additive + decayed
-    from fla_rola.ops.rola import rola_perstate_den_triton, rola_perstate_den_gla_triton
+    from rola_bench.engine import rola_perstate_den_triton, rola_perstate_den_gla_triton
     for variant in ('RLA', 'GLA'):
         for nc in (16, 64):
             torch.manual_seed(100 + nc)
