@@ -40,8 +40,11 @@ def test_surviving_named_config_speaks_only_live_layer_vocabulary(name):
     kwargs = named_configs.NAMED_CONFIGS[name].build_kwargs(_NC, False)
     # E1: no Q/K surface anywhere in the construction kwargs.
     assert not {'head_k_dim', 'd_qk', 'qk_norm'} & set(kwargs)
-    # E2: kappa is gone; 'global' is the published normalization.
-    assert kwargs['state_norm'] == 'global'
+    # E2: kappa is gone. The live axis is exactly {'global','raw'} — 'global' on the flagship slate,
+    # 'raw' on the two normalization-ablation arms added 2026-08-02 (finding F2).
+    assert kwargs['state_norm'] in ('global', 'raw')
+    assert (kwargs['state_norm'] == 'raw') == name.endswith('-raw'), (
+        f"{name}: the state_norm an arm runs at must be legible from its published NAME")
     # E3/E4: the layer takes `decay`, not `kernel`, and only V3's two live decay values exist.
     # 'gla_scalar'/'gla_static' have no resolution at all (see the refusal test below); the one
     # decay-ON arm added 2026-08-02 resolves to 'leaf_mass' (kernel='gla_mass_detached').

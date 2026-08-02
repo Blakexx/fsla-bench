@@ -54,6 +54,14 @@ deposits and reads; the dials train through the affine rate sensitivity. The dia
 through the HF `RoLAConfig` path (`rola_instance` does not thread it), so this arm runs at that
 default.
 
+**RoLA-base-rla-raw / RoLA-base-levelsplit-raw**: the NORMALIZATION axis's other end (finding F2,
+user-notified 2026-08-02) — ARM 1 and ARM 3 at `state_norm='raw'`, identical to their `'global'`
+parents in every other respect. Under `raw` there is no denominator sidecar and the gain channel is
+BOTH-SIDES (read and write) — the engine's own `gain_sides = 1 if state_norm == 'global' else 2`.
+No union (`RoLA-base-union-global`) spelling of `raw` is registered: under `raw` the union read mass
+no longer cancels and `g_read *= read_mass` becomes required of the producer (prereqs Q1), which is
+an engine change, not a registry entry.
+
 **MQAR variants**: the same cells minus short conv (`use_short_conv=False`) — convs confound
 short-offset recall in MQAR; everything else identical.
 
@@ -102,6 +110,27 @@ def _decay_from_kernel(kernel: str) -> str:
     raise ValueError(f"unknown RoLA kernel {kernel!r}; expected one of {sorted(_KERNEL_TO_DECAY)}")
 
 
+# --- THE GAIN-CHANNEL PIN (finding F5, 2026-08-02) -----------------------------------------------
+# F5 asked for `gain` to be PINNED in every published config rather than inherited from an engine
+# default. Read back off the pinned mainline engine (`fla_rola/layers/rola.py` @ b71608f9), there is
+# no `gain` on/off flag to pin: the side gain is STRUCTURAL and always present, and `state_norm`
+# alone decides how many SIDES it has —
+#     gain_sides = 1 if state_norm == 'global' else 2          (rola.py, "Side gains (spec §1.1)")
+# i.e. `global` fixes g_read := 1 and owns a WRITE gain only, while `raw` owns write AND read gain.
+# Passing `gain=True` would therefore be inventing a construction surface the engine does not have
+# ([[kernel-engineering-rules]]: no workarounds). What IS pinnable, and what F5 is actually guarding,
+# is pinned here in two halves:
+#   (a) `gain_bias_init` — the ONE gain kwarg the layer takes, whose default is a flagged model
+#       decision in the engine's own docstring ("None leaves the gain bias at zero, i.e. unit gain
+#       at zero logits — explicitly NOT ..."). Every builder below passes it EXPLICITLY.
+#   (b) the realized number of gain sides — asserted against the published contract by `construct()`
+#       on the constructed layer itself (never on the config), so a future engine that adds a `gain`
+#       flag, or changes which normalization gets a read gain, fails loudly at construction instead
+#       of silently publishing a different cell.
+GAIN_BIAS_INIT: float | None = None          # unit gain at zero logits — PINNED, not inherited
+GAIN_SIDES_BY_STATE_NORM = {'global': 1, 'raw': 2}
+
+
 def _square_topology(nc: int) -> tuple[int, int]:
     b = int(round(math.sqrt(nc)))
     if b * b != nc:
@@ -120,7 +149,7 @@ def _base_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = '
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
             LevelRoutingConfig(tied=False, read='dense', write='dense'),
@@ -148,7 +177,7 @@ def _union_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='sparse', write='sparse'),
             LevelRoutingConfig(tied=False, read='dense', write='dense'),
@@ -199,7 +228,7 @@ def _levelsplit_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: s
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
             LevelRoutingConfig(tied=False, read='sparse', write='dense'),
@@ -240,7 +269,7 @@ def _levelsplit_a2w_kwargs(nc: int, use_short_conv: bool, kernel: str, state_nor
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='dense', write='sparse', alpha=2.0),
             LevelRoutingConfig(tied=False, read='sparse', write='dense', alpha=1.5),
@@ -261,7 +290,7 @@ def _levelsplit_dense_degenerate_kwargs(nc: int, use_short_conv: bool, kernel: s
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='dense', write='dense'),
             LevelRoutingConfig(tied=False, read='dense', write='dense'),
@@ -280,7 +309,7 @@ def _hybrid_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str =
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='sparse', write='sparse'),
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
@@ -299,7 +328,7 @@ def _hybrid_tiedtop_kwargs(nc: int, use_short_conv: bool, kernel: str, state_nor
     D, b = _square_topology(nc)
     return dict(
         levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
-        router_bias=True, use_short_conv=use_short_conv,
+        router_bias=True, use_short_conv=use_short_conv, gain_bias_init=GAIN_BIAS_INIT,
         level_routing_configs=[
             LevelRoutingConfig(tied=True, read='sparse', write='sparse'),
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
@@ -338,6 +367,32 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-base-massdecay-global': NamedConfig(
         'RoLA-base-massdecay-global',
         build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_mass_detached', 'global')),
+    # --- THE NORMALIZATION AXIS'S OTHER END (finding F2 hole #1, user-notified 2026-08-02) --------
+    # `state_norm in {'raw','global'}` is the V3 layer's live normalization axis and until today
+    # every single registered arm pinned 'global', so the axis had ONE end and no ablation.
+    # These two are the `raw` spelling of ARM 1 and ARM 3, identical to their parents in EVERY other
+    # respect (topology, routing rows, alpha, bias, decay, conv, gain-bias init) so each pair
+    # isolates the normalization alone.
+    #
+    # What `raw` actually changes, on the engine (`rola.py`, "Side gains (spec §1.1)"):
+    #   * `global` divides the readout by the accumulated denominator, which is what makes reads of
+    #     never-written states inert ([[rola-self-normalizing-dead-leaves-inert]]) and what makes the
+    #     union arm's read-mass fold cancel exactly (prereqs Q1). It owns a WRITE gain only
+    #     (g_read := 1), and its state carries the +1 denominator sidecar per state.
+    #   * `raw` does none of that: no denominator sidecar at all (`get_stats()` reports exactly
+    #     H*N*d_v), and the gain channel becomes BOTH-SIDES — read AND write gain, `gain_W` of shape
+    #     [H, 2, hidden]. That both-sides gain IS the raw semantics; it is not a separate knob, so it
+    #     comes through the same real config surface with no substitution anywhere.
+    # `construct()` asserts the realized side count, so "raw => 2 sides" is verified, not assumed.
+    #
+    # NOT registered: a `raw` spelling of ARM 2 (union). Under `raw` the union read mass no longer
+    # cancels in num/den, so `g_read *= read_mass` becomes REQUIRED of the producer (prereqs Q1) —
+    # a read-mass-channel change on the engine side, not a registry entry. Recorded as a ledger gap.
+    'RoLA-base-rla-raw': NamedConfig(
+        'RoLA-base-rla-raw', build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'rla', 'raw')),
+    'RoLA-base-levelsplit-raw': NamedConfig(
+        'RoLA-base-levelsplit-raw',
+        build_kwargs=lambda nc, conv: _levelsplit_kwargs(nc, conv, 'rla', 'raw')),
     # The candidate-D depth-hybrid cell and its D-vs-tied-top ablation. Only the ungated ('rla')
     # spellings survive: their 'gla_static' siblings are retired by E4.
     'RoLA-base-hybrid-global-rla': NamedConfig(
@@ -391,6 +446,12 @@ def construct(name: str, *, hidden_size: int, num_heads: int, head_v_dim: int,
     """Build one named config and fail loudly if the engine cannot resolve its production routing.
 
     E1: there is no `head_k_dim` / `d_qk` / `qk_norm` parameter — the V3 layer owns no Q/K surface.
+
+    F5: the GAIN CHANNEL is verified here on the CONSTRUCTED layer — see `GAIN_BIAS_INIT`. The
+    published contract is "the gain channel is one-sided (write only) under `state_norm='global'`
+    and BOTH-SIDES (read and write) under `'raw'`"; an engine that changes that, or that grows a
+    `gain` flag defaulting the other way, must fail here rather than publish a different cell under
+    a pinned name.
     """
     from rola_bench.engine import RoLA
     if name in RETIRED_CONFIGS:
@@ -403,4 +464,13 @@ def construct(name: str, *, hidden_size: int, num_heads: int, head_v_dim: int,
     err = getattr(layer, '_routing_resolution_error', None)
     if err is not None:
         raise err
+    want_sides = GAIN_SIDES_BY_STATE_NORM[kwargs['state_norm']]
+    got_sides = tuple(layer.gain_W.shape)[1]
+    if got_sides != want_sides:
+        raise ValueError(
+            f"named config {name!r} realized {got_sides} gain side(s) under "
+            f"state_norm={kwargs['state_norm']!r}, but the published cell is pinned at "
+            f"{want_sides} (F5: 'global' => write gain only, 'raw' => read AND write gain). The "
+            "engine's gain contract changed under a pinned name — re-ratify the cell, do not "
+            "loosen this check.")
     return layer, name
