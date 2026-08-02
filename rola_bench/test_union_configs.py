@@ -25,7 +25,8 @@ def test_lm_union_arm_is_flagship_global_conv_with_unchanged_state():
     name = 'rola-base-union-global'
     assert name in arms.ROLA_BASE_ARMS
     assert 'RoLA-base-union-global' in named_configs.LM_SUITE_CONFIGS
-    instance, mix = arms.ROLA_BASE_INSTANCE[name]
+    instance, mix, kernel = arms.ROLA_BASE_INSTANCE[name]
+    assert kernel == 'rla'
     # E5: every LM arm names one of mainline's own ROLA_INSTANCES.
     assert instance == 'rola-rla-asym-conv'
     assert mix == [
@@ -67,7 +68,8 @@ def test_static_decay_arms_are_retired_on_both_registries():
         arms.arm_config('rola-multiscale', vocab_size=256)
     with pytest.raises(ValueError, match='RETIRED'):
         named_configs.construct('RoLA-multiscale', hidden_size=32, num_heads=2, head_v_dim=16, nc=16)
-    # No live arm owns per-state static-decay parameters any more.
+    # No live arm owns per-state STATIC-decay parameters any more. (The decay-ON arm added
+    # 2026-08-02 owns COMPACT detached-clock dials instead; gated in test_decay_and_alpha_arms.py.)
     assert arms.static_decay_parameter_floats('rola-base-union-global') == 0
 
 

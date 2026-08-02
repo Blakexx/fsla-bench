@@ -108,7 +108,8 @@ ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA
 USE_SHORT_CONV = False
 
 # --- published-flagship arms --------------------------------------------------------------------
-# RoLA-base / RoLA-base-rla / RoLA-base-global (`rola_bench.named_configs`): router_bias=True,
+# The flagship cells (`rola_bench.named_configs`; RoLA-base / RoLA-base-global were retired by
+# campaign-prereqs E3, see RETIRED_LM_ARMS): router_bias=True,
 # two-level topology (levels_per_head=2; branching per the GEOMETRY block below), UNTIED, per-level
 # heterogeneous write (sparse@coarse level0, dense@fine level1), dense read at both levels, conv ON. These
 # are the PUBLISHED cells, reachable through the HF `AutoModelForCausalLM` path now that
@@ -208,10 +209,67 @@ ROLA_BASE_HYBRID_TIEDTOP_MIX = [
     {'tied': False, 'read': 'dense',  'write': 'sparse'},   # level 1 (fine): identical to the hybrid arm
 ]
 
-# arm -> (rola_instance name, per-level routing mix). The instance name picks (state_norm, conv)
-# only — its own routing default is fully SUPERSEDED by the explicit `level_routing_configs`
-# passthrough (so the '-asym' suffix is inert). Topology/router_bias are shared across all four
-# (see _ROLA_BASE_* above).
+# rola-base-levelsplit-global (ablation ARM 3, promoted to an LM arm 2026-08-02): the LEVEL-SPLIT
+# DUTY cell — see `rola_bench.named_configs._levelsplit_kwargs` for the full rationale. Each level
+# carries exactly ONE sparse duty and one dense duty, and the two levels carry OPPOSITE duties:
+# coarse commits narrowly and reads broadly, fine writes broadly and addresses narrowly. Both rows
+# are untied with at most one sparse side, so each resolves to `IndependentRouting` and every duty
+# solves the EXACT entmax/softmax on its OWN projected logits — the deliberate contrast with
+# ROLA_BASE_UNION_MIX, whose untied sparse/sparse coarse level resolves to `UnionRouting` and splits
+# ONE shared support over averaged logits.
+#
+# This completes the paper's three structural wirings at IDENTICAL N and L and identical router
+# parameter shape (all three arms are untied on both levels => matched addressing entropy; only the
+# per-side activation assignment differs): ARM 1 base = the (N,1) O(N) point, ARM 2 union = off the
+# hyperbola O(1), ARM 3 level-split = the equal-width (sqrt N, sqrt N) O(sqrt N) point.
+# recurrent_state_floats UNCHANGED — duty assignment changes routing, not state shape.
+ROLA_BASE_LEVELSPLIT_MIX = [
+    {'tied': False, 'read': 'dense',  'write': 'sparse'},   # level 0 (coarse): commit narrowly, read broadly
+    {'tied': False, 'read': 'sparse', 'write': 'dense'},    # level 1 (fine): write broadly, address narrowly
+]
+
+# rola-base-levelsplit-a2w-global (user decision, 2026-08-02): ARM 3's ALPHA-CHOICE ablation.
+# `alpha` is a PER-LEVEL entmax order applying to whichever side of that level is 'sparse' (a
+# 'dense' side is softmax and ignores it). Because the level-split arm gives each level exactly one
+# sparse duty, and opposite duties across levels, one per-level alpha IS a per-duty dial here:
+# every sparse WRITE duty becomes sparsemax (alpha=2, exact point mass on the demanded corner — what
+# maps 1:1 onto skippable state blocks) while every sparse READ duty stays at the softer alpha=1.5.
+# 'Commit hard, address softly.' Identical to ROLA_BASE_LEVELSPLIT_MIX in every other respect, so
+# the pair isolates the alpha choice. recurrent_state_floats UNCHANGED.
+ROLA_BASE_LEVELSPLIT_A2W_MIX = [
+    {'tied': False, 'read': 'dense',  'write': 'sparse', 'alpha': 2.0},   # coarse: SPARSEMAX write, softmax read
+    {'tied': False, 'read': 'sparse', 'write': 'dense',  'alpha': 1.5},   # fine: alpha-1.5 entmax read, softmax write
+]
+
+# rola-base-massdecay-global (user decision, 2026-08-02): the DECAY-ON arm, and the only one on the
+# slate. Its routing is ROLA_BASE_WRITE_MIX byte-for-byte — i.e. it is rola-base-rla with the clock
+# turned on and NOTHING else changed, which is exactly what makes the paper's "no-decay ablation"
+# an ablation rather than an isolated cell. Until now every surviving arm was kernel='rla'
+# (decay='none') and the decay-ON counterpart existed nowhere.
+#
+# Semantics are normative in `development/plans/GLA_MASS_DECAY_SPEC.md`:
+#   * compact AND rate     rate_s = prod_l delta_l[d_l(s)],  delta_l = sigmoid(theta_l) in (0,1).
+#     Parameters are COMPACT, O(H * sum_l b_l) — per level-branch dials, never an [H,nc] table.
+#     All levels must agree to forget a leaf; one zero dial vetoes forgetting (§3.1).
+#   * DETACHED mass clock  c_s[t] = stop_gradient(w_s[t]) on the folded stored write amplitude (§3.2)
+#     — V3's clock is unconditionally detached, which is precisely why 'gla_static' (a non-detached
+#     EVENT clock) has no V3 expression and is retired by E4.
+#   * exponential survival A[t,s] = (1 - rate_s)^c_s[t]; carried state decays, the current write is
+#     deposited UNDAMPED, the inclusive readout observes the post-write state (§3.3). The superseded
+#     linear clock `1 - rate*w` is NOT normative.
+#   * routing trains through deposits and reads; the dials train through the affine rate sensitivity
+#     (§3.4) — no state snapshots.
+# The dial init target rho_init is the V3 layer's own `decay_target_leaf_rate` (default 2**-8).
+# NOTE (hygiene): `fla_rola.models.rola.instances.rola_instance` does not thread that kwarg, so this
+# arm runs at the layer default and rho_init is not sweepable through the HF path today.
+ROLA_BASE_MASSDECAY_MIX = ROLA_BASE_WRITE_MIX
+
+# arm -> (rola_instance name, per-level routing mix, kernel). The instance name picks (state_norm,
+# conv) only — its own routing default is fully SUPERSEDED by the explicit `level_routing_configs`
+# passthrough (so the '-asym' suffix is inert). `kernel` is the config-level decay-family selector
+# ('rla' -> decay='none', 'gla_mass_detached' -> decay='leaf_mass'), resolved at the
+# `rola_instance` boundary; it is PER-ARM, not a module constant, since 2026-08-02 added the first
+# decay-ON cell. Topology/router_bias are shared across all arms (see _ROLA_BASE_* above).
 #
 # RECONCILED onto the V3 mainline engine, 2026-08-01 (campaign-prereqs E1/E3/E4/E5): every arm now
 # names one of mainline's own `fla_rola.models.rola.instances.ROLA_INSTANCES`
@@ -219,13 +277,19 @@ ROLA_BASE_HYBRID_TIEDTOP_MIX = [
 # all take 'rola-rla-asym-conv' (state_norm='global', conv=True, dense default routing that the
 # explicit mix supersedes). See RETIRED_LM_ARMS below for what E3/E4 removed and why.
 ROLA_BASE_INSTANCE = {
-    'rola-base-rla':    ('rola-rla-asym-conv', ROLA_BASE_WRITE_MIX),        # rla, global — ablation ARM 1
-    'rola-base-union-global': ('rola-rla-asym-conv', ROLA_BASE_UNION_MIX),  # rla, global, union-split coarse — ARM 2
+    'rola-base-rla':    ('rola-rla-asym-conv', ROLA_BASE_WRITE_MIX, 'rla'),        # rla, global — ablation ARM 1
+    'rola-base-union-global': ('rola-rla-asym-conv', ROLA_BASE_UNION_MIX, 'rla'),  # rla, global, union-split coarse — ARM 2
+    # ARM 3, promoted to an LM arm 2026-08-02: the level-split duty cell (see ROLA_BASE_LEVELSPLIT_MIX)
+    # and its alpha-choice ablation (sparsemax writes, softer reads).
+    'rola-base-levelsplit-global': ('rola-rla-asym-conv', ROLA_BASE_LEVELSPLIT_MIX, 'rla'),
+    'rola-base-levelsplit-a2w-global': ('rola-rla-asym-conv', ROLA_BASE_LEVELSPLIT_A2W_MIX, 'rla'),
+    # The decay-ON counterpart of ARM 1 — identical routing, detached leaf-mass clock.
+    'rola-base-massdecay-global': ('rola-rla-asym-conv', ROLA_BASE_MASSDECAY_MIX, 'gla_mass_detached'),
     # The candidate-D depth-hybrid cell and its D-vs-tied-top ablation. Only the ungated (kernel=
     # 'rla') spellings survive: their 'gla_static' siblings are retired by E4 (V3's clock is
     # unconditionally detached, so the engine refuses 'gla_static' by name).
-    'rola-base-hybrid-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_MIX),  # rla (ungated), global, depth-hybrid (union coarse + B-combo fine)
-    'rola-base-hybrid-tiedtop-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_TIEDTOP_MIX),  # rla (ungated), global, depth-hybrid ablation: TIED-sparse coarse + B-combo fine
+    'rola-base-hybrid-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_MIX, 'rla'),  # rla (ungated), global, depth-hybrid (union coarse + B-combo fine)
+    'rola-base-hybrid-tiedtop-global-rla': ('rola-rla-asym-conv', ROLA_BASE_HYBRID_TIEDTOP_MIX, 'rla'),  # rla (ungated), global, depth-hybrid ablation: TIED-sparse coarse + B-combo fine
 }
 ROLA_BASE_ARMS = tuple(ROLA_BASE_INSTANCE)
 
@@ -283,13 +347,14 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
         raise ValueError(f"LM arm {arm!r} is RETIRED: {RETIRED_LM_ARMS[arm]}")
     if arm in ROLA_BASE_ARMS:
         D, spl, _nc = _rola_base_topology()
-        instance, mix = ROLA_BASE_INSTANCE[arm]
-        # E1: no d_qk / qk_norm — the V3 layer owns no Q/K surface. Every surviving flagship arm is
-        # ungated, so kernel='rla' is PINNED here rather than left to the instance string's default.
+        instance, mix, kernel = ROLA_BASE_INSTANCE[arm]
+        # E1: no d_qk / qk_norm — the V3 layer owns no Q/K surface. `kernel` is PINNED per arm here
+        # rather than left to the instance string's default, so the decay family a published cell
+        # ran on is explicit in the config (and so the decay-ON arm cannot silently drift to 'rla').
         return RoLAConfig(
             rola_instance=instance, levels_per_head=D, states_per_level=spl,
             d_v=_ROLA_BASE_DV, num_heads=_ROLA_BASE_NH, router_bias=True,
-            kernel='rla',
+            kernel=kernel,
             level_routing_configs=mix, **common)
     _base, _struct = _parse_rola(arm)
     if _base in ROLA_ARMS:
@@ -358,12 +423,27 @@ def recurrent_state_overhead_floats(arm: str) -> int | None:
 
 
 def static_decay_parameter_floats(arm: str) -> int:
-    """Additional fp32 theta parameters owned by a static-decay arm.
+    """Additional fp32 theta parameters owned by a DECAY arm, per layer.
 
-    Always 0 since campaign-prereqs E4 (2026-08-01) retired the only static-decay arm
-    (`rola-multiscale`, kernel='gla_static'): V3's clock is unconditionally detached, so no arm on
-    the live slate owns per-state decay parameters. Kept (and still reported by `train_lm`) so the
-    result rows carry an explicit zero rather than a missing field, and so a future
-    kernel='gla_mass_detached' arm has one place to declare its parameter cost.
+    Kept under its historical name (it is a `train_lm` result-row field, so renaming it would break
+    the result schema); "static" is now a misnomer — V3's only clock is the detached leaf-mass one.
+    The gla_static arm this counted for (`rola-multiscale`) was retired by campaign-prereqs E4.
+
+    Since 2026-08-02 the count is real again for `rola-base-massdecay-global`
+    (kernel='gla_mass_detached' -> the layer's `decay='leaf_mass'`). Per
+    `development/plans/GLA_MASS_DECAY_SPEC.md` §3.1/§5 the dials are COMPACT — one theta per level
+    BRANCH, `O(H * sum_l b_l)`, explicitly never an `[H, nc]` table — and the layer materializes
+    them as `decay_theta`, a ParameterList of per-level `[H, b_l]` fp32 tensors. So:
+
+        floats = num_heads * sum_l b_l                      (= 8 * (8+16) = 192 at the flagship
+                                                             topology, vs nc=128 states/head)
+
+    which is the number that makes the decay-on/decay-off comparison honest: the clock costs three
+    orders less than the state it gates. Every other arm owns no decay parameters and returns 0.
     """
+    if arm in ROLA_BASE_ARMS:
+        _instance, _mix, kernel = ROLA_BASE_INSTANCE[arm]
+        if kernel == 'gla_mass_detached':
+            _D, spl, _nc = _rola_base_topology()
+            return _ROLA_BASE_NH * sum(spl)
     return 0

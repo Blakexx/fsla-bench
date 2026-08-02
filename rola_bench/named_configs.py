@@ -36,18 +36,38 @@ mass mapping (prereqs Q1); no semantics edit was needed (E7).
 **RoLA-base-levelsplit-global**: the LEVEL-SPLIT DUTY cell (ablation ARM 3) — see
 `_levelsplit_kwargs`.
 
+**RoLA-base-levelsplit-a2w-global**: ARM 3's ALPHA-CHOICE ablation — same duty assignment, sparsemax
+(alpha=2) on every sparse WRITE duty and the softer alpha=1.5 on every sparse READ duty
+(user decision, 2026-08-02). See `_levelsplit_a2w_kwargs`.
+
+**RoLA-base-massdecay-global**: the DECAY-ON arm (user decision, 2026-08-02) — ARM 1's routing
+byte-for-byte with `kernel='gla_mass_detached'` instead of `'rla'`, i.e. the V3 layer's
+`decay='leaf_mass'`. This is the paper's decay-ON counterpart to the no-decay ablation; before it,
+every arm on the slate was `decay='none'` and the ablation had nothing to ablate against.
+Semantics per `development/plans/GLA_MASS_DECAY_SPEC.md` (normative): compact AND rate
+`rate_s = prod_l delta_l[d_l(s)]` with `delta_l = sigmoid(theta_l)` over per-level branch dials
+(O(H * sum_l b_l) parameters, never [H,nc]); DETACHED mass clock
+`c_s[t] = stop_gradient(w_s[t])` on the folded stored write amplitude; exponential survival
+`A[t,s] = (1 - rate_s)^c_s[t]`, deposits undamped, inclusive readout. Routing trains through
+deposits and reads; the dials train through the affine rate sensitivity. The dial init target
+`rho_init` is the layer's own `decay_target_leaf_rate` (default 2**-8) — NOT currently overridable
+through the HF `RoLAConfig` path (`rola_instance` does not thread it), so this arm runs at that
+default.
+
 **MQAR variants**: the same cells minus short conv (`use_short_conv=False`) — convs confound
 short-offset recall in MQAR; everything else identical.
 
 Suite wiring (survivors only; every retired name was dropped from these tuples by E2/E3/E4):
-  * LM suite     : RoLA-base-rla, RoLA-base-union-global.
+  * LM suite     : RoLA-base-rla, RoLA-base-union-global, RoLA-base-levelsplit-global,
+                   RoLA-base-levelsplit-a2w-global, RoLA-base-massdecay-global. (2026-08-02: ARM 3
+                   joined so all three structural wirings of the central ablation are LM-runnable,
+                   together with the alpha and decay axes.)
   * MQAR suite   : RoLA-base-rla, RoLA-base-union-global, RoLA-base-hybrid-global-rla,
                    RoLA-base-hybrid-tiedtop-global-rla. (The hybrid pair is the candidate-D
                    depth-hybrid cell and its D-vs-tied-top ablation; only their kernel='rla'
-                   spellings survive — the 'gla_static' siblings are retired by E4.)
-  * Perf suite   : RoLA-base-rla.
-`RoLA-base-levelsplit-global` is deliberately NOT in any suite tuple — the published slate is a
-coordinator decision.
+                   spellings survive — the 'gla_static' siblings are retired by E4.) The MQAR tier
+                   is blocked on the zoology mixer migration, so this tuple was left unchanged.
+  * Perf suite   : RoLA-base-rla. `perf/scaling.py` DERIVES its named arms from this tuple.
 
 See `RETIRED_CONFIGS` for every retired name, its E-number and the knob that no longer exists.
 """
@@ -170,6 +190,10 @@ def _levelsplit_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: s
     Note on `kernel`: this arm was first registered on `'gla_static'` (2026-08-01) only because
     `'gla_scalar'` was already dead; E4 moved it to the ungated `'rla'`, which is what the mainline
     V3 engine can actually execute and what the ablation's other two arms use.
+
+    Note on `alpha`: this arm leaves `LevelRoutingConfig.alpha` at the engine default 1.5 on both
+    levels. `_levelsplit_a2w_kwargs` is its alpha-choice sibling (sparsemax writes, softer reads);
+    the two differ in that one knob and nothing else.
     """
     from fla_rola.layers.rola import LevelRoutingConfig
     D, b = _square_topology(nc)
@@ -179,6 +203,47 @@ def _levelsplit_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: s
         level_routing_configs=[
             LevelRoutingConfig(tied=False, read='dense', write='sparse'),
             LevelRoutingConfig(tied=False, read='sparse', write='dense'),
+        ],
+    )
+
+
+def _levelsplit_a2w_kwargs(nc: int, use_short_conv: bool, kernel: str, state_norm: str = 'global') -> dict:
+    """RoLA-base-levelsplit-a2w-global: the level-split duty cell at SPARSEMAX WRITE / softer read
+    (user decision, 2026-08-02). The ALPHA-CHOICE ablation axis against `_levelsplit_kwargs`.
+
+    **What differs from `_levelsplit_kwargs` — one knob, per level.** `LevelRoutingConfig.alpha` is
+    a PER-LEVEL entmax order that applies to whichever side of that level is `'sparse'` (a `'dense'`
+    side is softmax and ignores alpha). The level-split arm gives each level exactly ONE sparse
+    duty, and the two levels carry OPPOSITE duties — which is what makes alpha a clean per-DUTY dial
+    here without any per-(side,level) vocabulary:
+
+      * coarse level: sparse WRITE, dense read -> alpha=2.0  => SPARSEMAX write (hard, exactly-zero
+        off-support), softmax read (the softest read there is).
+      * fine level:   sparse READ, dense write -> alpha=1.5  => alpha-1.5 entmax read, i.e. the
+        SOFTER of the two exact-sparse orders, against a softmax write.
+
+    So every sparse WRITE duty in this arm is sparsemax and every sparse READ duty is the softer
+    alpha=1.5 — 'commit hard, address softly'. `_levelsplit_kwargs` holds alpha=1.5 on both levels
+    (the engine default), so the pair isolates the alpha choice with the duty assignment, topology,
+    bias, norm, decay and conv all held fixed.
+
+    **Why the write side is the one to harden.** alpha=2 (sparsemax) writes give an EXACT point mass
+    on the demanded corner, which is what maps 1:1 onto skippable state blocks; a hard READ instead
+    risks addressing a leaf the write never touched. Reads stay soft for the dead-end-free property
+    the base arm's dense read gives by construction.
+
+    Both rows remain untied with at most one sparse side, so each resolves to `IndependentRouting`
+    with its own exact solve — same structural path as `_levelsplit_kwargs`, no union anywhere, and
+    identical router PARAMETER shape (untied on both levels => matched addressing entropy).
+    """
+    from fla_rola.layers.rola import LevelRoutingConfig
+    D, b = _square_topology(nc)
+    return dict(
+        levels_per_head=D, states_per_level=b, decay=_decay_from_kernel(kernel), state_norm=state_norm,
+        router_bias=True, use_short_conv=use_short_conv,
+        level_routing_configs=[
+            LevelRoutingConfig(tied=False, read='dense', write='sparse', alpha=2.0),
+            LevelRoutingConfig(tied=False, read='sparse', write='dense', alpha=1.5),
         ],
     )
 
@@ -261,6 +326,18 @@ NAMED_CONFIGS: dict[str, NamedConfig] = {
     'RoLA-base-levelsplit-global': NamedConfig(
         'RoLA-base-levelsplit-global',
         build_kwargs=lambda nc, conv: _levelsplit_kwargs(nc, conv, 'rla', 'global')),
+    # The alpha-choice ablation of ARM 3: identical level-split duty assignment, sparsemax (alpha=2)
+    # on every sparse WRITE duty and the softer alpha=1.5 on every sparse READ duty. See
+    # `_levelsplit_a2w_kwargs`.
+    'RoLA-base-levelsplit-a2w-global': NamedConfig(
+        'RoLA-base-levelsplit-a2w-global',
+        build_kwargs=lambda nc, conv: _levelsplit_a2w_kwargs(nc, conv, 'rla', 'global')),
+    # The DECAY-ON counterpart of ARM 1 — see `_base_kwargs` for the routing (it is byte-identical to
+    # 'RoLA-base-rla'; only the clock differs). This is the arm the paper's no-decay ablation is an
+    # ablation OF, and it is the ONLY decay-on cell on the slate.
+    'RoLA-base-massdecay-global': NamedConfig(
+        'RoLA-base-massdecay-global',
+        build_kwargs=lambda nc, conv: _base_kwargs(nc, conv, 'gla_mass_detached', 'global')),
     # The candidate-D depth-hybrid cell and its D-vs-tied-top ablation. Only the ungated ('rla')
     # spellings survive: their 'gla_static' siblings are retired by E4.
     'RoLA-base-hybrid-global-rla': NamedConfig(
@@ -294,12 +371,16 @@ RETIRED_CONFIGS: dict[str, str] = {
         "E4: kernel='gla_static'. Ungated sibling: 'RoLA-base-hybrid-tiedtop-global-rla'.",
     'RoLA-multiscale':
         "E4: the production STATIC-decay cell — kernel='gla_static' was its entire definition, and "
-        "V3 has no non-detached clock. A detached-clock cell would be a different experiment "
-        "(kernel='gla_mass_detached'); registering one is a coordinator decision.",
+        "V3 has no non-detached clock. A detached-clock cell IS a different experiment; it is now "
+        "registered separately as 'RoLA-base-massdecay-global' (kernel='gla_mass_detached'), on the "
+        "base routing mix rather than multiscale's.",
 }
 
 # Suite wiring, survivors only (every retired name removed by E2/E3/E4, 2026-08-01).
-LM_SUITE_CONFIGS = ('RoLA-base-rla', 'RoLA-base-union-global')
+# 2026-08-02: ARM 3 (level-split) joins the LM slate so all THREE structural wirings of the paper's
+# central ablation are LM-runnable, together with its alpha ablation and the decay-ON arm.
+LM_SUITE_CONFIGS = ('RoLA-base-rla', 'RoLA-base-union-global', 'RoLA-base-levelsplit-global',
+                    'RoLA-base-levelsplit-a2w-global', 'RoLA-base-massdecay-global')
 MQAR_SUITE_CONFIGS = ('RoLA-base-rla', 'RoLA-base-union-global', 'RoLA-base-hybrid-global-rla',
                       'RoLA-base-hybrid-tiedtop-global-rla')   # use_short_conv forced False regardless of preset
 PERF_SUITE_CONFIGS = ('RoLA-base-rla',)

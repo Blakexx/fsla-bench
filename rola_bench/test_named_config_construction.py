@@ -42,9 +42,13 @@ def test_surviving_named_config_speaks_only_live_layer_vocabulary(name):
     assert not {'head_k_dim', 'd_qk', 'qk_norm'} & set(kwargs)
     # E2: kappa is gone; 'global' is the published normalization.
     assert kwargs['state_norm'] == 'global'
-    # E3/E4: the layer takes `decay`, not `kernel`; the whole surviving slate is ungated.
+    # E3/E4: the layer takes `decay`, not `kernel`, and only V3's two live decay values exist.
+    # 'gla_scalar'/'gla_static' have no resolution at all (see the refusal test below); the one
+    # decay-ON arm added 2026-08-02 resolves to 'leaf_mass' (kernel='gla_mass_detached').
     assert 'kernel' not in kwargs
-    assert kwargs['decay'] == 'none'
+    assert kwargs['decay'] in ('none', 'leaf_mass')
+    expected = 'leaf_mass' if name == 'RoLA-base-massdecay-global' else 'none'
+    assert kwargs['decay'] == expected, f"{name} must be {expected}, got {kwargs['decay']!r}"
 
 
 @pytest.mark.parametrize('name', sorted(named_configs.RETIRED_CONFIGS))
