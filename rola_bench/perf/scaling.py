@@ -43,6 +43,22 @@ WARMUP reps absorb each cell's first-touch Triton cold-compile, so cells time wa
 pre-sweep cache-warm pass (the old warm_gate was net-negative: its capture phase serialized the
 autotune in-process so the parallel phase only re-hit cache, and it warmed the raw-forward kernels
 while this bench fires the kappa-norm kernels — 0/4 overlap).
+
+**STATUS 2026-08-02 — the RoLA arms are BLOCKED on the zoology mixer migration.** The V3 mainline
+engine owns no Q/K surface, and `zoology.mixers.rola.RoLAMixer` still forwards `head_k_dim=d_qk`,
+`kernel=`, `phi=`, `qk_norm=` into `fla_rola.layers.RoLA` — every one of those kwargs was deleted by
+V3. So `build_rola` / `build_rola_named` cannot construct a RoLA layer against the campaign engine,
+whatever this file writes; they raise `_zoology_blocker()` by name instead of TypeError-ing deep in
+the layer, exactly as `rola_bench.suites.mqar._construct_named` does. No V2 back-translation is
+written here on purpose: the V2 spellings (`kernel`, `kernel_kwargs={'state_norm': 'kappa'}`,
+`d_qk`) are retired vocabulary and would be dead code the moment the mixer is migrated
+(rola-bench-audit §3, Phase 1.2/1.4). The `attn`, `monolith` and `gla/gdn/deltanet/gsa` arms are
+unaffected and still run.
+
+The NAMED-CONFIG arms are derived from `rola_bench.named_configs.PERF_SUITE_CONFIGS`, not hardcoded.
+Hardcoding is precisely how this file silently rotted: it pinned `'RoLA-base'`, which the E1-E7
+migration retired, so `build_rola_named` KeyError'd and no test noticed.
+`test_perf_scaling_arms.py` is that missing gate.
 """
 import argparse
 import contextlib
@@ -64,8 +80,10 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.environ["HF_HUB_CACHE"])
 
 import torch
 
-from zoology.mixers.rola import RoLAMixer
-from rola_bench.mqar.instances import rola_instance
+# NOTE: `zoology.mixers.rola.RoLAMixer` and `rola_bench.mqar.instances.rola_instance` are no longer
+# imported here — the RoLA arms are blocked on the mixer migration (module docstring) and an unused
+# import of a V2-surface module would keep this file coupled to it for nothing. Restore both when
+# Phase 1.2 lands.
 
 from . import _common as C
 import rola_bench.mqar.experiments.canonical_baselines as cb
@@ -260,12 +278,30 @@ def _e2e_rep(forward, leaves, module):
 
 
 # ------------------------------------------------------------------ builders
+_ZOOLOGY_BLOCKER = (
+    "the perf scaling harness's RoLA arms are blocked on the zoology mixer migration: "
+    "zoology.mixers.rola.RoLAMixer forwards head_k_dim=d_qk, kernel=, phi= and qk_norm= into "
+    "fla_rola.layers.RoLA, and the V3 mainline engine deleted all four (it owns no Q/K surface). "
+    "d_qk has no V3 meaning to translate to, so there is no construction that preserves the cell. "
+    "Migrate zoology/mixers/rola.py onto the V3 layer surface first (rola-bench-audit §3, "
+    "Phase 1.2/1.4); reuse named_configs._decay_from_kernel for the kernel->decay mapping. "
+    "The attn / monolith / gla / gdn / deltanet / gsa arms are unaffected.")
+
+
+def _zoology_blocker(detail: str) -> NotImplementedError:
+    return NotImplementedError(f"{detail}: {_ZOOLOGY_BLOCKER}")
+
+
 def build_rola(gla, nc, d, routing="flat"):
-    """Routed RoLA LAYER at d_qk=d_v=d, nc states, `routing` factor topology, perf backbone. Returns
-    the nn.Module (layer_idx=0 so it can carry a KV cache for the layer-level decode arm)."""
-    kw = rola_instance("rola-gla-kappa-asym" if gla else "rola-rla-kappa-asym",
-                       d_qk=d, d_v=d, num_chunks=nc, n_heads=C.H, routing=routing)
-    return RoLAMixer(d_model=DM, layer_idx=0, **kw).to(C.DEV, C.DT)
+    """Routed RoLA LAYER at d_v=d, nc states, `routing` factor topology, perf backbone.
+
+    BLOCKED — see the module docstring. The presets this used to name
+    (`rola-rla-kappa-asym` / `rola-gla-kappa-asym`) are doubly dead: `state_norm='kappa'` is not a
+    normalization in any engine checkout (campaign-prereqs E2) and the whole `gla_*` family is
+    `kernel='gla_scalar'` (E3). Re-pinning them to live presets would still not construct, because
+    the mixer's own signature is the blocker."""
+    raise _zoology_blocker(
+        f"build_rola(gla={gla}, nc={nc}, d={d}, routing={routing!r})")
 
 
 # --- REAL external linear-attention baselines (paper_v1: RoLA vs the FLA library's own canonical
@@ -302,34 +338,65 @@ def _build_fla_baseline(kind):
               **_FLA_BASELINE_GEOM[kind]).to(C.DEV, C.DT)
 
 
-_NAMED_ROLA_ARM_KINDS = ("rola-base", "rola-base-rla")   # paper_v1's flagship arms
+def _named_arm_kind(name: str) -> str:
+    """The CLI/`SCALE_ARMS` spelling of a named config (it is also the `arm` column in the CSV)."""
+    return name.lower()
+
+
+def named_rola_arm_names() -> tuple[str, ...]:
+    """The named configs this harness exposes as scaling arms — DERIVED from the registry's own
+    perf slate (`named_configs.PERF_SUITE_CONFIGS`), never hardcoded here.
+
+    This is the anti-rot property `test_perf_scaling_arms.py` gates: the previous hardcoded pair
+    `("rola-base", "rola-base-rla")` outlived `RoLA-base`'s retirement by the E1-E7 migration and
+    turned into a silent `KeyError` in the paper_v1 kernel harness, because nothing tested it.
+    Deriving means a retirement can only ever remove an arm, never leave a dangling name."""
+    from rola_bench.named_configs import PERF_SUITE_CONFIGS
+    return tuple(PERF_SUITE_CONFIGS)
+
+
+def named_rola_arm_kinds() -> tuple[str, ...]:
+    return tuple(_named_arm_kind(n) for n in named_rola_arm_names())
+
+
+_NAMED_ROLA_ARM_KINDS = named_rola_arm_kinds()   # paper_v1's flagship arms
+
+
+def resolve_named_arm(kind, nc=256):
+    """Resolve a named-config scaling arm to `(name, layer_kwargs)` — PURE REGISTRY WORK, no engine
+    import, no GPU, so it can be gated on CPU.
+
+    `layer_kwargs` are the V3 `fla_rola.layers.RoLA` kwargs the registry emits
+    (`levels_per_head` / `states_per_level` / `level_routing_configs` / `decay` / `state_norm` /
+    `router_bias` / `use_short_conv`). Note `decay`, not `kernel`: the E1-E7 migration moved the
+    builders onto the V3 layer's own vocabulary, and reading the removed `kernel` key is the second
+    of the two bugs this file carried."""
+    from rola_bench.named_configs import NAMED_CONFIGS, RETIRED_CONFIGS
+    by_kind = {_named_arm_kind(n): n for n in named_rola_arm_names()}
+    if kind not in by_kind:
+        raise ValueError(
+            f"unknown named RoLA arm {kind!r}; expected one of {sorted(by_kind)} "
+            "(derived from named_configs.PERF_SUITE_CONFIGS)")
+    name = by_kind[kind]
+    if name in RETIRED_CONFIGS:
+        raise ValueError(
+            f"named config {name!r} is on the perf slate but RETIRED: {RETIRED_CONFIGS[name]}")
+    if name not in NAMED_CONFIGS:
+        raise KeyError(
+            f"named config {name!r} is on the perf slate but absent from NAMED_CONFIGS")
+    kwargs = dict(NAMED_CONFIGS[name].build_kwargs(nc, True))   # conv=True (paper/LM geometry)
+    return name, kwargs
 
 
 def build_rola_named(kind, nc=256):
     """Build a flagship named-config RoLA layer (`rola_bench.named_configs`) as a scaling arm, at ITS
-    OWN fixed geometry (H=8, d_qk=16, d_v=64, square topology) rather than the (d, nc) sweep axis --
-    same rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis. Goes
-    through the `RoLAMixer` `level_routing_configs` passthrough and fails loudly if production routing
-    cannot be resolved. Returns `(module, name)`."""
-    from rola_bench.named_configs import NAMED_CONFIGS
-    name = {"rola-base": "RoLA-base", "rola-base-rla": "RoLA-base-rla"}[kind]
-    cfg = NAMED_CONFIGS[name]
+    OWN fixed geometry (H=8, d_v=64, square topology) rather than the (d, nc) sweep axis -- same
+    rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis.
 
-    def _mixer(cfg_obj):
-        kwargs = dict(cfg_obj.build_kwargs(nc, True))   # use_short_conv=True (paper/LM geometry)
-        lrc = kwargs.pop("level_routing_configs")
-        D, b = kwargs.pop("levels_per_head"), kwargs.pop("states_per_level")
-        return RoLAMixer(d_model=DM, d_qk=16, d_v=64, levels_per_head=D, states_per_level=b, n_heads=8,
-                         kernel=kwargs.pop("kernel"), level_routing_configs=lrc, layer_idx=0,
-                         kernel_kwargs={"state_norm": kwargs.pop("state_norm")},
-                         router_bias=kwargs.pop("router_bias"),
-                         use_short_conv=kwargs.pop("use_short_conv")).to(C.DEV, C.DT)
-
-    m = _mixer(cfg)
-    err = getattr(m, "_routing_resolution_error", None)
-    if err is not None:
-        raise err
-    return m, name
+    The registry resolution runs FIRST, so a dangling/retired arm name fails with its own message;
+    the construction itself is BLOCKED on the zoology mixer (see the module docstring)."""
+    name, _kwargs = resolve_named_arm(kind, nc)
+    raise _zoology_blocker(f"build_rola_named({kind!r}, nc={nc}) -> {name!r}")
 
 
 def build_monolith(gla, nc, d):
