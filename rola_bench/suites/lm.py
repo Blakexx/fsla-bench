@@ -1,13 +1,14 @@
 """LM suite entry point.
 
 Pinned configs = `rola_bench.lm.arms.ARMS` (the dense-router RoLA comparison variants, the
-published-flagship RoLA-base arms, gdn/gdn-isostate, gla/gla-isostate, attn). The kappa /
-gla_scalar / gla_static arms are RETIRED — see `arms.RETIRED_LM_ARMS` and the campaign-prereqs
-E1-E7 migration.
+published-flagship RoLA-base arms, gdn, gla, attn). The kappa / gla_scalar / gla_static arms are
+RETIRED, and `gdn-isostate` / `gla-isostate` were deleted as byte-identical duplicates of
+`gdn`/`gla` (finding F4) — see `arms.RETIRED_LM_ARMS` and the campaign-prereqs E1-E7 migration.
 
 The published flagship — `rola-base-rla` / `rola-base-union-global` /
 `rola-base-hybrid-global-rla` / `rola-base-hybrid-tiedtop-global-rla` — router_bias=True,
-two-level topology (required mixed-radix [8,16]; `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
+two-level topology (required mixed-radix [8,16], N=128, at d_v=128 — d_v re-pinned 2026-08-02 per
+finding F1, `arms._rola_base_topology`), per-level heterogeneous write: sparse@coarse +
 dense@fine, dense read (asym arms), short conv ON — see `rola_bench.lm.arms.ROLA_BASE_*` — reachable
 through the HF `AutoModelForCausalLM` path like every other arm: `RoLAConfig`
 (`fla_rola/models/rola/configuration_rola.py`) carries the `level_routing_configs` field,
@@ -76,8 +77,12 @@ def main(argv=None):
     from rola_bench.named_configs import construct, LM_SUITE_CONFIGS
     for name in LM_SUITE_CONFIGS:
         try:
+            # head_v_dim=128 is the flagship value width (F1 re-pin, matched with GDN/GLA at
+            # textbook d_k=d_v=128). nc stays 256 because `named_configs` builds a SQUARE topology
+            # (b=16 here) while the LM arms are mixed-radix [8,16] — a pre-existing divergence
+            # between the two construction paths, not something this smoke should paper over.
             layer, used = construct(
-                name, hidden_size=512, num_heads=8, head_v_dim=64, nc=256,
+                name, hidden_size=512, num_heads=8, head_v_dim=128, nc=256,
                 use_short_conv=True)
             layer = layer.cuda() if torch.cuda.is_available() else layer
             x = torch.randn(1, 8, 512, device=next(layer.parameters()).device)

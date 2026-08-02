@@ -6,24 +6,35 @@ Design (see TASKS #102):
     RMSNorm(eps=1e-6), untied embeddings, GPT-2 vocab. RoLAConfig mirrors fla GLAConfig's backbone
     fields byte-for-byte, and the fla baselines (GDN, Transformer) share the same fla backbone, so
     swapping arms changes ONLY the token mixer.
-  * The bounded-state arms are matched on RECURRENT STATE. Each active LM spec sets bounded-state
-    floats/layer to half of the training-context attention KV cache:
-        target = block_size * hidden_size = 0.5 * (2 * block_size * hidden_size).
-    For RoLA this is the X=1 rule: states_per_head * d_qk = block_size, with num_heads * d_v =
-    hidden_size. GDN/GLA are sized to the same target in the YAML geometry.
+  * The bounded-state arms are matched on RECURRENT STATE at TEXTBOOK head shape — `d_k = d_v = 128`
+    at `H = 8`, the standard linear-attention head geometry — so the arms agree on state size, on
+    head shape, and on addressing capacity (RoLA's `d_qk`-equivalent is likewise 128) rather than
+    only on a total.
   * Softmax attention is the unbounded-state CEILING (no recurrent state to match) — the reference the
     bounded models try to approach.
 
-Default recurrent state (headline rung) = 1,048,576 floats/layer at block_size=2048, hidden=512:
-    RoLA  n_h=8, nc=128, d_qk=16, d_v=64  ->  8*128*16*64 = 1048576
-    GDN   n_h=8, head_dim=256, expand_v=2 ->  8*256*512 = 1048576
-    GLA   n_h=4, expand_k=2, expand_v=8   ->  (512*2)*(512*8)/4 = 1048576
+**WHAT THIS TIER IS FOR (user ruling, 2026-08-02).** The LM tier's role is TRAINS-STABLY-AT-STANDARD-
+SCALE, nothing more. CAPACITY evidence lives in the MQAR `N ∝ L` grid, not here. So the flagship is
+NOT sized to a capacity target; it is sized to the standard head geometry a reader expects, and the
+comparison is honest at that scale.
 
-  RoLA's d_v=64 (not 16) is deliberate: the mixer readout width is n_h*d_v, and w_o lifts it to
-  d_model. At d_v=16 that readout is only 128-wide (d_model/4) -> the mixer could write at most a
-  rank-128 update to the 512-d residual, an output BOTTLENECK vs attn (512) and GDN (2048). We set
-  n_h*d_v = 512 = d_model so RoLA is not handicapped on output capacity; the state budget is then
-  spent on nc=64 routed states (output_width * nc*d_qk = state is the fixed-state tradeoff).
+Recurrent state (headline rung), hidden=512:
+    RoLA  n_h=8, N=128 (b=[8,16]), d_v=128 ->  8*128*128 = 131,072   (re-pinned 2026-08-02, F1)
+    GDN   n_h=8, head_dim=128, expand_v=1  ->  8*128*128 = 131,072
+    GLA   n_h=8, expand_k=2, expand_v=2    ->  (512*2)*(512*2)/8 = 131,072
+
+The baselines' previous 1,048,576-float sizing (GDN head_dim=256/expand_v=2, GLA H=4/ev=8) was 8x
+the standard head geometry — chosen to hit a "half of attention's KV cache at L=2048" target, which
+is a capacity argument this tier no longer makes. It is simply re-sized to textbook here.
+
+**F1 (2026-08-02) — the state accounting is READ BACK FROM THE ENGINE, never computed here.**
+Every RoLA state number in this module comes from `fla_rola.layers.RoLA.get_stats()` on a layer
+built at the arm's own geometry (`_rola_stats`). The formula this module used to carry —
+`num_heads * N * d_qk * d_v` — was the V2 shape, where one state was a `[d_qk, d_v]` MATRIX. V3's
+state is `[N, d_v]` per head and the architecture deleted `d_qk` outright, so that formula
+overstated RoLA's state by exactly `d_qk` = 16x and every RoLA-vs-GDN/GLA row published against it
+was matched to a number the layer never allocated. A formula cannot be wrong in that way twice if
+there is no formula: the engine is the authority.
 
 Each arm returns a fresh `AutoModelForCausalLM.from_config(cfg)`. `arm_config(...)` builds the
 config only (cheap, for param/state accounting); `build_arm(...)` builds the model.
@@ -37,27 +48,24 @@ _engine.register_hf_models()   # registers RoLA AutoClasses
 from rola_bench.engine import RoLAConfig
 from transformers import AutoModelForCausalLM
 
-# --- env-overridable knobs (defaults = Option-Y headline @ d_model=512). The d_model=128 small-
-# backbone diagnostic sets LM_HIDDEN/LM_ROLA_*/LM_ATTN_HEADS to run RoLA's narrow-output regime
-# (nc=256, d_qk=d_v=16 -> output 128 = d_model=128, no waste) against a matched small attn. -------
+# --- env-overridable knobs (defaults = the headline rung @ d_model=512). A small-backbone
+# diagnostic overrides LM_HIDDEN/LM_ROLA_*/LM_ATTN_HEADS to run a narrower regime against a matched
+# small attn. ------------------------------------------------------------------------------------
 _HID     = int(_os.environ.get("LM_HIDDEN", "512"))        # backbone d_model
-_NC      = int(_os.environ.get("LM_ROLA_NC", "128"))       # RoLA routed states (Y: 128)
-_DQK     = int(_os.environ.get("LM_ROLA_DQK", "16"))
-_DV      = int(_os.environ.get("LM_ROLA_DV", "64"))        # Y: 64 -> n_h*d_v = 512 = d_model (no bottleneck)
+_NC      = int(_os.environ.get("LM_ROLA_NC", "128"))       # LEGACY dense-router cells' routed states
+_DV      = int(_os.environ.get("LM_ROLA_DV", "64"))        # legacy cells' value width
 _NH      = int(_os.environ.get("LM_ROLA_NH", "8"))         # shared head count
-_GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads (Y@512: 8 -> canonical-8h, state matches RoLA)
-_GDN_HEAD_DIM = int(_os.environ.get("LM_GDN_HEAD_DIM", "256"))    # GDN key head_dim (Y@512: 256; small backbone -> 64)
-_GDN_EXPAND_V = float(_os.environ.get("LM_GDN_EXPAND_V", "2.0"))  # GDN value expansion (canonical 2)
-_GLA_NH  = int(_os.environ.get("LM_GLA_NH", "4"))          # GLA heads
-_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "2.0"))      # default state matches half-KV at L=2048, hidden=512
-_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "8.0"))
-# Backward-compatible aliases for older specs; active LM YAMLs size gdn/gla directly to half-KV.
-_GDNISO_NH = int(_os.environ.get("LM_GDNISO_NH", "8"))
-_GDNISO_HEAD_DIM = int(_os.environ.get("LM_GDNISO_HEAD_DIM", "256"))
-_GDNISO_EXPAND_V = float(_os.environ.get("LM_GDNISO_EXPAND_V", "2.0"))
-_GLAISO_NH = int(_os.environ.get("LM_GLAISO_NH", "4"))
-_GLAISO_EK = float(_os.environ.get("LM_GLAISO_EK", "2.0"))
-_GLAISO_EV = float(_os.environ.get("LM_GLAISO_EV", "8.0"))
+# TEXTBOOK baseline geometry (re-sized 2026-08-02): d_k = d_v = 128 at H = 8 for BOTH baselines.
+#   GDN: head_dim IS head_k_dim and head_v_dim = head_dim * expand_v (fla.layers.gated_deltanet),
+#        so 128 / 1.0 gives 128x128 per head -> 8*128*128 = 131,072 floats/layer.
+#   GLA: head_k = hidden*expand_k/H and head_v = hidden*expand_v/H (fla.layers.gla), so at
+#        hidden=512, H=8, ek=ev=2.0 both are 128 -> (512*2)*(512*2)/8 = 131,072 floats/layer.
+_GDN_NH  = int(_os.environ.get("LM_GDN_NH", "8"))          # GDN heads
+_GDN_HEAD_DIM = int(_os.environ.get("LM_GDN_HEAD_DIM", "128"))    # GDN key head_dim = d_k (textbook 128)
+_GDN_EXPAND_V = float(_os.environ.get("LM_GDN_EXPAND_V", "1.0"))  # d_v = head_dim * expand_v = 128
+_GLA_NH  = int(_os.environ.get("LM_GLA_NH", "8"))          # GLA heads (8, matched with GDN/RoLA)
+_GLA_EK  = float(_os.environ.get("LM_GLA_EK", "2.0"))      # d_k = hidden*ek/H = 128 at hidden=512
+_GLA_EV  = float(_os.environ.get("LM_GLA_EV", "2.0"))      # d_v = hidden*ev/H = 128 at hidden=512
 _ATTN_NH = int(_os.environ.get("LM_ATTN_HEADS", "8"))      # softmax-attn heads (head_dim = _HID/this)
 _MAXPOS  = int(_os.environ.get("LM_MAX_POS", "2048"))      # max_position_embeddings; set >= train ctx (4k headline)
 _LAYERS  = int(_os.environ.get("LM_LAYERS", "12"))         # num_hidden_layers; shrink for micro (e.g. TinyStories)
@@ -74,29 +82,24 @@ BACKBONE = dict(
     tie_word_embeddings=False,
     fuse_cross_entropy=True,
 )
-# --- matched recurrent-state geometry (default: half of attention KV at L=2048) ----------------
-# RoLA  n_h=8 * nc=128 * d_qk=16 * d_v=64 = 1048576 floats/layer; n_h*d_v = 512 = d_model (no output
-#   bottleneck -- see module docstring). Active YAML specs override these per context length so
-#   every bounded arm lands on block_size * hidden_size.
-# RoLA additionally stores a per-state DENOMINATOR accumulator (n_h*nc*d_qk = 16384, ~1.5%) for its
-# normalized readout — RoLA-specific bookkeeping the delta rule doesn't need. It is NOT part of the
-# matched content axis; reported separately (rola_den_overhead) so the matched quantity is like-for-like.
-# `RoLAConfig` (#config-refactor 2026-07-06) takes `levels_per_head`/`states_per_level` (D, b; nc=b**D)
-# instead of `states_per_head` — the geometry here is flat (D=1, b=nc), the strict equivalent of the
-# old dense per-head router (rola_bench.rola_compat.topology_from_legacy). `states_per_head` is kept
-# as a KEY in ROLA_GEOM (nc, the locked pinned number) for every OTHER call site in this module
-# (MATCHED_STATE, ROLA_DEN_OVERHEAD, recurrent_state_floats, the `nc` structure-override key) — only
-# `arm_config`'s RoLAConfig(**ROLA_GEOM) construction call translates it to levels_per_head/states_per_level.
-ROLA_GEOM = dict(states_per_head=_NC, d_qk=_DQK, d_v=_DV, num_heads=_NH, qk_norm=_QKNORM,
-                 router_bias=_ROUTER_BIAS)
+# --- matched recurrent-state geometry (textbook d_k = d_v = 128 at H = 8) ----------------------
+# The LEGACY dense-router comparison cells (ROLA_ARMS below) live at flat D=1, b=nc=128, d_v=64,
+# H=8 -> a realized 8*128*64 = 65,536 content floats/layer. They are NOT iso-state with GDN/GLA and
+# never were: the number that used to claim they were came from the deleted `d_qk` (see the module
+# docstring, F1). They are kept as the pre-flagship routed-vs-dense-router control, and their state
+# is now REPORTED, not asserted — `recurrent_state_floats` reads it off the engine.
+# `RoLAConfig` takes `levels_per_head`/`states_per_level` (D, b; nc = prod b), so `states_per_head`
+# survives as a KEY in ROLA_GEOM only; `arm_config` translates it at the construction call.
+ROLA_GEOM = dict(states_per_head=_NC, d_v=_DV, num_heads=_NH, router_bias=_ROUTER_BIAS)
 GDN_GEOM = dict(num_heads=_GDN_NH, head_dim=_GDN_HEAD_DIM, expand_v=_GDN_EXPAND_V)
 GLA_GEOM = dict(num_heads=_GLA_NH, expand_k=_GLA_EK, expand_v=_GLA_EV, gate_logit_normalizer=16)
-# Alias geometry for older configs that still name gdn-isostate/gla-isostate.
-GDNISO_GEOM = dict(num_heads=_GDNISO_NH, head_dim=_GDNISO_HEAD_DIM, expand_v=_GDNISO_EXPAND_V)
-GLAISO_GEOM = dict(num_heads=_GLAISO_NH, expand_k=_GLAISO_EK, expand_v=_GLAISO_EV, gate_logit_normalizer=16)
+# `gdn-isostate` / `gla-isostate` were DELETED 2026-08-02 (finding F4): they were byte-identical
+# aliases of `gdn`/`gla` at every current env default, so running both spent budget twice on one
+# cell and any table listing both implied a distinction that did not exist. With the flagship RoLA
+# geometry re-pinned to the same 131,072 floats/layer (F1), `gdn`/`gla` ARE the iso-state
+# baselines exactly — an "-isostate" variant would have to be either a duplicate or a fake.
+# See RETIRED_LM_ARMS.
 ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/_ATTN_NH (default 64 @512)
-MATCHED_STATE = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"] * ROLA_GEOM["d_v"]
-ROLA_DEN_OVERHEAD = ROLA_GEOM["num_heads"] * ROLA_GEOM["states_per_head"] * ROLA_GEOM["d_qk"]
 
 # Uniform component policy across the sub-quadratic arms: short conv OFF for ALL (isolate the mixer;
 # attention has no conv, so conv-off keeps the only difference the mixer itself). This runs GDN
@@ -123,22 +126,45 @@ USE_SHORT_CONV = False
 # there is no q/k RMSNorm to pin and no `rola-base-noqknorm` ablation to run. `LM_QK_NORM` survives
 # only as the softmax-attention baseline's own stabilizer knob (see the `attn` arm below).
 #
-# GEOMETRY (user decision, 2026-07-08, REVISED same day): the flagship LM arms TARGET the
-# MIXED-RADIX topology states_per_level=[8, 16] (coarse-first: 8 coarse × 16 fine, nc=128) —
-# state = 8·128·16·64 = 1,048,576 floats/layer = EXACT match with the GDN/GLA X=1 iso arms (all at
-# 50% of attention's reference KV cache at block_size=2048). Mixed-radix `states_per_level` is the
-# The production flagship topology is mixed-radix [8,16] (coarse-first, nc=128). It is required
-# capability, not a construction probe or a compatibility choice. GDN/GLA retain their canonical
-# 1M-float iso geometries; the RoLA arms use the same matched content state.
+# GEOMETRY (user decision 2026-07-08; d_v RE-PINNED 2026-08-02 per finding F1 + the same day's
+# scope ruling). The flagship LM arms run the MIXED-RADIX topology states_per_level=[8, 16]
+# (8 coarse × 16 fine, N = 128) at d_v = 128, H = 8:
+#
+#     realized content state = H * N * d_v = 8 * 128 * 128 = 131,072 floats/layer
+#
+# matched against GDN (8 * 128 * 128) and GLA ((512*2)*(512*2)/8) at TEXTBOOK d_k = d_v = 128, H = 8.
+# The three arms now agree on state size, on head shape, AND on addressing capacity (RoLA's
+# d_qk-equivalent width is likewise 128).
+#
+# WHAT MOVED, AND WHAT DID NOT. Only `d_v` (64 -> 128) and the baselines' sizing moved. The topology
+# stays [8,16], N stays 128. What was WRONG was never the topology: this module claimed
+# 8*128*16*64 = 1,048,576 floats/layer via the V2 `d_qk` factor while the layer REALIZED
+# 8*128*64 = 65,536 (F1 / arms-ledger H1), and the baselines were sized to the claim — 8x the
+# standard head geometry — so the "matched-state" comparison was neither matched nor standard.
+#
+# CAPACITY IS NOT THIS TIER'S JOB (user ruling 2026-08-02). An N-scaled LM row was considered and
+# REJECTED: the LM tier exists to show the architecture trains stably at standard scale, and the
+# capacity claim (the N vs L boundary) is carried by the MQAR `N ∝ L` grid, where it can be swept
+# properly instead of asserted by one over-sized cell.
+#
+# Readout width: H * d_v = 1024 = 2 x d_model(512). The old H*d_v = 512 = d_model was chosen to
+# avoid an output BOTTLENECK; 2x d_model is on the safe side of that constraint and is where the
+# baselines sit too (GDN's value dim is 8*128 = 1024, identical).
+#
+# VERIFIED against the engine, not assumed (2026-08-02, mainline b71608f9): a RoLA layer at
+# H=8, d_v=128, states_per_level=[8,16] constructs and runs a CPU forward, and `get_stats()` reports
+# d_v=128, num_chunks=128, state_floats=132,096 = 131,072 content + 1,024 denominator.
+# Gated in `test_flagship_geometry_and_raw_arms.py`.
 _ROLA_BASE_SPL = [8, 16]
-_ROLA_BASE_DQK = int(_os.environ.get("LM_ROLA_BASE_DQK", "16"))
-_ROLA_BASE_DV  = int(_os.environ.get("LM_ROLA_BASE_DV", "64"))
+_ROLA_BASE_DV  = int(_os.environ.get("LM_ROLA_BASE_DV", "128"))
 _ROLA_BASE_NH  = int(_os.environ.get("LM_ROLA_BASE_NH", "8"))
 _ROLA_BASE_D   = len(_ROLA_BASE_SPL)
+_ROLA_BASE_NC  = _ROLA_BASE_SPL[0] * _ROLA_BASE_SPL[1]
+
 
 def _rola_base_topology() -> tuple[int, list[int], int]:
-    """Return the required production flagship topology: D=2, b=[8,16], nc=128."""
-    return _ROLA_BASE_D, list(_ROLA_BASE_SPL), 128
+    """Return the required production flagship topology: D=2, b=[8,16], N=128."""
+    return _ROLA_BASE_D, list(_ROLA_BASE_SPL), _ROLA_BASE_NC
 
 # The published write mix: sparse (entmax, fixed alpha=1.5) at the coarse level, dense (softmax) at
 # the fine level; read stays dense at both levels (dead-end-free by construction, ROLA_SEMANTICS.md
@@ -314,19 +340,44 @@ RETIRED_LM_ARMS = {
     'rola-gla-kappa-sym': "E2/E3/E5: kappa + gla_scalar instance string; not in mainline ROLA_INSTANCES.",
     'rola-rla-kappa-asym-conv': "E2/E5: state_norm='kappa' instance string; not in mainline ROLA_INSTANCES.",
     'rola-gla-kappa-asym-conv': "E2/E3/E5: kappa + gla_scalar instance string; not in mainline ROLA_INSTANCES.",
+    # F4 (2026-08-02): these were byte-identical to 'gdn'/'gla' at every current env default —
+    # GDNISO_GEOM == GDN_GEOM and GLAISO_GEOM == GLA_GEOM, same class, same kwargs — so a slate
+    # carrying both spent budget twice on one cell and implied a distinction that did not exist.
+    # They were kept as back-compat aliases for older YAML specs; every one of those specs also
+    # names arms retired above, so nothing runnable depended on them. Deleted rather than made
+    # "real": with the flagship RoLA geometry re-pinned to 1,048,576 floats/layer (F1), 'gdn' and
+    # 'gla' ARE the exact iso-state baselines, so a distinct -isostate variant could only be a
+    # duplicate under another name or a differently-sized cell pretending to be the matched one.
+    'gdn-isostate': "F4: byte-identical duplicate of 'gdn'. Use 'gdn' — it is the exact iso-state "
+                    "baseline for the re-pinned flagship geometry (131,072 floats/layer).",
+    'gla-isostate': "F4: byte-identical duplicate of 'gla'. Use 'gla' — it is the exact iso-state "
+                    "baseline for the re-pinned flagship geometry (131,072 floats/layer).",
 }
 
 # Legacy (non-flagship) RoLA comparison cells: the dense-router arms, named by the mainline engine's
 # own instance strings (E5 — mainline `ROLA_INSTANCES` is exactly this set). The historical
 # `rola-*-kappa-*` / `rola-gla-*` spellings of these cells are retired above.
 ROLA_ARMS = ("rola-rla-sym", "rola-rla-asym", "rola-rla-asym-conv")
-ARMS = ROLA_ARMS + ROLA_BASE_ARMS + ("gdn", "gdn-isostate", "gla", "gla-isostate", "attn")
+ARMS = ROLA_ARMS + ROLA_BASE_ARMS + ("gdn", "gla", "attn")
 
+# NO `-raw` LM ARM EXISTS, and it is an ENGINE gap, not an omission here (2026-08-02). The
+# normalization axis's other end is registered on the LAYER path as `RoLA-base-rla-raw` /
+# `RoLA-base-levelsplit-raw` (`rola_bench.named_configs`), because `state_norm` cannot reach the
+# layer through the HF path at all: `fla_rola.models.rola.configuration_rola.RoLAConfig` has no
+# `state_norm` field and `fla_rola.models.rola.instances.rola_instance` HARD-CODES
+# `state_norm='global'` for every instance in `ROLA_INSTANCES`. Passing it on `RoLAConfig` would be
+# silently absorbed by HF and do nothing — exactly the F3 failure mode — so no such arm is
+# registered. Threading `state_norm` (and the both-sides gain it implies) through `RoLAConfig` +
+# `rola_instance` is an engine-side change; until it lands the raw ablation is layer-path only.
 
-# Optional RoLA STRUCTURE override via arm-name suffix "<base>__nhX_dvY_ncZ_dqkW" (structure-ablation
-# spec): overrides num_heads/d_v/states_per_head/d_qk on top of ROLA_GEOM; base must be in ROLA_ARMS.
-# e.g. "rola-rla-kappa-asym__nh4_dv64" -> nh4/dv64 (head vs d_v split sweep at fixed nh*d_v=out_dim).
-_STRUCT_KEYS = {"nh": "num_heads", "dv": "d_v", "dqk": "d_qk", "nc": "states_per_head"}
+# Optional RoLA STRUCTURE override via arm-name suffix "<base>__nhX_dvY_ncZ" (structure-ablation
+# spec): overrides num_heads/d_v/states_per_head on top of ROLA_GEOM; base must be in ROLA_ARMS.
+# e.g. "rola-rla-asym__nh4_dv64" -> nh4/dv64 (head vs d_v split sweep at fixed nh*d_v=out_dim).
+# The `dqk` key was DELETED with the rest of the V2 Q/K accounting (F1): the V3 layer has no d_qk,
+# so a `__dqk16` token no longer names anything. An unrecognized token RAISES rather than being
+# silently dropped — a silently-ignored geometry override is how a cell gets published at a
+# geometry nobody asked for (the F3 failure mode again).
+_STRUCT_KEYS = {"nh": "num_heads", "dv": "d_v", "nc": "states_per_head"}
 
 
 def _parse_rola(arm: str):
@@ -338,6 +389,11 @@ def _parse_rola(arm: str):
         for k, full in _STRUCT_KEYS.items():
             if tok.startswith(k) and tok[len(k):].isdigit():
                 over[full] = int(tok[len(k):]); break
+        else:
+            raise ValueError(
+                f"arm {arm!r}: unrecognized structure-override token {tok!r}; known prefixes are "
+                f"{sorted(_STRUCT_KEYS)} followed by an integer. ('dqk' was deleted with the V2 "
+                "Q/K accounting — the V3 layer owns no d_qk.)")
     return base, over
 
 
@@ -361,7 +417,6 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if _base in ROLA_ARMS:
         g = {**ROLA_GEOM, **_struct}
         nc = g.pop("states_per_head")   # -> flat (D=1, b=nc); RoLAConfig has no states_per_head kwarg.
-        g.pop("d_qk"); g.pop("qk_norm")  # E1: state-accounting keys only, not construction kwargs.
         return RoLAConfig(rola_instance=_base, levels_per_head=1, states_per_level=nc, **g, **common)
     if arm == "gdn":
         from fla.models.gated_deltanet import GatedDeltaNetConfig
@@ -369,12 +424,6 @@ def arm_config(arm: str, vocab_size: int, bos_token_id: int = 50256, eos_token_i
     if arm == "gla":
         from fla.models.gla import GLAConfig
         return GLAConfig(use_short_conv=USE_SHORT_CONV, **GLA_GEOM, **common)
-    if arm == "gdn-isostate":
-        from fla.models.gated_deltanet import GatedDeltaNetConfig
-        return GatedDeltaNetConfig(use_short_conv=USE_SHORT_CONV, use_gate=True, **GDNISO_GEOM, **common)
-    if arm == "gla-isostate":
-        from fla.models.gla import GLAConfig
-        return GLAConfig(use_short_conv=USE_SHORT_CONV, **GLAISO_GEOM, **common)
     if arm == "attn":
         from fla.models.transformer import TransformerConfig
         # Softmax-attention ceiling: full causal attention (window_size=None), RoPE positions.
@@ -390,37 +439,111 @@ def build_arm(arm: str, vocab_size: int, **kw):
     return AutoModelForCausalLM.from_config(arm_config(arm, vocab_size, **kw))
 
 
-def recurrent_state_floats(arm: str) -> int | None:
-    """Nominal recurrent-state floats/layer for the bounded arms (matched target); None for attn
-    (unbounded KV cache). Realized state is read back from the built layer in the result row."""
+_ROLA_STATS_CACHE: dict[str, dict] = {}
+
+
+def _rola_layer_kwargs(arm: str) -> dict | None:
+    """The RoLA LAYER geometry an arm runs at, or None if `arm` is not a RoLA arm.
+
+    One place that answers "what shape does this arm actually allocate", so the state accounting and
+    the construction path cannot disagree. Conv is OFF here: the short-conv cache is a separate
+    per-layer cache, not part of the matched recurrent-state axis, and `get_stats()` folds it in.
+    """
     if arm in ROLA_BASE_ARMS:
-        _D, _spl, nc = _rola_base_topology()
-        return _ROLA_BASE_NH * nc * _ROLA_BASE_DQK * _ROLA_BASE_DV
-    _base, _struct = _parse_rola(arm)
-    if _base in ROLA_ARMS:
-        g = {**ROLA_GEOM, **_struct}
-        return g["num_heads"] * g["states_per_head"] * g["d_qk"] * g["d_v"]
+        D, spl, _nc = _rola_base_topology()
+        return dict(num_heads=_ROLA_BASE_NH, head_v_dim=_ROLA_BASE_DV,
+                    levels_per_head=D, states_per_level=spl)
+    base, struct = _parse_rola(arm)
+    if base in ROLA_ARMS:
+        g = {**ROLA_GEOM, **struct}
+        return dict(num_heads=g["num_heads"], head_v_dim=g["d_v"],
+                    levels_per_head=1, states_per_level=g["states_per_head"])
+    return None
+
+
+def rola_realized_stats(arm: str) -> dict | None:
+    """`RoLA.get_stats()` for `arm`, read off a layer the ENGINE built at the arm's geometry.
+
+    F1 (2026-08-02): this is the authority for every RoLA state number in this module. There is no
+    state formula here any more — the previous one (`H * nc * d_qk * d_v`) was the V2 matrix-state
+    shape and overstated V3's `[N, d_v]` state by exactly the deleted `d_qk` (16x), which is how the
+    published rows came to be "matched" against a number no layer ever allocated.
+
+    Returns the engine's own dict — `{'d_v', 'n_heads', 'num_chunks', 'state_floats'}` — where
+    `state_floats` is the TOTAL (content + the per-state denominator sidecar that `state_norm`
+    'global' carries and 'raw' does not). Cached per arm: constructing the accounting layer is
+    cheap but not free, and the geometry is fixed for the process.
+    """
+    if arm in _ROLA_STATS_CACHE:
+        return _ROLA_STATS_CACHE[arm]
+    kwargs = _rola_layer_kwargs(arm)
+    if kwargs is None:
+        return None
+    from rola_bench.engine import RoLA
+    layer = RoLA(hidden_size=_HID, use_short_conv=False, layer_idx=0, **kwargs)
+    err = getattr(layer, '_routing_resolution_error', None)
+    if err is not None:
+        raise err
+    stats = dict(layer.get_stats())
+    _ROLA_STATS_CACHE[arm] = stats
+    return stats
+
+
+def recurrent_state_floats(arm: str) -> int | None:
+    """REALIZED content recurrent-state floats/layer (the matched axis); None for attn (unbounded).
+
+    RoLA arms: read off `RoLA.get_stats()` (see `rola_realized_stats`) as
+    `n_heads * num_chunks * d_v` — the three fields the ENGINE reports for the layer it built, not a
+    geometry formula of ours. GDN/GLA keep their canonical closed forms: those are the baselines'
+    own published state definitions and neither has ever been in doubt (they were correct at
+    1,048,576 all along; F1's error was entirely on the RoLA side).
+    """
+    stats = rola_realized_stats(arm)
+    if stats is not None:
+        return stats['n_heads'] * stats['num_chunks'] * stats['d_v']
     if arm == "gdn":
         return GDN_GEOM["num_heads"] * GDN_GEOM["head_dim"] * int(GDN_GEOM["head_dim"] * GDN_GEOM["expand_v"])
     if arm == "gla":  # nh * key_head * value_head = key_dim*value_dim/nh (canonical, NOT matched to RoLA)
         return int(_HID * GLA_GEOM["expand_k"]) * int(_HID * GLA_GEOM["expand_v"]) // GLA_GEOM["num_heads"]
-    if arm == "gdn-isostate":
-        return GDNISO_GEOM["num_heads"] * GDNISO_GEOM["head_dim"] * int(GDNISO_GEOM["head_dim"] * GDNISO_GEOM["expand_v"])
-    if arm == "gla-isostate":
-        return int(_HID * GLAISO_GEOM["expand_k"]) * int(_HID * GLAISO_GEOM["expand_v"]) // GLAISO_GEOM["num_heads"]
     return None  # attn: unbounded
 
 
 def recurrent_state_overhead_floats(arm: str) -> int | None:
-    """Physical denominator-sidecar floats/layer, reported separately from matched content state."""
-    _base, _struct = _parse_rola(arm)
-    if arm in ROLA_BASE_ARMS:
-        _D, _spl, nc = _rola_base_topology()
-        return _ROLA_BASE_NH * nc * _ROLA_BASE_DQK
-    if _base in ROLA_ARMS:
-        g = {**ROLA_GEOM, **_struct}
-        return g["num_heads"] * g["states_per_head"] * g["d_qk"]
-    return None
+    """REALIZED denominator-sidecar floats/layer, reported separately from the matched content axis.
+
+    Also read off the engine: `get_stats()['state_floats']` is content PLUS the sidecar (the layer's
+    own `d_v + int(state_norm != 'raw')` column), so the difference is the sidecar, measured rather
+    than asserted. It is `H * N` under `state_norm='global'` and exactly 0 under `'raw'` — which is
+    one of the things the raw arms ablate, so it must be reported, not assumed.
+    """
+    stats = rola_realized_stats(arm)
+    if stats is None:
+        return None
+    return stats['state_floats'] - stats['n_heads'] * stats['num_chunks'] * stats['d_v']
+
+
+def realized_state_floats_from_model(model) -> tuple[int | None, int | None]:
+    """`(content, overhead)` recurrent-state floats/layer read off a BUILT model's first mixer.
+
+    This is what a result row records: the state the trained object actually allocated, taken from
+    the mixer instance itself, so a row can never inherit a number from a registry that has drifted
+    from the model. Returns `(None, None)` for a mixer with no `get_stats()` (GDN/GLA/attention go
+    through the registry's closed forms instead).
+
+    `overhead` here is everything the layer counts as state beyond the matched content axis: the
+    denominator sidecar AND — unlike `recurrent_state_overhead_floats`, whose accounting layer is
+    built conv-off — the short-conv cache when the arm runs conv ON (every flagship arm does). That
+    is deliberate: the registry number is the comparable one, the model number is the true one, and
+    a row carrying both is a row that can be audited.
+    """
+    for module in model.modules():
+        stats = getattr(module, 'get_stats', None)
+        if stats is None or not hasattr(module, 'topology'):
+            continue
+        s = stats()
+        content = s['n_heads'] * s['num_chunks'] * s['d_v']
+        return content, s['state_floats'] - content
+    return None, None
 
 
 def static_decay_parameter_floats(arm: str) -> int:
@@ -436,8 +559,8 @@ def static_decay_parameter_floats(arm: str) -> int:
     BRANCH, `O(H * sum_l b_l)`, explicitly never an `[H, nc]` table — and the layer materializes
     them as `decay_theta`, a ParameterList of per-level `[H, b_l]` fp32 tensors. So:
 
-        floats = num_heads * sum_l b_l                      (= 8 * (8+16) = 192 at the flagship
-                                                             topology, vs nc=128 states/head)
+        floats = num_heads * sum_l b_l                      (= 8 * (8+16) = 192 at the
+                                                             flagship topology, vs N=128 states/head)
 
     which is the number that makes the decay-on/decay-off comparison honest: the clock costs three
     orders less than the state it gates. Every other arm owns no decay parameters and returns 0.

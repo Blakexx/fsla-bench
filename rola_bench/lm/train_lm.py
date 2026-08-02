@@ -4,7 +4,7 @@ ckpt/eval are HF's, not hand-rolled). RoLA is an AutoModel-registered HF model (
 so it plugs straight in; the saved checkpoint runs in lm-evaluation-harness as-is.
 
   python train_lm.py --rola_instance rola-rla-asym --hidden_size 512 --num_hidden_layers 12 \
-     --num_states 16 --d_qk 16 --d_v 16 --num_heads 8 --max_steps 20000
+     --num_states 16 --d_v 16 --num_heads 8 --max_steps 20000
 
 For SCALED multi-GPU FineWeb pretraining use flame (torchtitan) instead; this is the cheap
 single-GPU path (WikiText-103 first).
@@ -118,7 +118,7 @@ def _ckpt_config_matches(ck, cfg):
     # RoLAConfig (#config-refactor 2026-07-06) exposes levels_per_head/states_per_level, not
     # states_per_head -- check those instead (still guards the same regime-collision gotcha).
     for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "levels_per_head",
-              "states_per_level", "d_qk", "d_v", "router_bias"):
+              "states_per_level", "d_v", "router_bias"):
         want = getattr(cfg, k, None)
         got = cj.get(k, False if k == "router_bias" else None)
         if want is not None and got is not None and got != want:
@@ -161,6 +161,29 @@ def _restore_resume(run_id, out_dir, cfg):
     return None
 
 
+def _strict_rola_config(**kw):
+    """`RoLAConfig(**kw)`, but an unknown kwarg RAISES instead of being silently absorbed.
+
+    Finding F3 (2026-08-02): HF's `PretrainedConfig` swallows any keyword it does not recognize and
+    stores it on the config object, so `RoLAConfig(d_qk=16)` was accepted, serialized into every
+    checkpoint's `config.json`, and had no effect whatsoever — a dead knob that looked live for as
+    long as anyone cared to read the call site. The dead `d_qk` is deleted; this guard is what stops
+    the next one. Validated against `RoLAConfig.__init__`'s OWN signature (never a hand-maintained
+    field list, which would rot the same way), minus its `**kwargs` catch-all; the backbone fields
+    HF itself defines (`vocab_size`, `bos_token_id`, ...) are all named parameters there.
+    """
+    import inspect
+    params = inspect.signature(RoLAConfig.__init__).parameters
+    known = {n for n, p in params.items()
+             if n != 'self' and p.kind is not inspect.Parameter.VAR_KEYWORD}
+    unknown = sorted(set(kw) - known)
+    if unknown:
+        raise TypeError(
+            f"RoLAConfig got unknown kwarg(s) {unknown}; HF would ABSORB them silently and they "
+            f"would do nothing (finding F3). Known RoLAConfig fields: {sorted(known)}")
+    return RoLAConfig(**kw)
+
+
 def main():
     p = argparse.ArgumentParser()
     # --arm selects from the 5-arm iso-backbone registry (arms.ARMS): the canonical RoLA-vs-attention
@@ -178,7 +201,11 @@ def main():
     p.add_argument("--num_hidden_layers", type=int, default=12)
     p.add_argument("--num_heads", type=int, default=8)
     p.add_argument("--num_states", type=int, default=16)
-    p.add_argument("--d_qk", type=int, default=16)
+    # --d_qk DELETED 2026-08-02 (finding F3): the V3 layer owns no Q/K surface, `RoLAConfig` has no
+    # `d_qk` field, and HF configs absorb unknown kwargs SILENTLY — so the flag was accepted, stored
+    # on the config, and did nothing at all. `_strict_rola_config` below now makes any such kwarg
+    # raise instead of being absorbed. An argparse flag that is gone is a loud failure; a kwarg that
+    # is absorbed is not.
     p.add_argument("--d_v", type=int, default=16)
     p.add_argument("--dataset", default="wikitext")
     p.add_argument("--dataset_config", default="wikitext-103-raw-v1")
@@ -220,15 +247,32 @@ def main():
         static_decay_parameter_floats = arms.static_decay_parameter_floats(a.arm)
     else:                                                # legacy single-RoLA run
         # --num_states (nc) -> flat (levels_per_head=1, states_per_level=nc); RoLAConfig has no
-        # states_per_head kwarg anymore (#config-refactor 2026-07-06).
-        cfg = RoLAConfig(rola_instance=a.rola_instance, levels_per_head=1, states_per_level=a.num_states,
-                         d_qk=a.d_qk, d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
-                         num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
-                         bos_token_id=eos_id, eos_token_id=eos_id)
+        # states_per_head kwarg anymore (#config-refactor 2026-07-06). No d_qk (F1/F3: the V3 layer
+        # owns no Q/K surface, and the state formula that used it was wrong by exactly that factor).
+        cfg = _strict_rola_config(rola_instance=a.rola_instance, levels_per_head=1,
+                                  states_per_level=a.num_states,
+                                  d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
+                                  num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
+                                  bos_token_id=eos_id, eos_token_id=eos_id)
         model = AutoModelForCausalLM.from_config(cfg)
-        state_floats = a.num_heads * a.num_states * a.d_qk * (a.d_v + 1)
-        state_overhead_floats = None
+        state_floats = state_overhead_floats = None      # filled from the built model, just below
         static_decay_parameter_floats = 0
+    # THE REALIZED STATE (finding F1): read back off the model's own first mixer, which is what this
+    # module's docstring always claimed happened and what makes `state_floats` in a result row an
+    # OBSERVATION rather than a restatement of the registry. When both exist they must agree, and a
+    # disagreement is loud: a silent mismatch between the registry the baselines were sized against
+    # and the object that trained is precisely the failure F1 recorded (a 16x one, undetected across
+    # every published LM row).
+    realized_state, realized_overhead = arms.realized_state_floats_from_model(model)
+    if realized_state is not None:
+        if state_floats is not None and realized_state != state_floats:
+            raise RuntimeError(
+                f"arm {a.arm!r}: registry says state_floats={state_floats} but the BUILT model "
+                f"realizes {realized_state}. The matched-state comparison is only as good as this "
+                "equality — fix the geometry, do not report either number.")
+        state_floats = realized_state
+        if state_overhead_floats is None:
+            state_overhead_floats = realized_overhead
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats} "
           f"state-overhead/layer={state_overhead_floats} static-decay-params={static_decay_parameter_floats}",
@@ -308,6 +352,10 @@ def main():
         row = dict(run_id=run_id, ok=True, arm=a.arm or a.rola_instance, seed=a.seed,
                    params_m=round(n_params / 1e6, 2), state_floats=state_floats,
                    state_overhead_floats=state_overhead_floats,
+                   # everything the BUILT layer counts as state beyond the matched content axis
+                   # (denominator sidecar + the short-conv cache when conv is on) — see
+                   # arms.realized_state_floats_from_model.
+                   realized_state_overhead_floats=realized_overhead,
                    static_decay_parameter_floats=static_decay_parameter_floats,
                    hidden_size=getattr(model.config, "hidden_size", None),
                    num_hidden_layers=getattr(model.config, "num_hidden_layers", None),

@@ -23,64 +23,81 @@ def _rola_overrides(arm):
     _, suffix = arm.split("__", 1)
     out = {}
     for tok in suffix.split("_"):
-        m = re.fullmatch(r"(nh|dv|dqk|nc)(\d+)", tok)
+        # `dqk` deleted with the V2 Q/K accounting (F1); it names nothing on the V3 layer. Mirrors
+        # `rola_bench.lm.arms._STRUCT_KEYS`, which raises on an unrecognized token for the same
+        # reason: a silently-dropped geometry override publishes a cell nobody specified.
+        m = re.fullmatch(r"(nh|dv|nc)(\d+)", tok)
         if m:
-            out[{"nh": "rola_nh", "dv": "rola_dv", "dqk": "rola_dqk", "nc": "rola_nc"}[m.group(1)]] = int(m.group(2))
+            out[{"nh": "rola_nh", "dv": "rola_dv", "nc": "rola_nc"}[m.group(1)]] = int(m.group(2))
     return out
 
 
 def _active_state_floats(arm, hidden, geometry):
+    """Recurrent-state floats/layer for a SPEC arm, from the spec's own geometry block.
+
+    RoLA (F1, 2026-08-02): `H * N * d_v`. V3's per-head state is `[N, d_v]`; the `rola_dqk` factor
+    this used to carry was the V2 matrix-state shape and overstated the RoLA arms' state by exactly
+    that factor (16x at the old defaults), which is what made the old state validator pass on
+    cells that were nowhere near the baselines. `rola_dqk` is still READ from the spec if present
+    only to REFUSE it — a spec that still sets it is a spec written against the deleted architecture,
+    and silently ignoring the key would repeat the F3 failure mode.
+
+    `gdn-isostate` / `gla-isostate` are gone (F4): they were byte-identical to `gdn`/`gla`.
+    """
     if arm.startswith("rola-"):
         g = {**geometry, **_rola_overrides(arm)}
-        nh, nc, dqk, dv = (int(g["rola_nh"]), int(g["rola_nc"]), int(g["rola_dqk"]), int(g["rola_dv"]))
-        return nh * nc * dqk * dv
+        if "rola_dqk" in g:
+            raise ValueError(
+                f"spec geometry sets rola_dqk={g['rola_dqk']!r}, but the V3 RoLA architecture owns "
+                "no d_qk at all (its state is [N, d_v] per head). Re-pin this spec's RoLA geometry "
+                "to (rola_nh, rola_nc, rola_dv) — see rola_bench.lm.arms, finding F1.")
+        return int(g["rola_nh"]) * int(g["rola_nc"]) * int(g["rola_dv"])
     if arm == "gdn":
         hd = int(geometry.get("gdn_head_dim", 256))
         return int(geometry.get("gdn_nh", 8)) * hd * int(hd * float(geometry.get("gdn_expand_v", 2.0)))
-    if arm == "gdn-isostate":
-        hd = int(geometry.get("gdniso_head_dim", geometry.get("gdn_head_dim", 256)))
-        return int(geometry.get("gdniso_nh", geometry.get("gdn_nh", 8))) * hd * int(
-            hd * float(geometry.get("gdniso_expand_v", geometry.get("gdn_expand_v", 2.0))))
     if arm == "gla":
         nh = int(geometry.get("gla_nh", 4))
         return int(hidden * float(geometry.get("gla_ek", 2.0))) * int(hidden * float(geometry.get("gla_ev", 8.0))) // nh
-    if arm == "gla-isostate":
-        nh = int(geometry.get("glaiso_nh", geometry.get("gla_nh", 4)))
-        return int(hidden * float(geometry.get("glaiso_ek", geometry.get("gla_ek", 2.0)))) * int(
-            hidden * float(geometry.get("glaiso_ev", geometry.get("gla_ev", 8.0)))) // nh
     return None
 
 
-def _validate_half_kv_states(spec):
-    """Active bounded LM arms must use state = block_size * hidden = half of attention KV cache."""
+def _validate_matched_states(spec):
+    """Every BOUNDED arm in a spec must carry the SAME recurrent state — that, and only that, is
+    what makes an LM row a matched-state comparison.
+
+    Was `_validate_half_kv_states` (2026-08-02): it required
+    `state == hidden * block_size` = half of attention's KV cache at the training context. That
+    target is retired with the user ruling of the same day — the LM tier's job is
+    trains-stably-at-standard-scale, and the CAPACITY claim moved to the MQAR `N ∝ L` grid, so
+    sizing every arm to a context-derived capacity number is no longer the point (and it is what
+    pushed the baselines to 8x the standard head geometry). The arms are now sized to TEXTBOOK
+    `d_k = d_v = 128 @ H = 8` in `rola_bench.lm.arms`; what a SPEC still has to guarantee is that
+    its own geometry block does not break the match between them.
+
+    Also gone with it: the two per-RoLA side conditions (`rola_nc*rola_dqk == block_size`, written
+    in the deleted `d_qk`, and `rola_nh*rola_dv == hidden`, a no-output-bottleneck rule the current
+    flagship deliberately crosses at `H*d_v = 2 x d_model`, exactly where GDN already sits).
+    Attention is skipped throughout: it has no bounded state to match (`_active_state_floats`
+    returns None).
+    """
     backbone = spec.get("backbone") or {}
     geometry = spec.get("geometry") or {}
-    budget = spec.get("budget") or {}
     hidden = int(backbone.get("hidden", 512))
-    block_size = int(budget.get("block_size", 2048))
-    target = hidden * block_size
-    bad = []
+    states = {}
     for arm in spec["arms"]:
         state = _active_state_floats(arm, hidden, geometry)
-        if state is None:
-            continue
-        if state != target:
-            bad.append(f"{arm}: state={state}, want={target}")
-        if arm.startswith("rola-"):
-            g = {**geometry, **_rola_overrides(arm)}
-            x_axis = int(g["rola_nc"]) * int(g["rola_dqk"])
-            out_width = int(g["rola_nh"]) * int(g["rola_dv"])
-            if x_axis != block_size:
-                bad.append(f"{arm}: rola_nc*rola_dqk={x_axis}, want block_size={block_size}")
-            if out_width != hidden:
-                bad.append(f"{arm}: rola_nh*rola_dv={out_width}, want hidden={hidden}")
-    if bad:
-        raise ValueError("LM half-KV state validation failed: " + "; ".join(bad))
+        if state is not None:
+            states[arm] = state
+    if len(set(states.values())) > 1:
+        detail = "; ".join(f"{a}: state={s}" for a, s in sorted(states.items()))
+        raise ValueError(
+            "LM matched-state validation failed — the bounded arms of this spec do not carry the "
+            f"same recurrent state, so the comparison is not matched: {detail}")
 
 
 def lm_job(config="default"):
     spec = load("lm", config)
-    _validate_half_kv_states(spec)
+    _validate_matched_states(spec)
     arms, seeds = spec["arms"], spec["seeds"]
     box_env = env_from("LM", spec.get("backbone"), spec.get("geometry"), spec.get("budget"))
     fleet = dict(spec.get("fleet", {}))
