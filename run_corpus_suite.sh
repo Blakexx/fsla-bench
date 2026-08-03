@@ -9,7 +9,9 @@ VENV=/mnt/c/Users/Blake/Documents/VSCode/CLA/.venv/bin/python
 cd /home/blake/rola-bench
 IMG=blakeresearch/rola-lm:v13
 ARMS="rola-rla-kappa-asym,rola-rla-kappa-sym,rola-gla-kappa-asym,rola-gla-kappa-sym,attn"
-nboxes() { $VENV -c "import sys;sys.path.insert(0,'/home/blake/fleet');from fleet import vast;print(len(vast.instances_with_label('rola-lm')))" 2>/dev/null; }
+# Count live boxes through the ACTIVE provider seam ($FLEET_PROVIDER, default vast) rather than
+# importing fleet.vast directly -- the label check must work whichever provider the fleet runs on.
+nboxes() { $VENV -c "import sys;sys.path.insert(0,'/home/blake/fleet');import fleet;print(len(fleet.provider().instances_with_label('rola-lm')))" 2>/dev/null; }
 
 echo "[driver $(date +%H:%M)] start; ensuring rola-lm label is free..."
 while [ "$(nboxes)" != "0" ]; do sleep 30; done
