@@ -278,7 +278,28 @@ def parse_stdout(stdout):
 
 def run_one(idx, run_id, cfg, env_overrides, results_file=None):
     tmp_path = Path(f"/tmp/_rla_single_{idx}.py")
+    # ROLA_GPU_MEM_FRACTION caps the TRAINING process's share of the card. It is applied in the
+    # CHILD because that is where the CUDA allocator lives — the parent here is a pure orchestrator
+    # and (on the local box) deliberately holds no CUDA context. `zoology.launch` imports this file
+    # to read `configs`, so the cap is in force before the first allocation. Set by the local grid
+    # dispatcher (`run_local_grid`), which shares the card with an interactive session; unset on the
+    # fleet, where a box owns its GPU outright.
+    #
+    # ROLA_PEAK_MEM_PATH, on the same seam, has the child write its own
+    # `torch.cuda.max_memory_allocated()` to a file at exit. Measuring the peak in the process that
+    # allocated it is the only way to get a number that can falsify a footprint ESTIMATE; sampling
+    # `nvidia-smi` from the parent measures the allocator's reservation, plus whatever else is on the
+    # card. Absent env var => not written, and no caller may assume the file exists.
+    frac = os.environ.get("ROLA_GPU_MEM_FRACTION")
+    peak_path = os.environ.get("ROLA_PEAK_MEM_PATH")
+    cap = ("import torch\n"
+           + (f"torch.cuda.set_per_process_memory_fraction({float(frac)})\n" if frac else "")
+           + (f"import atexit, json as _j\n"
+              f"atexit.register(lambda: open({peak_path!r}, 'w').write(_j.dumps("
+              f"{{'peak_bytes': torch.cuda.max_memory_allocated()}})))\n" if peak_path else "")
+           ) if (frac or peak_path) else ""
     tmp_path.write_text(
+        cap +
         "import pickle\n"
         f"with open('/tmp/_rla_cfg_{idx}.pkl', 'rb') as f:\n"
         "    configs = [pickle.load(f)]\n"

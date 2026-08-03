@@ -40,10 +40,11 @@ Spec schema (see experiments/*.yaml):
   lrs:  [..]                  # default LR sweep (an arm may override with its own `lrs`)
   ncs:  [..]                  # default state-rung ladder (an arm may override with `ncs`)
   seq_lens: [..]              # OPTIONAL train-length ladder; requires data.protocol. Crossed with ncs.
-  conditions: [{tag, <cue knob overrides>}, ...]
-                              # OPTIONAL cue-CONTRACT axis (requires data.protocol.kind:
-                              # cue_consistency). Crossed with everything; each condition is trained
-                              # separately. See `_conditions` and `common.make_cue_data`.
+  conditions: [{tag, <generator knob overrides>}, ...]
+                              # OPTIONAL DATA-CONTRACT axis (requires a knob-carrying
+                              # data.protocol.kind: `cue_consistency` or `graph_recall`). Crossed
+                              # with everything; each condition is trained separately. See
+                              # `_conditions`, `common.make_cue_data` / `common.make_graph_data`.
   tiers: {"<id>": [arm, ...]} # selected by the GRID_TIERS env (default all)
   arm kinds:
     {build: routed, instance, tag, n_heads?, d_v?, states_per_level?, state_norm?, decay?,
@@ -108,21 +109,34 @@ def _data_for(spec, bb, L, knobs):
     """The DataConfig for train length `L` (or the spec's fixed preset when L is None)."""
     dat = spec["data"]
     proto0 = dat.get("protocol") or {}
-    if proto0.get("kind") == "cue_consistency":
+    # The KNOB-CARRYING protocols: a `conditions:` axis is one setting of the named generator's
+    # knobs, and each condition is TRAINED separately (a model trained on a mixture of contracts
+    # answers a different question than "is this contract servable").
+    builder = {"cue_consistency": C.make_cue_data, "graph_recall": C.make_graph_data}.get(
+        proto0.get("kind"))
+    if builder is not None:
         if L is None:
-            raise ValueError("the cue_consistency protocol makes L explicit; declare `seq_lens:`.")
+            raise ValueError(
+                f"the {proto0['kind']} protocol makes L explicit; declare `seq_lens:`.")
         merged = {k: v for k, v in proto0.items()
                   if k not in ("kind", "train_examples", "test_examples", "test_seq_lens")}
         merged.update(knobs)
-        return C.make_cue_data(
+        # An OMITTED `test_seq_lens` means "evaluate in-distribution, at this cell's own train
+        # length". It exists because these protocols cross conditions whose sequence geometry
+        # differs (a `complete(64)` graph episode needs L >= 256 while `complete(16)` needs 64), so
+        # one global evaluation-length list would hand some conditions a length their generator
+        # structurally refuses. Extrapolation is `ood_recall`'s axis, not this mechanism's.
+        test_lens = [int(x) for x in proto0["test_seq_lens"]] if proto0.get("test_seq_lens") else [L]
+        return builder(
             bb["vocab"], dat["train_batch"], dat["test_batch"], dat["cache_dir"],
-            train_seq_len=L, test_seq_lens=[int(x) for x in proto0["test_seq_lens"]],
+            train_seq_len=L, test_seq_lens=test_lens,
             train_examples=proto0["train_examples"], test_examples=proto0["test_examples"],
             **merged)
     if knobs:
         raise ValueError(
-            f"spec declares cue conditions {sorted(knobs)} but its data protocol is not "
-            "`kind: cue_consistency`; the knobs would be silently ignored.")
+            f"spec declares conditions {sorted(knobs)} but its data protocol declares no knob-"
+            "carrying `kind:` (`cue_consistency` / `graph_recall`); the knobs would be silently "
+            "ignored.")
     if L is None:
         if "preset" not in dat:
             raise ValueError(

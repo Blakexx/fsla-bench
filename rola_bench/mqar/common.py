@@ -116,6 +116,29 @@ CUE_KNOBS = ("key_digits", "cue_digits", "digit_vocab", "slot_consistency", "mat
              "match_resolution", "num_kv_pairs", "power_a")
 
 
+def _make_knobbed_data(config_cls, knob_names, label, vocab, train_batch, test_batch, cache_dir, *,
+                       train_seq_len, test_seq_lens, train_examples, test_examples, **knobs):
+    """One `DataConfig` per (train length, CONDITION) for a knob-carrying generator.
+
+    Shared by the cue-consistency and graph-recall protocols: both make a DATA CONTRACT the
+    independent variable, both train each condition separately, and both let their generator own
+    every structural check. The only difference is which config class and which knob set, so the
+    body is here once — two copies of a condition builder is how the matched axis and the reported
+    axis drift apart (Phase 1 finding P6).
+    """
+    unknown = set(knobs) - set(knob_names)
+    if unknown:
+        raise ValueError(
+            f"unknown {label} knob(s) {sorted(unknown)}; the axis set is {list(knob_names)}. "
+            "An unrecognised key would otherwise be dropped silently and the cell would report a "
+            "condition it did not run.")
+    def _cell(seq_len, n_examples):
+        return config_cls(vocab_size=vocab, input_seq_len=seq_len, num_examples=n_examples, **knobs)
+    return DataConfig(train_configs=[_cell(train_seq_len, train_examples)],
+                      test_configs=[_cell(L, test_examples) for L in test_seq_lens],
+                      batch_size=(train_batch, test_batch), cache_dir=cache_dir)
+
+
 def make_cue_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, test_seq_lens,
                   train_examples, test_examples, **knobs):
     """One `DataConfig` for a single (train length, cue condition) pair.
@@ -127,17 +150,55 @@ def make_cue_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, t
     """
     from zoology.data.cue_consistency import CueConsistencyConfig
 
-    unknown = set(knobs) - set(CUE_KNOBS)
+    return _make_knobbed_data(
+        CueConsistencyConfig, CUE_KNOBS, "cue-consistency", vocab, train_batch, test_batch,
+        cache_dir, train_seq_len=train_seq_len, test_seq_lens=test_seq_lens,
+        train_examples=train_examples, test_examples=test_examples, **knobs)
+
+
+# --- THE GRAPH-RECALL PROTOCOL (added 2026-08-02) -------------------------------------------------
+# The law protocol sweeps CAPACITY (N, L, kv) and the cue protocol sweeps the retrieval CONTRACT.
+# Neither can move the CO-OCCURRENCE GRAPH: MQAR's items are mutually co-occurring by construction,
+# so its graph is a clique at every setting and its chromatic number is pinned to its item count.
+# `zoology.data.graph_recall` makes the graph the independent variable — `clustered(k, m)` presents
+# k*m keys at demand k, `overlap(w, B)` presents B keys at demand w — and this builder is the
+# spec-side surface for it. Knob -> graph table in that module's docstring.
+#
+# The DEMAND OF A CELL IS READ OFF THE SEGMENT, never off these knobs: every segment measures its own
+# realized union graph and stamps `graph_nodes / graph_edges / graph_demand_lower / _upper / _exact /
+# _nominal / graph_construction` into `DataSegment.slices`, so naming them in `train.slice_keys`
+# reports accuracy per realized demand. The knob is the request; the stamp is the fact.
+GRAPH_KNOBS = ("construction", "demand", "keys_per_class", "births", "long_lived", "pool_size",
+               "zipf_a", "power_a", "contract_fraction", "queries_per_sequence", "cue_permutation",
+               "cue_permutation_seed", "min_separation")
+
+
+def make_graph_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, test_seq_lens,
+                    train_examples, test_examples, **knobs):
+    """One `DataConfig` for a single (train length, graph condition) pair.
+
+    `knobs` is any subset of `GRAPH_KNOBS`; the generator owns every structural check (the event
+    budget `2 * events <= L`, `births >= demand`, `long_lived < demand`, pool sizing) and raises by
+    name, so this function does not re-implement them.
+
+    `split` is set HERE and is deliberately NOT a spec knob: it is a property of which segment this
+    is, not a condition anyone chooses. Train segments draw random point-lookup targets; test
+    segments are EXHAUSTIVE over the contract's items, so every aliased pair is counted in every eval
+    sequence and the measured collapse threshold is sharp against the solved demand (see
+    `zoology.data.graph_recall`, "THE CONTRACT"). A spec that could set it could silently evaluate on
+    sampled queries, which would smear sub-chi degradation by sampling luck.
+    """
+    from zoology.data.graph_recall import GraphRecallConfig
+
+    unknown = set(knobs) - set(GRAPH_KNOBS)
     if unknown:
         raise ValueError(
-            f"unknown cue-consistency knob(s) {sorted(unknown)}; the axis set is {list(CUE_KNOBS)}. "
-            "An unrecognised key would otherwise be dropped silently and the cell would report a "
-            "condition it did not run.")
-    def _cell(seq_len, n_examples):
-        return CueConsistencyConfig(vocab_size=vocab, input_seq_len=seq_len,
-                                    num_examples=n_examples, **knobs)
-    train = [_cell(train_seq_len, train_examples)]
-    test = [_cell(L, test_examples) for L in test_seq_lens]
+            f"unknown graph-recall knob(s) {sorted(unknown)}; the axis set is {list(GRAPH_KNOBS)}. "
+            "`split` is not a spec knob -- it is set per segment by this builder.")
+    train = [GraphRecallConfig(vocab_size=vocab, input_seq_len=train_seq_len,
+                               num_examples=train_examples, split="train", **knobs)]
+    test = [GraphRecallConfig(vocab_size=vocab, input_seq_len=L, num_examples=test_examples,
+                              split="eval", **knobs) for L in test_seq_lens]
     return DataConfig(train_configs=train, test_configs=test,
                       batch_size=(train_batch, test_batch), cache_dir=cache_dir)
 
