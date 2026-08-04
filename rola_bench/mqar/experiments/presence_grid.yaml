@@ -69,6 +69,27 @@
 # needs three distinct demands (`graph_analysis.fit_packing_constant` refuses two by name), and log2
 # chi = 4, 5, 6 is the cheapest way to get them.
 #
+# *** MEASURED BEFORE DISPATCH, AND IT CONTRADICTS THE PARAGRAPH ABOVE. ***
+# One pre-dispatch probe on the local card, reported because the floor's whole job is to be trusted:
+#   MHA d_qk = 32 (the WIDEST rung, i.e. the floor cell itself), presence-k16, FULL protocol
+#     (40 epochs x 20k examples, L = 64, lr 0.003, seed 0)            -> accuracy 0.508 = CHANCE
+#   RoLA arm2 (union) at N = 32 on a SMALLER budget (30 epochs x 8k)  -> accuracy 0.963
+# So on this task the attention column does NOT establish a solvability floor: a routed arm solves a
+# family attention leaves at the coin flip, which rules out "too hard for the backbone" as the
+# reading of a low attention score here. TWO READINGS, BOTH OPEN, neither resolved by this file:
+#   (a) ARCHITECTURAL, and if so it is a RESULT rather than an artefact — softmax attention's readout
+#       is a CONVEX COMBINATION of values, which has no spelling for "nothing was written", while
+#       RoLA's readout is a global ratio over the bank and reading a never-written state is inert
+#       ([[rola-self-normalizing-dead-leaves-inert]]). Presence-recall asks exactly the absence
+#       question, so the two readouts are not symmetric on it.
+#   (b) OPTIMIZATION — an LR / depth / head-count artefact of this 2-layer backbone at lr 0.003,
+#       which one probe at one seed cannot exclude.
+# CONSEQUENCE, flagged rather than discovered after the run: if attention stays at chance at every
+# d_qk, PREDICTED-3 has no crossing to fit and the packing-constant axis is unmeasurable ON THIS
+# TASK (it remains measurable on `graph_grid`, whose targets are value tokens). The tier is NOT
+# silently dropped and the paragraph above is NOT quietly rewritten — this is an operator decision,
+# and `attn_capacity` is the cheapest tier to run first if the answer is wanted before the rest.
+#
 # ============================ ADVANCE PREDICTIONS ============================
 # Recorded BEFORE the run, per the house rule; each names what would falsify it.
 #
@@ -122,6 +143,12 @@
 #   FALSIFIED BY: an arm at N far below chi scoring materially above 0.5, which would say the layout
 #   leaks a position- or frequency-based shortcut and the instrument, not the model, is being
 #   measured. This is the cheapest falsifier in the file and it is readable off the first tier.
+#   PARTIALLY OBSERVED ALREADY, at a toy budget (30 epochs x 8k examples, N = 32, seed 0, k16):
+#   arm1 0.506, arm3 0.506, d1 0.506, mha-dqk8 0.505 — i.e. AT the chance line and not above it,
+#   which is the prediction's shape — while arm2 reached 0.963 on the same budget. That single
+#   toy-scale draw is NOT evidence about the arms' ordering (one seed, a third of the grid's step
+#   budget, and the grid's own N ladder untouched); it is quoted only because it is the falsifier's
+#   direction and because it is the reason the attention floor above was probed at full size.
 # =============================================================================
 #
 # CELL COUNT — 68 training runs in three tiers. Arithmetic, per tier:
