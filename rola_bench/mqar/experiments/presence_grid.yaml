@@ -148,14 +148,45 @@
 #   toy-scale draw is NOT evidence about the arms' ordering (one seed, a third of the grid's step
 #   budget, and the grid's own N ladder untouched); it is quoted only because it is the falsifier's
 #   direction and because it is the reason the attention floor above was probed at full size.
+#
+# PREDICTED-6 (THE DECAY CONTRAST — mass-proportional is the only clock compatible with spread
+#   writes). Added 2026-08-03 with the `presence_decay16` tier. Two clocks share one dial surface
+#   and differ ONLY in the exponent read off the stored write: `leaf_mass` ticks a touched leaf in
+#   proportion to its deposited mass (`keep = (1-rate)^c`, tiny leak -> tiny decay), while
+#   `inclusion_gated` (ORACLE-ONLY instrument, `fla_rola.ops.rola.routing.types.InclusionGatedDecay`)
+#   ticks every leaf in the write's stored support by the fixed constant `tick`
+#   (`keep = (1-rate)^(tick * 1[c>0])`). THE MATCHING RULE: an exact point write's stored leaf mass
+#   is c in {0,1}, so at the default tick = 1.0 the clocks coincide BIT-FOR-BIT on point writes
+#   (unit-gated: `test_rola_v3_inclusion_gated_decay.py::test_matching_rule_*`) — the sparse-write
+#   arm1 is therefore the control cell, and the clocks separate only where writes spread. Three
+#   predictions, each with its falsifier:
+#     * DO-NO-HARM: `leaf_mass` sits ~at its decay-off twin on the spread arms (arm2/arm3) — the
+#       mass-proportional clock's whole design is that spread traffic ticks it negligibly.
+#       FALSIFIED BY: arm2-mass or arm3-mass materially below the same arm at decay off, which
+#       would say write-mass decay itself erodes retention under spread writes and the "compatible
+#       clock" half of the mechanism is wrong.
+#     * INCLUSION DEGRADES WITH SPREAD WIDTH: `inclusion_gated` is WORST on arm3 (the level-split
+#       wiring writes DENSE on some level, so every write full-strength-ticks that entire level's
+#       leaves — the widest support in the slate), MILDER on arm2 (the union support spans the two
+#       addresses {f(x_t), f(pi(x_t))} — spread, but narrow), and ~COINCIDENT with leaf_mass on
+#       arm1 (near-point sparse writes; the matching rule). FALSIFIED BY: inclusion ~= leaf_mass on
+#       the dense-write arm3 — gating would not matter and the "catastrophic clock" half of the
+#       mechanism is wrong — or the ordering not tracking write-support width across the arms.
+#     * THE CONTROL PAIR HOLDS: arm1-mass ~= arm1-incl. FALSIFIED BY: the pair splitting
+#       materially, which would say arm1's entmax writes are NOT near-point at trained routing and
+#       the control cell is invalid — reported as an INSTRUMENT finding (re-derive tick from the
+#       measured mean per-write stored leaf mass and re-run the pair), never silently absorbed.
 # =============================================================================
 #
-# CELL COUNT — 204 training runs in three tiers AT STAGE 1: the 3-rate LR bracket multiplies every
+# CELL COUNT — 312 training runs in four tiers AT STAGE 1: the 3-rate LR bracket multiplies every
 # tier x3, and the multiplier is carried honestly (stage 2 re-runs WINNERS only, so the sweep is
 # paid once, here). Arithmetic, per tier:
-#   presence16     4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
-#   presence64     4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
-#   attn_capacity  (4 d_qk at k16 + 3 at k32 + 3 at k64) x 3 lrs x 2 seeds = 60
+#   presence16        4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
+#   presence64        4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
+#   attn_capacity     (4 d_qk at k16 + 3 at k32 + 3 at k64) x 3 lrs x 2 seeds = 60
+#   presence_decay16  3 arms x 2 clocks x 3 ncs x 1 condition x 3 lrs x 2 seeds = 108
+# (decay-OFF rows for the contrast are presence16's own arm1/arm2/arm3 cells — same condition, same
+# ladder, same bracket — so the off column is READ, not re-run.)
 # At the original single pinned rate this was 24 + 24 + 20 = 68, inside the brief's ~40-60 plus the
 # stated 8-cell overshoot: the THIRD attention demand (`presence-k32`, 6 base cells) and the narrow
 # k16 rung that keeps its crossing on the ladder (2 base cells). Both are still kept: a
@@ -170,6 +201,9 @@
 #   presence16 (L = 64)   72 cells, worst-cell peak 0.65 GiB, ~17.4 h
 #   presence64 (L = 256)  72 cells, worst-cell peak 2.53 GiB, ~69.6 h
 #   attn_capacity         60 cells, worst-cell peak 3.02 GiB, ~31.9 h
+#   presence_decay16 (L = 64) 108 cells at presence16's per-cell footprint, ~26.1 h (same 139 ms/step
+#     ROUTED basis — training already runs on the fp64 oracle in EVERY cell, so the inclusion arm's
+#     oracle-only dispatch changes eval-time provenance, not the training step this estimate prices).
 # i.e. the sweep moves `presence16` from one local night to a weekend, and `presence64` (~3 days)
 # out of local-night territory toward a rental, the standing local/rental split
 # ([[local-small-rented-big]]). Two honest softeners, stated rather than banked: the 139 ms/step
@@ -290,5 +324,30 @@ tiers:
     - {build: attn, head_dims: [4, 8, 16, 32], conditions: [presence-k16]}
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k32], seq_lens: [128]}
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k64], seq_lens: [256]}
+  # T4 — THE DECAY CONTRAST at chi = 16 (PREDICTED-6). Paired one-for-one on the spread wirings plus
+  # the arm1 point-write control; the decay-OFF column is T1's own arm1/arm2/arm3 rows (identical
+  # condition, ladder and bracket), read rather than re-run. ENGINE PROVENANCE, stated per cell
+  # class: every cell in this file TRAINS on the fp64 oracle (`naive_rola_v3` — the layer's
+  # training-mode dispatch is structurally oracle-only), and the `*-incl` cells additionally EVAL on
+  # it: `decay='inclusion_gated'` is the oracle-only contrast clock (fixed per-inclusion exponent,
+  # `decay_inclusion_tick` default 1.0 = the point-write matching value; the layer pins its dispatch
+  # to the oracle and the CUDA consumer refuses the config by type). The `*-mass` cells eval on the
+  # CUDA consumer like every other decay='leaf_mass' cell. d1 stays out: a dense-WRITE arm under the
+  # inclusion clock is total decay of everything every step — a foregone cell that would spend 36
+  # runs demonstrating the exponent's sign, and its wiring point is already carried by arm3's dense
+  # write level.
+  "presence_decay16":
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1-mass, decay: leaf_mass,
+       conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1-incl,
+       decay: inclusion_gated, conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm2-union, tag: arm2-mass, decay: leaf_mass,
+       conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm2-union, tag: arm2-incl, decay: inclusion_gated,
+       conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3-mass, decay: leaf_mass,
+       conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3-incl, decay: inclusion_gated,
+       conditions: [presence-k16]}
 fleet:
   env: {GRID_TIERS: "presence16"}        # LOCAL grid; this block only records the default tier

@@ -57,6 +57,12 @@ _CASES = {
     "massdecay": dict(levels_per_head=2, states_per_level=4, decay="leaf_mass", state_norm="global",
                       level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
                                              dict(tied=False, read="dense", write="dense")]),
+    # The oracle-only inclusion-gated contrast clock (presence grid decay tier): same dial surface
+    # as leaf_mass, exponent = the fixed per-inclusion constant `decay_inclusion_tick`.
+    "incldecay": dict(levels_per_head=2, states_per_level=4, decay="inclusion_gated",
+                      decay_inclusion_tick=1.0, state_norm="global",
+                      level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
+                                             dict(tied=False, read="dense", write="dense")]),
     "mixed_radix": dict(levels_per_head=2, states_per_level=[2, 8], decay="none", state_norm="global",
                         level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
                                                dict(tied=False, read="sparse", write="dense")]),

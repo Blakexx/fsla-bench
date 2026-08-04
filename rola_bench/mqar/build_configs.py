@@ -279,7 +279,8 @@ def build_configs(spec):
         rid = arm.get("run_id", _ROUTED_RUNID)
         extra = dict(arm.get("kwargs", {}))       # forwarded verbatim to the mixer (V3 kwargs only)
         preset_kw = {k: arm[k] for k in ("n_heads", "d_v", "states_per_level", "state_norm",
-                                         "decay", "router_bias", "decay_target_leaf_rate")
+                                         "decay", "router_bias", "decay_target_leaf_rate",
+                                         "decay_inclusion_tick")
                      if k in arm}
         a_lrs, a_ncs, a_lens = _axes(arm)
         a_conds = _arm_conds(arm)

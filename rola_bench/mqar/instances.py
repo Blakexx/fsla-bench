@@ -238,12 +238,17 @@ def _check_engine_caps(name: str, nc: int, b: list[int]) -> None:
 def rola_instance(name: str, nc: int, *, n_heads: int | None = None, d_v: int | None = None,
                   states_per_level=None, state_norm: str = "global", decay: str = "none",
                   router_bias: bool = True, use_short_conv: bool = False,
-                  decay_target_leaf_rate: float | None = None) -> dict:
+                  decay_target_leaf_rate: float | None = None,
+                  decay_inclusion_tick: float | None = None) -> dict:
     """`zoology.mixers.rola.RoLAMixer` kwargs for one named preset at state rung `nc`.
 
     There is no `d_qk` parameter and no `kernel` parameter: V3 owns no Q/K surface, and the decay
-    vocabulary is the layer's own `decay in {'none','leaf_mass'}`. `router_bias` defaults to True
-    (the flagship pin — every `named_configs` builder passes it), NOT to the layer default.
+    vocabulary is the layer's own `decay in {'none','leaf_mass','inclusion_gated'}` —
+    'inclusion_gated' is the ORACLE-ONLY contrast clock for the presence grid's decay tier
+    (fixed per-inclusion exponent constant `decay_inclusion_tick`, default 1.0 = the point-write
+    matching value; the layer force-dispatches it to the fp64 oracle and the CUDA consumer refuses
+    it by type). `router_bias` defaults to True (the flagship pin — every `named_configs` builder
+    passes it), NOT to the layer default.
     """
     if name in RETIRED_INSTANCES:
         raise ValueError(f"RoLA MQAR preset {name!r} is RETIRED: {RETIRED_INSTANCES[name]}")
@@ -263,6 +268,8 @@ def rola_instance(name: str, nc: int, *, n_heads: int | None = None, d_v: int | 
     )
     if decay_target_leaf_rate is not None:
         kw["decay_target_leaf_rate"] = decay_target_leaf_rate
+    if decay_inclusion_tick is not None:
+        kw["decay_inclusion_tick"] = decay_inclusion_tick
     return kw
 
 
