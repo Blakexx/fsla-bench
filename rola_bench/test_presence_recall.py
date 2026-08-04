@@ -343,7 +343,7 @@ def _spec():
 
 
 @pytest.mark.parametrize("tier,cells", [("presence16", 24), ("presence64", 24),
-                                        ("attn_capacity", 18)])
+                                        ("attn_capacity", 20)])
 def test_every_tier_is_the_size_its_header_states(tier, cells):
     """The header's arithmetic is a schedule commitment (each tier is an overnight unit on the local
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""

@@ -124,22 +124,23 @@
 #   measured. This is the cheapest falsifier in the file and it is readable off the first tier.
 # =============================================================================
 #
-# CELL COUNT — 66 training runs in three tiers. Arithmetic, per tier:
-#   presence16     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
-#   presence64     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
-#   attn_capacity  3 conditions x 3 d_qk x 1 lr x 2 seeds        = 18
-# The brief asked for ~40-60; the two routed tiers ARE 48, and the 6-cell overshoot is exactly the
-# THIRD attention demand (`presence-k32`). It was kept rather than trimmed: a packing-constant slope
-# from two demands is refused by `graph_analysis.fit_packing_constant` by design (two points define
-# a line through themselves, which is a ratio dressed as a fit), so dropping it would delete
-# PREDICTED-3 rather than shrink it. Stated, not silently spent. The instrument floor costs nothing
-# extra — it is read off the WIDEST rung of the same d_qk ladder.
+# CELL COUNT — 68 training runs in three tiers. Arithmetic, per tier:
+#   presence16     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds        = 24
+#   presence64     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds        = 24
+#   attn_capacity  (4 d_qk at k16 + 3 at k32 + 3 at k64) x 1 lr x 2 seeds = 20
+# The brief asked for ~40-60; the two routed tiers ARE 48, and the 8-cell overshoot is the THIRD
+# attention demand (`presence-k32`, 6 cells) plus the narrow k16 rung that keeps its crossing on the
+# ladder (2 cells). Both were kept rather than trimmed: a packing-constant slope from two demands is
+# refused by `graph_analysis.fit_packing_constant` by design (two points define a line through
+# themselves, which is a ratio dressed as a fit), so dropping either would delete PREDICTED-3 rather
+# than shrink it. Stated, not silently spent. The instrument floor costs nothing extra — it is read
+# off the WIDEST rung of the same d_qk ladder.
 #
 # SCHEDULE — from `run_local_grid --dry-run` on the local card (RTX 3080 Ti), which prints the
 # per-cell footprint and the wall-clock estimate from the measured 139 ms/step at L = 128:
 #   presence16 (L = 64)   24 cells, worst-cell peak 0.65 GiB,  ~5.8 h
 #   presence64 (L = 256)  24 cells, worst-cell peak 2.53 GiB, ~23.2 h
-#   attn_capacity         18 cells, worst-cell peak 3.02 GiB, ~10.2 h
+#   attn_capacity         20 cells, worst-cell peak 3.02 GiB, ~10.6 h
 # i.e. `presence16` and `attn_capacity` are one local night each and `presence64` is two (or a
 # rental), the standing local/rental split ([[local-small-rented-big]]). Every cell is far under the
 # 0.65 memory cap on the local card, which the L = 256 attention rungs are the only candidates to
@@ -239,7 +240,12 @@ tiers:
   # capacity-adequate, which 32 amply is at chi = 64). Split into three arms only because each one
   # carries a single `seq_lens` and the conditions differ in length.
   "attn_capacity":
-    - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k16]}
+    # k16 carries an EXTRA narrow rung (d_qk = 4 = 32 heads). Reason, found by running the analysis
+    # on synthetic rows before dispatch: log2 chi = 4 is the easiest demand on the ladder, so
+    # attention is liable to be above criterion already at d_qk = 8 — which `graph_analysis` reports
+    # as `above` (no crossing), leaving the packing-constant fit with two points and refusing it.
+    # Two cells buy the third crossing the fit needs; at L = 64 the score tensor is 67 MiB.
+    - {build: attn, head_dims: [4, 8, 16, 32], conditions: [presence-k16]}
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k32], seq_lens: [128]}
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k64], seq_lens: [256]}
 fleet:
