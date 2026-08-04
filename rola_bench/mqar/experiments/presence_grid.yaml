@@ -128,11 +128,12 @@
 #   presence16     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
 #   presence64     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
 #   attn_capacity  3 conditions x 3 d_qk x 1 lr x 2 seeds        = 18
-# The brief asked for ~40-60; the two routed tiers ARE 48, and the overshoot is entirely the third
-# attention demand (`presence-k32`, 6 cells) plus the widest d_qk rung that doubles as the instrument
-# floor. Both were kept rather than trimmed: a packing-constant slope from two demands is refused by
-# `graph_analysis.fit_packing_constant` by design, and a grid with no floor cannot tell a capacity
-# result from an unsolvable family. Stated, not silently spent.
+# The brief asked for ~40-60; the two routed tiers ARE 48, and the 6-cell overshoot is exactly the
+# THIRD attention demand (`presence-k32`). It was kept rather than trimmed: a packing-constant slope
+# from two demands is refused by `graph_analysis.fit_packing_constant` by design (two points define
+# a line through themselves, which is a ratio dressed as a fit), so dropping it would delete
+# PREDICTED-3 rather than shrink it. Stated, not silently spent. The instrument floor costs nothing
+# extra — it is read off the WIDEST rung of the same d_qk ladder.
 #
 # SCHEDULE — from `run_local_grid --dry-run` on the local card (RTX 3080 Ti), which prints the
 # per-cell footprint and the wall-clock estimate from the measured 139 ms/step at L = 128:
