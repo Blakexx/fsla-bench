@@ -69,26 +69,25 @@
 # needs three distinct demands (`graph_analysis.fit_packing_constant` refuses two by name), and log2
 # chi = 4, 5, 6 is the cheapest way to get them.
 #
-# *** MEASURED BEFORE DISPATCH, AND IT CONTRADICTS THE PARAGRAPH ABOVE. ***
-# One pre-dispatch probe on the local card, reported because the floor's whole job is to be trusted:
-#   MHA d_qk = 32 (the WIDEST rung, i.e. the floor cell itself), presence-k16, FULL protocol
-#     (40 epochs x 20k examples, L = 64, lr 0.003, seed 0)            -> accuracy 0.508 = CHANCE
-#   RoLA arm2 (union) at N = 32 on a SMALLER budget (30 epochs x 8k)  -> accuracy 0.963
-# So on this task the attention column does NOT establish a solvability floor: a routed arm solves a
-# family attention leaves at the coin flip, which rules out "too hard for the backbone" as the
-# reading of a low attention score here. TWO READINGS, BOTH OPEN, neither resolved by this file:
-#   (a) ARCHITECTURAL, and if so it is a RESULT rather than an artefact — softmax attention's readout
-#       is a CONVEX COMBINATION of values, which has no spelling for "nothing was written", while
-#       RoLA's readout is a global ratio over the bank and reading a never-written state is inert
-#       ([[rola-self-normalizing-dead-leaves-inert]]). Presence-recall asks exactly the absence
-#       question, so the two readouts are not symmetric on it.
-#   (b) OPTIMIZATION — an LR / depth / head-count artefact of this 2-layer backbone at lr 0.003,
-#       which one probe at one seed cannot exclude.
-# CONSEQUENCE, flagged rather than discovered after the run: if attention stays at chance at every
-# d_qk, PREDICTED-3 has no crossing to fit and the packing-constant axis is unmeasurable ON THIS
-# TASK (it remains measurable on `graph_grid`, whose targets are value tokens). The tier is NOT
-# silently dropped and the paragraph above is NOT quietly rewritten — this is an operator decision,
-# and `attn_capacity` is the cheapest tier to run first if the answer is wanted before the rest.
+# *** MEASURED BEFORE DISPATCH, AND ADJUDICATED. ***
+# The floor cell was probed before dispatch (MHA d_qk = 32, presence-k16, FULL protocol, lr 0.003,
+# seed 0 -> 0.508 = chance, while routed arm2 solved the same family on a smaller budget), and the
+# contradiction that number posed to the paragraph above was ADJUDICATED before this file moved
+# again. Full matrix (LR sweep, depth and width controls, a learned always-attendable SINK control,
+# an MQAR positive control, and a matched-budget arm2 anchor):
+# rola-scratch/workflows/presence-recall/attention-adjudication.md. VERDICT: (b) OPTIMIZATION
+# ARTEFACT, not architecture. Attention solves presence-k16 PERFECTLY at lr 1e-3 (1.000 by epoch 5;
+# 1.000 at 3e-4, 0.974 at 1e-4) at the same 2 layers and d_qk = 32. The failure is a sharp,
+# TASK-SPECIFIC LR cliff bracketed [1e-3, 3e-3]: the very 3e-3 that fails here trains MQAR kv8 to
+# 1.000, and the sink control discriminated against the absence-representation reading TWICE (it
+# adds nothing at 1e-3 and rescues nothing at 3e-3, 0.508 either way). The 0.508 is therefore NEVER
+# citable as evidence about attention's readout — it is a number about one learning rate.
+# CONSEQUENCES, folded into this file rather than left open: the floor logic of the paragraph above
+# STANDS — attention certifies the family solvable at 1.000 at the swept protocol below — and
+# PREDICTED-3 is measurable at that protocol. The pinned single LR is GONE; see LR IS SWEPT PER ARM
+# below. The matched-budget fairness anchor (arm2 = 0.858 at 3e-3, its ONLY measured full-budget
+# rate) carries the same one-LR caveat the attention floor did, which is exactly why the routed
+# arms get the same sweep rather than a pinned rate.
 #
 # ============================ ADVANCE PREDICTIONS ============================
 # Recorded BEFORE the run, per the house rule; each names what would falsify it.
@@ -151,31 +150,47 @@
 #   direction and because it is the reason the attention floor above was probed at full size.
 # =============================================================================
 #
-# CELL COUNT — 68 training runs in three tiers. Arithmetic, per tier:
-#   presence16     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds        = 24
-#   presence64     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds        = 24
-#   attn_capacity  (4 d_qk at k16 + 3 at k32 + 3 at k64) x 1 lr x 2 seeds = 20
-# The brief asked for ~40-60; the two routed tiers ARE 48, and the 8-cell overshoot is the THIRD
-# attention demand (`presence-k32`, 6 cells) plus the narrow k16 rung that keeps its crossing on the
-# ladder (2 cells). Both were kept rather than trimmed: a packing-constant slope from two demands is
-# refused by `graph_analysis.fit_packing_constant` by design (two points define a line through
-# themselves, which is a ratio dressed as a fit), so dropping either would delete PREDICTED-3 rather
-# than shrink it. Stated, not silently spent. The instrument floor costs nothing extra — it is read
-# off the WIDEST rung of the same d_qk ladder.
+# CELL COUNT — 204 training runs in three tiers AT STAGE 1: the 3-rate LR bracket multiplies every
+# tier x3, and the multiplier is carried honestly (stage 2 re-runs WINNERS only, so the sweep is
+# paid once, here). Arithmetic, per tier:
+#   presence16     4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
+#   presence64     4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
+#   attn_capacity  (4 d_qk at k16 + 3 at k32 + 3 at k64) x 3 lrs x 2 seeds = 60
+# At the original single pinned rate this was 24 + 24 + 20 = 68, inside the brief's ~40-60 plus the
+# stated 8-cell overshoot: the THIRD attention demand (`presence-k32`, 6 base cells) and the narrow
+# k16 rung that keeps its crossing on the ladder (2 base cells). Both are still kept: a
+# packing-constant slope from two demands is refused by `graph_analysis.fit_packing_constant` by
+# design (two points define a line through themselves, which is a ratio dressed as a fit), so
+# dropping either would delete PREDICTED-3 rather than shrink it. The instrument floor costs
+# nothing extra — it is read off the WIDEST rung of the same d_qk ladder.
 #
-# SCHEDULE — from `run_local_grid --dry-run` on the local card (RTX 3080 Ti), which prints the
-# per-cell footprint and the wall-clock estimate from the measured 139 ms/step at L = 128:
-#   presence16 (L = 64)   24 cells, worst-cell peak 0.65 GiB,  ~5.8 h
-#   presence64 (L = 256)  24 cells, worst-cell peak 2.53 GiB, ~23.2 h
-#   attn_capacity         20 cells, worst-cell peak 3.02 GiB, ~10.6 h
-# i.e. `presence16` and `attn_capacity` are one local night each and `presence64` is two (or a
-# rental), the standing local/rental split ([[local-small-rented-big]]). Every cell is far under the
-# 0.65 memory cap on the local card, which the L = 256 attention rungs are the only candidates to
-# threaten and do not.
+# SCHEDULE — re-derived from `run_local_grid --dry-run` on the local card (RTX 3080 Ti) at the
+# 3-rate bracket (2026-08-03), per-cell footprint and wall clock from the measured 139 ms/step at
+# L = 128:
+#   presence16 (L = 64)   72 cells, worst-cell peak 0.65 GiB, ~17.4 h
+#   presence64 (L = 256)  72 cells, worst-cell peak 2.53 GiB, ~69.6 h
+#   attn_capacity         60 cells, worst-cell peak 3.02 GiB, ~31.9 h
+# i.e. the sweep moves `presence16` from one local night to a weekend, and `presence64` (~3 days)
+# out of local-night territory toward a rental, the standing local/rental split
+# ([[local-small-rented-big]]). Two honest softeners, stated rather than banked: the 139 ms/step
+# basis is ROUTED step time — the adjudication measured MHA cells at ~7 ms/step (95 s per full
+# cell), so `attn_capacity`'s ~31.9 h estimate is an upper bound that will realize far smaller —
+# and analysis may prune stage-1 losers early per (arm, N) once the bracket's winner is clear,
+# which the staged protocol permits (winners, not losers, get more seeds). Every cell is far under
+# the 0.65 memory cap on the local card.
 #
-# LR IS PINNED, NOT SWEPT (0.003, the middle of law_grid's bracket at this backbone and scale), the
-# same decision `graph_grid.yaml` records and for the same reason. STATED RISK: a cell that does not
-# train at 0.003 is an LR artefact until re-run.
+# LR IS SWEPT PER ARM, NOT PINNED — the house per-arm sweep, forced here by measurement rather than
+# adopted by habit: the adjudication above located a task-specific LR cliff between 1e-3 and 3e-3
+# for the attention column, so a pinned 0.003 would read the ENTIRE attn_capacity tier at chance
+# for a reason that is pure artefact — and the routed arms' only full-budget number (arm2 0.858 at
+# 3e-3) carries the same one-LR caveat, so they get the same bracket (fairness, not symmetry for
+# its own sake). STAGING, mirroring graph_grid/law_grid's staged protocol exactly: stage 1 is this
+# file — every arm runs the full `lrs` bracket at seeds [0, 1] and analysis reports the BEST cell
+# per (arm, N, condition) over the bracket; stage 2 re-runs each winner AT ITS WINNING LR at
+# further seeds via `SEED_CONFIRM_BASE=presence_grid`, which is where a published row's error bars
+# come from. The bracket [3e-4, 1e-3, 3e-3] contains both measured attention winners (1e-3, the
+# fastest, and 3e-4), and KEEPS 3e-3 — the routed arms' only measured point and the cliff's far
+# side — so the sweep re-measures the cliff rather than assuming it.
 #
 # SEEDS: 2, with stage 2 available (`SEED_CONFIRM_BASE=presence_grid`), see `single_seed_rationale`.
 project_name: rola-presence-grid
@@ -212,13 +227,13 @@ train:
 single_seed_rationale: >
   Two seeds, not three, and the reason travels with the file — the same staged protocol
   `graph_grid.yaml` records. This grid runs on the LOCAL card overnight ([[local-small-rented-big]]),
-  one tier per night, and a third seed is a third night per tier for a variance estimate the staged
-  protocol already provides: stage 1 is this file at seeds [0, 1], stage 2 re-runs the winning cell
-  per (arm, N) at extra seeds via `SEED_CONFIRM_BASE=presence_grid`
+  and a third seed is a third night per tier for a variance estimate the staged protocol already
+  provides: stage 1 is this file at seeds [0, 1] over the full LR bracket, stage 2 re-runs the
+  winning cell per (arm, N) AT ITS WINNING LR at extra seeds via `SEED_CONFIRM_BASE=presence_grid`
   (mqar/experiments/seed_confirm.py), which is where the error bars on a published row come from. No
   row from this file is publishable at 2 seeds on its own, and PREDICTED-4 (the arm2 gap) is exactly
   the row stage 2 must widen before it is printed.
-lrs: [0.003]
+lrs: [0.0003, 0.001, 0.003]              # the per-arm bracket; see LR IS SWEPT PER ARM above
 ncs: [16, 32, 64]                        # default N ladder; the k64 tier overrides to bracket its chi
 seq_lens: [64]                           # default L; tiers override where the episode needs more
 conditions:
