@@ -16,7 +16,7 @@ import pytest
 
 _EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
 _SPECS = ("law_grid", "separation", "ood_recall", "canonical", "dmodel64", "router_bias",
-          "cue_consistency", "graph_grid")
+          "cue_consistency", "graph_grid", "presence_grid")
 
 
 # =============================================================== 1. the preset registry

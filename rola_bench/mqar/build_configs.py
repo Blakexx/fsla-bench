@@ -42,9 +42,10 @@ Spec schema (see experiments/*.yaml):
   seq_lens: [..]              # OPTIONAL train-length ladder; requires data.protocol. Crossed with ncs.
   conditions: [{tag, <generator knob overrides>}, ...]
                               # OPTIONAL DATA-CONTRACT axis (requires a knob-carrying
-                              # data.protocol.kind: `cue_consistency` or `graph_recall`). Crossed
-                              # with everything; each condition is trained separately. See
-                              # `_conditions`, `common.make_cue_data` / `common.make_graph_data`.
+                              # data.protocol.kind: `cue_consistency` / `graph_recall` /
+                              # `presence_recall`). Crossed with everything; each condition is
+                              # trained separately. See `_conditions`, `common.make_cue_data` /
+                              # `common.make_graph_data` / `common.make_presence_data`.
   tiers: {"<id>": [arm, ...]} # selected by the GRID_TIERS env (default all)
   arm kinds:
     {build: routed, instance, tag, n_heads?, d_v?, states_per_level?, state_norm?, decay?,
@@ -112,8 +113,8 @@ def _data_for(spec, bb, L, knobs):
     # The KNOB-CARRYING protocols: a `conditions:` axis is one setting of the named generator's
     # knobs, and each condition is TRAINED separately (a model trained on a mixture of contracts
     # answers a different question than "is this contract servable").
-    builder = {"cue_consistency": C.make_cue_data, "graph_recall": C.make_graph_data}.get(
-        proto0.get("kind"))
+    builder = {"cue_consistency": C.make_cue_data, "graph_recall": C.make_graph_data,
+               "presence_recall": C.make_presence_data}.get(proto0.get("kind"))
     if builder is not None:
         if L is None:
             raise ValueError(
@@ -135,8 +136,8 @@ def _data_for(spec, bb, L, knobs):
     if knobs:
         raise ValueError(
             f"spec declares conditions {sorted(knobs)} but its data protocol declares no knob-"
-            "carrying `kind:` (`cue_consistency` / `graph_recall`); the knobs would be silently "
-            "ignored.")
+            "carrying `kind:` (`cue_consistency` / `graph_recall` / `presence_recall`); the knobs "
+            "would be silently ignored.")
     if L is None:
         if "preset" not in dat:
             raise ValueError(

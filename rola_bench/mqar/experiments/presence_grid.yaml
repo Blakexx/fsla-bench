@@ -1,0 +1,245 @@
+# THE PRESENCE GRID — v1's SOLE THEORY-CONFIRMATION INSTRUMENT.
+# Built 2026-08-03. Data generator: `zoology.data.presence_recall` (task, layout and stamp in its
+# module docstring). Design of record: development/plans/V3_CAPACITY_THEORY_NOTES_2026-07-29.md,
+# "THE PRESENCE-RECALL TASK" (user, ratified 2026-08-03).
+#
+#   GRID_TIERS=presence16 flock /tmp/rola_gpu.lock \
+#       python -m rola_bench.mqar.run_local_grid --config presence_grid     # add --dry-run first
+#
+# *** NOT DISPATCHED. Training is PARKED until the CUDA engine is complete, including the native
+# *** backward ([[cuda-engine-first-kill-triton]]). This file is the instrument, ready to run; the
+# *** only thing that has been executed against it is `--dry-run` and the toy `--smoke`.
+#
+# ------------------------------------------------------------------------------------------------
+# WHAT THIS GRID IS FOR
+# ------------------------------------------------------------------------------------------------
+# SYMBOLS, defined here at first use. `pi` = the random-once-frozen map from a key token to the key
+# token it reads, with `pi(x) != x`, frozen per cell and stamped. `K` = `demand` = the key pool size.
+# `s` = `keys_per_sequence`, the key events one sequence emits (each key at most once). `chi` = the
+# DEMAND: the chromatic number of the realized union co-occurrence graph, SOLVED per segment by
+# `zoology.data.graph_chi`. `N` = addressable RoLA states per head (`nc`). `L` = sequence length in
+# tokens. `d_qk` = attention's per-head key width.
+#
+# THE TASK. Every key position's label is one bit: has `pi(x_t)` appeared strictly before t? Against
+# `graph_grid.yaml` (retained as the SEQUEL's instrument) this changes three things on purpose:
+#
+#   (1) THE VALUE CONFOUND IS GONE. MQAR-family recall entangles addressing with log|V|-bit value
+#       retrieval, so a capacity curve there cannot say which of the two moved. One bit of output
+#       makes the cell a measurement of N and nothing else.
+#   (2) READS AND WRITES ARE ASYMMETRIC BY CONSTRUCTION. Every position writes `f(x_t)` and reads
+#       `f(pi(x_t))`, so `addr_read(x) = addr_write(pi(x))` is a LEARNED property. MQAR's read cue IS
+#       the written content — the one regime where a shared routing solve gets address agreement for
+#       free — and that coincidence is what PREDICTED-4 below is built to remove.
+#   (3) SUPERVISION IS DENSE and causality is native ("before" is the causal mask's own semantics).
+#
+# THE DEMAND IS STILL chi, AND IT IS STILL SOLVED. A false positive is an error, so every key a
+# sequence draws must be separately distinguishable at once: the conflict group is the drawn key set,
+# the union over sequences of those cliques is the COMPLETE graph on the pool, chi = K. Each segment
+# solves its own realized graph (verified clique + verified coloring) and `verify_construction` gates
+# the answer against the closed form, so a cell whose sample under-realizes K_K is refused rather
+# than shipped with an x-coordinate the model was never shown. `slice_keys` names the stamp, so every
+# result row is keyed on the demand the model actually saw.
+#
+# THE ITEM COUNT AND THE DEMAND ARE 2x APART IN EVERY CELL, for free: a sequence draws `s = K / 2`
+# keys but the pool is K, so an account that says a fixed state pays for the ITEMS OF A SEQUENCE and
+# an account that says it pays for the DEMAND predict thresholds a factor of 2 apart — and the N
+# ladders resolve a factor of 2. (`s < K` is not a decoration: with the whole pool drawn, the
+# negative class runs out at the tail of every sequence and the planted 50/50 balance would decay
+# into a positional prior. The generator refuses `keys_per_sequence == demand` by name.)
+#
+# THE CHANCE LINE IS 0.5 AND IT IS PRINTED WITH EVERY NUMBER. The label is one bit at a ~50/50
+# planted balance (`presence_positive_rate` and the worst per-position deviation
+# `presence_position_bias` are stamped per segment), so the best label-free predictor scores 0.5 and
+# a collapse threshold read at 0.5 would be the threshold of GUESSING.
+# `rola_bench.mqar.graph_analysis` therefore carries a per-task chance line and defaults this grid's
+# criterion to 0.75 — halfway from chance to ceiling. An untrained model sits BELOW 0.5 (it must
+# first learn to answer inside the reserved label pair at all), so "off chance" here means ABOVE.
+#
+# ARMS — the three canonical wirings plus the D1 DENSE CONTROL, and an ATTENTION CAPACITY COLUMN.
+# The fixed-state class baselines (rla / gla / gdn) stay out for the same reason as in
+# `graph_grid.yaml`: they are established on the law grid at this exact backbone and no claim in this
+# file is about them.
+#
+# THE ATTENTION COLUMN IS A REFERENCE AND A SECOND AXIS, NEVER A CONTENDER. Softmax attention has no
+# rung on the state axis (its state is a growing KV cache), so it is never plotted against N. It does
+# two jobs: its WIDEST head establishes the INSTRUMENT FLOOR (is this family solvable by this
+# backbone at this length? — a routed failure under a floor far from ceiling measures generator
+# difficulty, not demand), and its own capacity law is linear in `d_qk` against `log2(chi)`, which
+# turns the packing constant `c` into a measurement. `presence-k32` exists ONLY for that fit: a slope
+# needs three distinct demands (`graph_analysis.fit_packing_constant` refuses two by name), and log2
+# chi = 4, 5, 6 is the cheapest way to get them.
+#
+# ============================ ADVANCE PREDICTIONS ============================
+# Recorded BEFORE the run, per the house rule; each names what would falsify it.
+#
+# PREDICTED-1 (the demand law, in N). Every routed arm's collapse threshold `N*` tracks the SOLVED
+#   chi: `presence-k64` crosses near N = 64 (its ladder starts at 32 = chi/2, so the crossing is
+#   interpolable), and `presence-k16` is ALREADY above criterion at its lowest available rung
+#   N = 16 = chi. FALSIFIED BY: `presence-k64` crossing near N = 32 = `s`, the per-sequence item
+#   count — the ladder resolves that factor of 2 — or not crossing on the ladder at all.
+#   NOTE THE FLOOR, and it is a property of the engine and not of this design: N < 16 has no routed
+#   spelling (`mqar.instances.MQAR_STATE_BLOCK = 16` must divide N), so the chi = 16 tier cannot show
+#   the sub-demand collapse and the chi = 64 tier is where the crossing is MEASURED. The `N*/chi`
+#   constancy claim therefore rests on one measured crossing plus one one-sided bound, and it is
+#   stated that way rather than quoted as two crossings.
+#
+# PREDICTED-2 (the resize is a RATIO, not a rung). The 16 -> 64 tier pair is a 4x resize at the same
+#   curve shape. FALSIFIED BY: a saturation N that does not move with K, which would mean the
+#   instrument reads an absolute rung of the architecture and not the demand of the data.
+#
+# PREDICTED-3 (attention's own capacity law). On the same solver-certified graphs, attention's
+#   threshold in `d_qk` is linear in log2(chi) with positive slope 1/c (log2 chi = 4, 5, 6 at
+#   K = 16, 32, 64). FALSIFIED BY: a threshold flat in log2(chi) (attention not paying for the
+#   demand), or one linear in chi itself (attention paying the way a fixed state does, which would
+#   collapse the two-axis claim into one).
+#
+# PREDICTED-4 (THE WIRINGS' ASYMMETRY — the prediction this task exists for). `pi` forces
+#   `addr_read(x) = addr_write(pi(x))`, so address agreement is no longer free, and the four arms
+#   have DIFFERENT exposures to that. Per-arm expectation, stated before the run:
+#     * `arm1` (coarse dense-READ / sparse-write): its guarantee is the READ TOUCH — a dense read
+#       touches every state, so it intersects the write support whatever the map is. EXPECTED
+#       UNCHANGED relative to its identity-cue behaviour: `N*/chi` at the same constant as on
+#       `graph_grid`'s cue-map tier.
+#     * `arm3` (level split, one sparse duty per level, opposite across levels): its guarantee is
+#       PER-LEVEL COMPLEMENTARITY — every level has a dense side, so read and write intersect level
+#       by level regardless of `pi`. EXPECTED UNCHANGED, like arm1.
+#     * `arm2` (UNION — one shared entmax support split by sigma): its guarantee is the SHARED SOLVE,
+#       i.e. read and write are drawn from ONE support, which is exactly what makes agreement free
+#       when the read cue IS the written content. Under `pi` that coincidence is gone: at position t
+#       the arm must emit the support UNION {f(x_t), f(pi(x_t))}, spending its support on two
+#       addresses instead of one. EXPECTED TO PAY: `N*/chi` strictly HIGHER for arm2 than for arm1
+#       and arm3 on this task, while the identity-cue tiers of `graph_grid` show no such gap.
+#     * `d1` (dense control, every state touched by every token): agreement is trivial and there is
+#       no structure to break. EXPECTED at the same `N*/chi` as arm1/arm3 — it is what says the
+#       wirings' thresholds are a property of the demand and not of their sparsity.
+#   FALSIFIED BY: arm2 sitting at arm1's ratio (the union's identity-cue advantage was never doing
+#   the work the theory says it does), or ALL arms shifting together (the shift is the task getting
+#   harder, not the wiring's guarantee being tested).
+#
+# PREDICTED-5 (the floor is exactly 0.5, and that is a check on the generator). The planted balance
+#   is flat in position (`presence_position_bias` stamped per segment), so a model with no working
+#   addressing scores 0.5 and NOT more: an under-capacity arm is predicted to sit AT the chance line.
+#   FALSIFIED BY: an arm at N far below chi scoring materially above 0.5, which would say the layout
+#   leaks a position- or frequency-based shortcut and the instrument, not the model, is being
+#   measured. This is the cheapest falsifier in the file and it is readable off the first tier.
+# =============================================================================
+#
+# CELL COUNT — 66 training runs in three tiers. Arithmetic, per tier:
+#   presence16     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
+#   presence64     4 arms x 3 ncs x 1 condition x 1 lr x 2 seeds = 24
+#   attn_capacity  3 conditions x 3 d_qk x 1 lr x 2 seeds        = 18
+# The brief asked for ~40-60; the two routed tiers ARE 48, and the overshoot is entirely the third
+# attention demand (`presence-k32`, 6 cells) plus the widest d_qk rung that doubles as the instrument
+# floor. Both were kept rather than trimmed: a packing-constant slope from two demands is refused by
+# `graph_analysis.fit_packing_constant` by design, and a grid with no floor cannot tell a capacity
+# result from an unsolvable family. Stated, not silently spent.
+#
+# SCHEDULE — from `run_local_grid --dry-run` on the local card (RTX 3080 Ti), which prints the
+# per-cell footprint and the wall-clock estimate from the measured 139 ms/step at L = 128:
+#   presence16 (L = 64)   24 cells, worst-cell peak 0.65 GiB,  ~5.8 h
+#   presence64 (L = 256)  24 cells, worst-cell peak 2.53 GiB, ~23.2 h
+#   attn_capacity         18 cells, worst-cell peak 3.02 GiB, ~10.2 h
+# i.e. `presence16` and `attn_capacity` are one local night each and `presence64` is two (or a
+# rental), the standing local/rental split ([[local-small-rented-big]]). Every cell is far under the
+# 0.65 memory cap on the local card, which the L = 256 attention rungs are the only candidates to
+# threaten and do not.
+#
+# LR IS PINNED, NOT SWEPT (0.003, the middle of law_grid's bracket at this backbone and scale), the
+# same decision `graph_grid.yaml` records and for the same reason. STATED RISK: a cell that does not
+# train at 0.003 is an LR artefact until re-run.
+#
+# SEEDS: 2, with stage 2 available (`SEED_CONFIRM_BASE=presence_grid`), see `single_seed_rationale`.
+project_name: rola-presence-grid
+backbone: {d_model: 128, vocab: 8192, n_layers: 2, l_max: 256}
+data:
+  # 64, matching `graph_grid.yaml`: the dominant memory term of a cell in this family is the
+  # [batch, L, vocab] logit tensor, and this grid's longest condition is L = 256. Set spec-WIDE
+  # rather than per tier — batch size is a covariate of the optimization, and a grid whose conditions
+  # differ in batch cannot attribute a difference to the data.
+  train_batch: 64
+  test_batch: 8
+  cache_dir: /tmp/zoology_cache_presence
+  protocol:
+    kind: presence_recall
+    train_examples: 20000
+    test_examples: 1000
+    # 4 tokens between key events, which EXCEEDS the hybrid backbone's short-conv kernel of 3: a read
+    # whose target sits in the immediately preceding tokens is served by the convolution and measures
+    # nothing about the state. Asserted by the generator on every pair of events, not hoped for.
+    min_separation: 4
+    # `test_seq_lens` OMITTED on purpose: every cell evaluates in-distribution at its own train
+    # length. The conditions differ in geometry (a K = 64 episode needs L >= 4*32), so one global
+    # evaluation ladder would hand some conditions a length their generator refuses.
+    # L-extrapolation is `ood_recall.yaml`'s axis.
+train:
+  max_epochs: 40
+  weight_decay: 0.0
+  seeds: [0, 1]
+  early_stopping_threshold: 2.0          # never triggers — full training
+  early_stopping_metric: valid/accuracy
+  # The REALIZED demand is a slice key: a result row is keyed on the graph the model was shown.
+  slice_keys: [graph_construction, graph_demand_upper, num_kv_pairs, input_seq_len]
+  eval_every: 10
+single_seed_rationale: >
+  Two seeds, not three, and the reason travels with the file — the same staged protocol
+  `graph_grid.yaml` records. This grid runs on the LOCAL card overnight ([[local-small-rented-big]]),
+  one tier per night, and a third seed is a third night per tier for a variance estimate the staged
+  protocol already provides: stage 1 is this file at seeds [0, 1], stage 2 re-runs the winning cell
+  per (arm, N) at extra seeds via `SEED_CONFIRM_BASE=presence_grid`
+  (mqar/experiments/seed_confirm.py), which is where the error bars on a published row come from. No
+  row from this file is publishable at 2 seeds on its own, and PREDICTED-4 (the arm2 gap) is exactly
+  the row stage 2 must widen before it is printed.
+lrs: [0.003]
+ncs: [16, 32, 64]                        # default N ladder; the k64 tier overrides to bracket its chi
+seq_lens: [64]                           # default L; tiers override where the episode needs more
+conditions:
+  # chi = 16 with 8 key events per sequence: the demand and the per-sequence item count are 2x apart.
+  # L = 64 holds 8 events at min_separation 4 with room for the gaps to vary.
+  - {tag: presence-k16, demand: 16, keys_per_sequence: 8}
+  # THE THIRD DEMAND, for the attention slope only (log2 chi = 5). No routed cells: the RoLA law is
+  # read off the 16/64 pair, and a third routed tier would buy a middle point on a line the two ends
+  # already determine, at the price of another 24 cells.
+  - {tag: presence-k32, demand: 32, keys_per_sequence: 16}
+  # chi = 64 with 32 key events: the 4x resize (PREDICTED-2), at L = 256.
+  - {tag: presence-k64, demand: 64, keys_per_sequence: 32}
+tiers:
+  # T1 — THE LAW AT chi = 16. The tier to run first: it carries PREDICTED-4 and PREDICTED-5, and it
+  # is the cheapest. The ladder runs from AT the demand upward, because N < 16 has no routed spelling
+  # at all — the pinned readout tile must divide N (`mqar.instances.MQAR_STATE_BLOCK = 16`), which is
+  # a reported floor on the state ladder and exactly the floor `graph_grid`'s decoupling tier hits.
+  # The consequence is stated rather than papered over: this tier can show that chi = 16 IS servable
+  # at N = 16 (and how the arms differ there), but the crossing itself is below its floor and will be
+  # reported by `graph_analysis` as `above`. THE MEASURABLE CROSSING LIVES IN T2, whose ladder starts
+  # at N = 32 = chi/2 — which is why the resize tier is not optional here.
+  "presence16":
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1,
+       conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm2-union, tag: arm2, conditions: [presence-k16]}
+    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3, conditions: [presence-k16]}
+    - {build: routed, instance: rola-d1-dense, tag: d1, conditions: [presence-k16]}
+  # T2 — THE RESIZE, at chi = 64. Same four arms, ladder shifted 4x so it brackets 64 from both
+  # sides. L = 256: 32 key events at min_separation 4 need 125 tokens at minimum, and the rest is gap
+  # room so the events are not forced into a near-uniform comb.
+  "presence64":
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1, seq_lens: [256],
+       conditions: [presence-k64], ncs: [32, 64, 128]}
+    - {build: routed, instance: rola-arm2-union, tag: arm2, seq_lens: [256],
+       conditions: [presence-k64], ncs: [32, 64, 128]}
+    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3, seq_lens: [256],
+       conditions: [presence-k64], ncs: [32, 64, 128]}
+    - {build: routed, instance: rola-d1-dense, tag: d1, seq_lens: [256],
+       conditions: [presence-k64], ncs: [32, 64, 128]}
+  # T3 — THE ATTENTION CAPACITY AXIS (and the instrument floor). zoology's MHA derives
+  # head_dim = d_model / num_heads, so a head WIDTH is requested as a head COUNT (d_model = 128, so
+  # d_qk = 8 asks for 16 heads) — the same mechanism `graph_grid`'s and `law_grid`'s attention
+  # ladders use, with no mixer change at all. The ladder stops at 32 because log2 chi <= 6 here: a
+  # threshold above d_qk = 32 would mean c < 0.19, far outside the packing regime the law is stated
+  # in, and the WIDEST rung is what `graph_analysis` reads the instrument floor off (it must be
+  # capacity-adequate, which 32 amply is at chi = 64). Split into three arms only because each one
+  # carries a single `seq_lens` and the conditions differ in length.
+  "attn_capacity":
+    - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k16]}
+    - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k32], seq_lens: [128]}
+    - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k64], seq_lens: [256]}
+fleet:
+  env: {GRID_TIERS: "presence16"}        # LOCAL grid; this block only records the default tier

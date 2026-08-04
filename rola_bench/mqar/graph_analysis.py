@@ -36,6 +36,16 @@ capacity curve: softmax attention's state is a growing KV cache, so it has no ru
 all. Its number answers a prior question — is this family solvable by the backbone at this length? —
 and a family whose attention score is far from ceiling is one where a routed arm's failure measures
 generator difficulty rather than demand. The table says so in that case.
+
+TWO INSTRUMENTS, ONE ANALYSIS (2026-08-03). The same machinery reads the PRESENCE-RECALL grid
+(`zoology.data.presence_recall`, v1's theory-confirmation instrument) because that generator stamps
+its demand in the same `graph_demand_*` vocabulary and its cells carry the same run_id shape. What
+differs is the METRIC'S FLOOR, and it is not cosmetic: presence-recall's answer is one bit, so a
+label-free predictor already scores `TASKS['presence_recall'].chance = 0.5` and a collapse threshold read at
+a criterion of 0.5 would be the threshold of guessing. The task table below therefore carries a
+chance line and a default criterion PER TASK (presence: chance 0.5, criterion 0.75 = halfway from
+chance to ceiling), both printed with every table so no number is ever quoted without the line it is
+measured against. The task is taken from the spec's own `data.protocol.kind`, never assumed.
 """
 from __future__ import annotations
 
@@ -44,9 +54,31 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parents[2]
 _EXP_DIR = Path(__file__).resolve().parent / "experiments"
+
+
+class Task(NamedTuple):
+    """What a generator's accuracy MEANS: the floor it is read against and where a threshold sits.
+
+    `chance` is the accuracy of the best label-free predictor. `criterion` is the default collapse
+    threshold, placed halfway from `chance` to 1 so it is a statement about the model and not about
+    guessing. `builder` names the module whose `build_episodes` re-solves the condition's graph."""
+
+    chance: float
+    criterion: float
+    builder: str
+
+
+#: Keyed on `data.protocol.kind`. `graph_recall`'s target is a value token out of a vocabulary of
+#: thousands, so its label-free floor is ~0 and the historical 0.5 criterion is a real statement;
+#: `presence_recall`'s target is one bit, so 0.5 is what guessing scores.
+TASKS = {
+    "graph_recall": Task(chance=0.0, criterion=0.5, builder="zoology.data.graph_recall"),
+    "presence_recall": Task(chance=0.5, criterion=0.75, builder="zoology.data.presence_recall"),
+}
 
 
 def _load_rows(results_dir: Path):
@@ -93,14 +125,30 @@ def parse_run_id(run_id: str):
     return None
 
 
+def task_of(spec) -> Task:
+    """The spec's task, from its own `data.protocol.kind`. Refuses an unknown kind by name: a
+    silently defaulted chance line would let a presence threshold be read at the guessing floor."""
+    kind = (spec["data"].get("protocol") or {}).get("kind")
+    if kind not in TASKS:
+        raise ValueError(
+            f"data.protocol.kind={kind!r} has no entry in `TASKS`, so this module does not know the "
+            f"chance line its accuracies are measured against. Known: {sorted(TASKS)}.")
+    return TASKS[kind]
+
+
 def predicted_chi(spec, cond_knobs, seq_len, num_examples, seed=0):
     """Solve the condition's realized graph at the size the cell actually trained on.
 
     Returns `{lower, upper, exact, method, nodes, edges}`. Rebuilt rather than read back: see the
-    module docstring."""
-    from zoology.data.graph_recall import build_episodes, demand_bounds
+    module docstring. The episode builder is the one the spec's own protocol names, so a presence
+    cell is re-solved by the presence generator and a graph cell by the graph one — the same code
+    path and the same seed discipline as the training segment, therefore the same graph."""
+    import importlib
+
+    from zoology.data.graph_recall import demand_bounds
 
     proto = spec["data"]["protocol"]
+    build_episodes = importlib.import_module(task_of(spec).builder).build_episodes
     knobs = {k: v for k, v in proto.items()
              if k not in ("kind", "train_examples", "test_examples", "test_seq_lens")}
     knobs.update({k: v for k, v in cond_knobs.items() if k != "tag"})
@@ -129,10 +177,16 @@ def crossing(points, criterion):
     return None, "below"
 
 
-def analyse(config: str, criterion: float = 0.5, results_dir: Path | None = None):
+def analyse(config: str, criterion: float | None = None, results_dir: Path | None = None):
     from rola_bench.mqar.build_configs import load_spec
 
     spec = load_spec(str(_EXP_DIR / f"{config}.yaml"))
+    task = task_of(spec)
+    criterion = task.criterion if criterion is None else criterion
+    if criterion <= task.chance:
+        raise ValueError(
+            f"criterion {criterion} is at or below this task's chance line ({task.chance}): the "
+            "crossing would be the threshold of GUESSING, not of recall. Raise the criterion.")
     results_dir = results_dir or REPO / "results" / "mqar" / config
     rows = _load_rows(Path(results_dir))
     conds = {c["tag"]: c for c in spec.get("conditions", [])}
@@ -247,18 +301,27 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="graph_grid")
-    ap.add_argument("--criterion", type=float, default=0.5,
-                    help="accuracy the collapse threshold is defined at (default 0.5)")
+    ap.add_argument("--criterion", type=float, default=None,
+                    help="accuracy the collapse threshold is defined at (default: the TASK's own, "
+                         "0.5 for graph_recall and 0.75 for presence_recall, which is halfway from "
+                         "that task's 0.5 chance line to the ceiling)")
     ap.add_argument("--results", default=None)
     ap.add_argument("--json", default=None, help="also write the rows here")
     a = ap.parse_args(argv)
 
-    _spec, rows, floor, attn_rows = analyse(a.config, a.criterion,
-                                            Path(a.results) if a.results else None)
+    spec, rows, floor, attn_rows = analyse(a.config, a.criterion,
+                                           Path(a.results) if a.results else None)
+    task = task_of(spec)
+    crit = task.criterion if a.criterion is None else a.criterion
     if not rows and not floor:
         print(f"no completed cells found for {a.config} — nothing to analyse")
         return 1
 
+    # THE LINE EVERY NUMBER BELOW IS READ AGAINST, printed before any of them. A presence-recall
+    # accuracy of 0.55 is noise off a coin flip; a graph-recall accuracy of 0.55 is most of the task.
+    print(f"TASK {spec['data']['protocol']['kind']}: chance line {task.chance:.2f}, collapse "
+          f"criterion {crit:.2f}"
+          + (" (task default)" if a.criterion is None else " (--criterion)"))
     if floor:
         print("INSTRUMENT FLOOR — attention at its widest head (a solvability check, not a ranking):")
         for cond, acc in sorted(floor.items()):
@@ -278,7 +341,8 @@ def main(argv=None):
     if got:
         gm = math.exp(sum(math.log(x) for x in got) / len(got))
         spread = max(got) / min(got)
-        print(f"\nHEADLINE (criterion {a.criterion}): N*/chi over {len(got)} (condition, arm) cells "
+        print(f"\nHEADLINE (criterion {crit}, chance {task.chance}): N*/chi over {len(got)} "
+              f"(condition, arm) cells "
               f"= {gm:.2f}x geometric mean, spread {spread:.2f}x across cells.")
         print("The claim is the CONSTANCY of this ratio across conditions whose item counts and key "
               "vocabularies differ; a constant != 1 is a per-arm efficiency, a ratio that tracks the "

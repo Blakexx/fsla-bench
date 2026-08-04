@@ -203,6 +203,49 @@ def make_graph_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len,
                       batch_size=(train_batch, test_batch), cache_dir=cache_dir)
 
 
+# --- THE PRESENCE-RECALL PROTOCOL (added 2026-08-03) ----------------------------------------------
+# v1's sole theory-confirmation instrument (`zoology.data.presence_recall`). The graph protocol above
+# sweeps WHICH GRAPH the distribution realizes while keeping MQAR's value-retrieval contract; the
+# presence protocol keeps the graph a complete one and deletes the VALUE: the label at every key
+# position is the single bit "has pi(x) appeared before?", for a frozen map pi with pi(x) != x. That
+# makes the cell a measurement of N alone (no log|V|-bit value channel to confound it) and it makes
+# reads and writes ASYMMETRIC — a position writes f(x) and reads f(pi(x)) — which is the regime a
+# shared routing solve does not get for free.
+#
+# The DEMAND OF A CELL IS READ OFF THE SEGMENT here too: `graph_demand_*` are stamped in the same
+# vocabulary as the graph protocol's, so one analysis path
+# (`rola_bench.mqar.graph_analysis --task presence`) reads both instruments.
+PRESENCE_KNOBS = ("demand", "keys_per_sequence", "positive_rate", "pi_seed", "min_separation")
+
+
+def make_presence_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, test_seq_lens,
+                       train_examples, test_examples, **knobs):
+    """One `DataConfig` for a single (train length, presence condition) pair.
+
+    `knobs` is any subset of `PRESENCE_KNOBS`; the generator owns every structural check (the
+    min-gap event budget, `2 <= keys_per_sequence < demand`, the reserved label ids' vocabulary
+    room) and raises by name, so this function does not re-implement them.
+
+    `split` is set HERE and is deliberately NOT a spec knob: it is a property of which segment this
+    is. Presence-recall's contract is exhaustive on BOTH sides — every key position but the first
+    carries a question — so the split changes no draw; it is set and stamped so a result row says
+    which segment it came from, and so the surface is the same one `make_graph_data` presents.
+    """
+    from zoology.data.presence_recall import PresenceRecallConfig
+
+    unknown = set(knobs) - set(PRESENCE_KNOBS)
+    if unknown:
+        raise ValueError(
+            f"unknown presence-recall knob(s) {sorted(unknown)}; the axis set is "
+            f"{list(PRESENCE_KNOBS)}. `split` is not a spec knob -- it is set per segment here.")
+    train = [PresenceRecallConfig(vocab_size=vocab, input_seq_len=train_seq_len,
+                                  num_examples=train_examples, split="train", **knobs)]
+    test = [PresenceRecallConfig(vocab_size=vocab, input_seq_len=L, num_examples=test_examples,
+                                 split="eval", **knobs) for L in test_seq_lens]
+    return DataConfig(train_configs=train, test_configs=test,
+                      batch_size=(train_batch, test_batch), cache_dir=cache_dir)
+
+
 # --- hybrid backbone (short conv + the sequence mixer) --------------------------------------------
 def base_conv_mixer(l_max):
     return dict(name="zoology.mixers.base_conv.BaseConv",
