@@ -269,12 +269,17 @@ def main(argv=None):
     return 1 if bad else 0
 
 
-#: Seconds per optimizer step at L=128, batch 64, on the local card (RTX 3080 Ti), MEASURED
-#: 2026-08-02: a full `graph_grid` cell (arm1, N=16, complete-k16) trained 2 epochs = 626 steps in
-#: 102 s wall including ~15 s of process start and data build, i.e. 139 ms/step. A planning number
+#: Seconds per optimizer step at L=128, batch 64, on the local card (RTX 3080 Ti). A planning number
 #: for `--dry-run` only; override with `--sec-per-step`. Cells at other L are scaled linearly in L,
 #: which is what the logit and attention-free mixer terms both do at this size.
-SEC_PER_STEP_L128 = 0.139
+#:
+#: RE-PRICED 2026-08-15 on the STANDALONE CUDA ENGINE (campaign-dispatch B4, b2-3_build.md §3). The
+#: previous 0.139 was measured 2026-08-02 against the fp64 oracle, which is what every routed cell
+#: trained on before the repoint — a different instrument, not a slower box. The B4 smoke measured
+#: 7.7-8.2 ms/step at L=64 and 18.0-20.8 ms/step at L=256 across all four wirings, both rungs; the
+#: linear-in-L model those two brackets is 11.5 ms at L=128, and that interpolation is stated rather
+#: than hidden because no routed cell runs AT L=128 on this grid.
+SEC_PER_STEP_L128 = 0.0115
 
 
 if __name__ == "__main__":
