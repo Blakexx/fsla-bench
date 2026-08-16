@@ -11,6 +11,21 @@
 # *** only thing that has been executed against it is `--dry-run` and the toy `--smoke`.
 #
 # ------------------------------------------------------------------------------------------------
+# AMENDMENT 2026-08-15 (user-ruled; the engine repoint to rola-standalone)
+# ------------------------------------------------------------------------------------------------
+# 1. SQUARES ONLY. The CUDA engine's uniform-width rule makes N = B^D the law and the envelope
+#    fails fast on anything else; N = 32 and N = 128 have no multi-level uniform spelling at any
+#    depth. The D>=2 ladders RE-PIN to square rungs: presence16 -> N in {16, 64}; presence64 ->
+#    N in {64, 256} (widths (8,8) and (16,16)). PREDICTED-1's chi=64 crossing is now bracketed
+#    4x (64..256) instead of 2x; the bracket's width is reported with the fit. The D=1 (flat)
+#    ladders are unconstrained (any single width) and keep their rungs.
+# 2. THE DECAY TIER (presence_decay16) IS DEFERRED. Decay is retired from the operator and fails
+#    fast forward AND backward; InclusionGatedDecay has no standalone spelling; and a mixed-engine
+#    contrast (kernel-trained decay-off column vs oracle-trained decay arms) would confound the
+#    tier by engine. It re-enters with the decay reopen, on one engine, whole.
+# 3. ENGINE NOTE: all wall/schedule estimates below predate the repoint (they price the fp64
+#    oracle path the grid formerly trained on); the local smoke re-prices them on the CUDA engine.
+# ------------------------------------------------------------------------------------------------
 # WHAT THIS GRID IS FOR
 # ------------------------------------------------------------------------------------------------
 # SYMBOLS, defined here at first use. `pi` = the random-once-frozen map from a key token to the key
@@ -305,7 +320,7 @@ single_seed_rationale: >
   row from this file is publishable at 2 seeds on its own, and PREDICTED-4 (the arm2 gap) is exactly
   the row stage 2 must widen before it is printed.
 lrs: [0.0003, 0.001, 0.003]              # the per-arm bracket; see LR IS SWEPT PER ARM above
-ncs: [16, 32, 64]                        # default N ladder; the k64 tier overrides to bracket its chi
+ncs: [16, 64]                            # SQUARES ONLY (amendment 2026-08-15); the k64 tier overrides to bracket its chi
 seq_lens: [64]                           # default L; tiers override where the episode needs more
 conditions:
   # chi = 16 with 8 key events per sequence: the demand and the per-sequence item count are 2x apart.
@@ -337,13 +352,13 @@ tiers:
   # room so the events are not forced into a near-uniform comb.
   "presence64":
     - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1, seq_lens: [256],
-       conditions: [presence-k64], ncs: [32, 64, 128]}
+       conditions: [presence-k64], ncs: [64, 256]}
     - {build: routed, instance: rola-arm2-union, tag: arm2, seq_lens: [256],
-       conditions: [presence-k64], ncs: [32, 64, 128]}
+       conditions: [presence-k64], ncs: [64, 256]}
     - {build: routed, instance: rola-arm3-levelsplit, tag: arm3, seq_lens: [256],
-       conditions: [presence-k64], ncs: [32, 64, 128]}
+       conditions: [presence-k64], ncs: [64, 256]}
     - {build: routed, instance: rola-d1-dense, tag: d1, seq_lens: [256],
-       conditions: [presence-k64], ncs: [32, 64, 128]}
+       conditions: [presence-k64], ncs: [64, 256]}
   # T3 — THE ATTENTION CAPACITY AXIS (and the instrument floor). zoology's MHA derives
   # head_dim = d_model / num_heads, so a head WIDTH is requested as a head COUNT (d_model = 128, so
   # d_qk = 8 asks for 16 heads) — the same mechanism `graph_grid`'s and `law_grid`'s attention
