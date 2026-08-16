@@ -5,7 +5,13 @@ model registration) through THIS file and nowhere else. The engine package is ab
 and re-homed twice over: the thunder branches (`rola-thunder-track{D,E,K,P}`) merge into mainline,
 and mainline is then extracted as the standalone `rola` package (`fla_rola` -> `rola`). Before this
 file existed that rename was ~60 edits across 18 files, each an independent chance to miss one and
-discover it at runtime on a rented box. Now it is `ENGINE_PACKAGE = "rola"`, here, once.
+discover it at runtime on a rented box. Now it is a package constant, here, once.
+
+**TWO CONSTANTS, ONE PER TIER (2026-08-15).** The migration turned out not to be atomic: the
+MQAR/presence grid trains on the standalone `rola` package while the LM tier's whole vehicle
+(`models.rola` / `RoLAConfig` / the AutoClass registration) exists only on `fla_rola`. So the seam
+carries `ENGINE_PACKAGE` (legacy: LM tier, perf tier, the V2-era gates) and `GRID_ENGINE_PACKAGE`
+(standalone: the grid), with a symbol table each. A name lives in exactly one table.
 
 It also gives the migration a single place to answer "which engine did this result come from?" and
 a single place to shim a symbol that moves between engine submodules — instead of 18 files each
@@ -42,10 +48,17 @@ import importlib
 from types import ModuleType
 
 # ---------------------------------------------------------------------------------------------
-# THE knob. When the engine package is renamed (fla_rola -> rola, on extraction to the standalone
-# repo), this string is the entire change on the rola-bench side.
+# THE knobs — ONE PER TIER, because the repoint is not simultaneous.
+#
+# `ENGINE_PACKAGE` is the LEGACY engine: the LM tier's whole vehicle (`models.rola` / `RoLAConfig`
+# / the AutoClass registration, which the standalone does not have), the perf tier and the V2-era
+# gates. `GRID_ENGINE_PACKAGE` is the STANDALONE engine the MQAR/presence grid trains on
+# (campaign-dispatch B3). They are two constants rather than one because a single knob cannot be
+# flipped without breaking the tier that has no standalone surface yet — the seam's one-knob design
+# assumed the migration would be atomic, and it is not.
 # ---------------------------------------------------------------------------------------------
 ENGINE_PACKAGE = "fla_rola"
+GRID_ENGINE_PACKAGE = "rola"
 
 
 def import_engine(suffix: str = "") -> ModuleType:
@@ -55,6 +68,27 @@ def import_engine(suffix: str = "") -> ModuleType:
     side-effect form); `import_engine("ops.rola.routing.reference")` returns that submodule.
     """
     return importlib.import_module(f"{ENGINE_PACKAGE}.{suffix}" if suffix else ENGINE_PACKAGE)
+
+
+def import_grid_engine(suffix: str = "") -> ModuleType:
+    """Import a STANDALONE-engine submodule by its path relative to `GRID_ENGINE_PACKAGE`."""
+    return importlib.import_module(
+        f"{GRID_ENGINE_PACKAGE}.{suffix}" if suffix else GRID_ENGINE_PACKAGE)
+
+
+def chunk_arm_for(D: int, B: int) -> tuple[int, int] | None:
+    """The `(C, BC)` the operator would run a uniform `(D, B)` topology on, or None if unbuilt.
+
+    Asked of the ENGINE's own selector rather than reimplemented, so the grid's refusal and the
+    launch cannot disagree about which arm a rung takes ([[matching-the-naive-antipattern]]).
+    """
+    return import_grid_engine("ops.chunk")._arm_for(int(D), int(B))
+
+
+def chunk_scan_arms() -> set[tuple[int, int, int, int]]:
+    """The `(C, BC, D, B)` arms the two backward SCANS are built for — the TRAINABLE set, read off
+    the compiled binary's census."""
+    return import_grid_engine("ops.chunk").scan_arms()
 
 
 def register_hf_models() -> ModuleType:
@@ -105,11 +139,6 @@ _SYMBOLS: dict[str, str] = {
 
     # --- routing vocabulary + the canonical CPU/fp64 references the gates check against ---
     "resolve_b_spec": "ops.rola.routing.topology",
-    # The engine's own structural CAPS on the routing tree. rola-bench reads them rather than
-    # re-declaring them, so a preset that cannot be built at a rung says so with the engine's number
-    # (mqar.instances.PresetRungUnavailable) instead of failing deep inside `resolve_b_spec`.
-    "MAX_ROUTING_DEPTH": "ops.rola.routing.topology",
-    "MAX_BRANCH_WIDTH": "ops.rola.routing.topology",
     # The (BC, d_v) the CUDA consumer INSTANTIATES. Private to the engine by name, but it is a
     # hard buildability constraint on any EVAL-mode cell, so the benches read it rather than
     # rediscovering it as a NotImplementedError on a rented box.
@@ -139,9 +168,30 @@ _SYMBOLS: dict[str, str] = {
     "_rola_chunk_core": "ops.rola.interface",
 }
 
+# ---------------------------------------------------------------------------------------------
+# STANDALONE-engine symbols (`GRID_ENGINE_PACKAGE`), same lazy contract. The MQAR/presence grid's
+# tier reads its structural facts here; a name may appear in ONE table only, and the two engines'
+# `MAX_ROUTING_DEPTH` / `MAX_BRANCH_WIDTH` agree (4 / 256), so moving them is a repoint and not a
+# change of the numbers any caller sees.
+# ---------------------------------------------------------------------------------------------
+_GRID_SYMBOLS: dict[str, str] = {
+    "MAX_ROUTING_DEPTH": "routing.topology",
+    "MAX_BRANCH_WIDTH": "routing.topology",
+    #: The operator's token quantum: `T` must be a multiple of it, which is a constraint on the
+    #: grid's sequence lengths and therefore read rather than restated.
+    "CHUNK_TOKENS": "ops.chunk",
+}
+#: The standalone's CLASSES (`RouteProducer`, `IndependentRouting`, `UnionRouting`,
+#: `SoftmaxActivation`, `EntmaxActivation`, `naive_rola`, ...) are deliberately NOT in that table:
+#: the legacy engine exports several of the same NAMES, and a shadowing entry would silently hand a
+#: legacy gate the standalone's class to isinstance against. They are reached as attributes of
+#: `import_grid_engine()`, which says which engine's class a caller means at the call site.
+
 
 def __getattr__(name: str):
     """PEP 562 lazy attribute access — the import happens here, at first use, never at seam import."""
+    if name in _GRID_SYMBOLS:
+        return getattr(import_grid_engine(_GRID_SYMBOLS[name]), name)
     try:
         module = _SYMBOLS[name]
     except KeyError:
@@ -153,4 +203,4 @@ def __getattr__(name: str):
 
 
 def __dir__():
-    return sorted([*globals(), *_SYMBOLS])
+    return sorted([*globals(), *_SYMBOLS, *_GRID_SYMBOLS])

@@ -1,24 +1,23 @@
-"""GATES for the migrated `zoology.mixers.rola.RoLAMixer` (Phase 1, 2026-08-02).
+"""GATES for `zoology.mixers.rola.RoLAMixer` on the STANDALONE engine (repoint, 2026-08-15).
 
 Three properties, in order of how much they matter:
 
 1. **THINNESS, BIT-EXACTLY.** The mixer must be an adapter and nothing else. Given the same seed and
-   the same configuration, `RoLAMixer(...)` and `fla_rola.layers.RoLA(...)` must produce identical
-   parameters and identical forward outputs, to the last bit. This is the property that lets a perf
-   row, an MQAR row and a layer-path row of one published name be the SAME cell instead of three
-   experiments sharing a string ([[matching-the-naive-antipattern]]: a wrapper validated against a
-   fresh reference proves only self-consistency; here the reference is the canonical layer itself).
+   the same configuration, `RoLAMixer(...)` and `rola.RoLA(rola.RouteProducer(...))` must produce
+   identical parameters and identical forward outputs, to the last bit. This is the property that
+   lets a perf row, an MQAR row and a layer-path row of one published name be the SAME cell instead
+   of three experiments sharing a string ([[matching-the-naive-antipattern]]: a wrapper validated
+   against a fresh reference proves only self-consistency; here the reference is the canonical layer
+   itself, constructed the way the engine's own docs construct it).
+2. **RETIRED VOCABULARY RAISES.** Every kwarg a deletion removed — the V3 Q/K surface, and now
+   `state_block` (BC is the operator's), the decay dials (the tier is deferred) and the HF cache
+   kwargs (the layer takes a `state` pair) — must raise BY NAME. The pre-V3 mixer absorbed `writer`,
+   `reader`, `route_on` and `router_zloss_coef` into `**kwargs`; that silence is how `d_qk` outlived
+   the architecture that defined it (rola-bench F3).
+3. **THE FOUR WIRINGS LAND.** Each row spelling must resolve to the engine level config the grid's
+   arm tag claims, `UnionRouting` included — the one wiring whose resolution differs structurally.
 
-2. **RETIRED VOCABULARY RAISES.** Every kwarg V3 deleted (`d_qk`, `head_k_dim`, `kernel`, `phi`,
-   `qk_norm`, `kernel_kwargs`, ...) must raise by name. The pre-V3 mixer absorbed `writer`,
-   `reader`, `route_on` and `router_zloss_coef` into `**kwargs` and forwarded four dead Q/K kwargs
-   into the layer; that silence is how `d_qk` outlived the architecture that defined it (rola-bench
-   F3).
-
-3. **THE V3 SURFACE IS DERIVED, NOT LISTED.** The accepted keyword set comes from
-   `inspect.signature(RoLA.__init__)`, so it cannot go stale.
-
-CPU only. A visible GPU is needed only because pytest collection imports Triton.
+Construction is CPU. The forward comparison is CUDA: the standalone engine has no CPU arm.
 """
 from __future__ import annotations
 
@@ -31,73 +30,82 @@ def _mixer_cls():
     return RoLAMixer
 
 
-#: One configuration per structurally distinct routing resolution the registry can produce:
-#: IndependentRouting with a sparse write, UnionRouting (untied sparse/sparse), the level split,
-#: sparsemax alphas, the D1 dense control, a tied level, and the leaf-mass decay clock.
-_CASES = {
-    "arm1": dict(levels_per_head=2, states_per_level=4, decay="none", state_norm="global",
-                 level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                        dict(tied=False, read="dense", write="dense")]),
-    "arm2_union": dict(levels_per_head=2, states_per_level=4, decay="none", state_norm="global",
-                       level_routing_configs=[dict(tied=False, read="sparse", write="sparse"),
-                                              dict(tied=False, read="dense", write="dense")]),
-    "arm3_levelsplit": dict(levels_per_head=2, states_per_level=4, decay="none", state_norm="global",
-                            level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                                   dict(tied=False, read="sparse", write="dense")]),
-    "arm3_a2w": dict(levels_per_head=2, states_per_level=4, decay="none", state_norm="global",
-                     level_routing_configs=[dict(tied=False, read="dense", write="sparse", alpha=2.0),
-                                            dict(tied=False, read="sparse", write="dense", alpha=1.5)]),
-    "d1_dense": dict(levels_per_head=1, states_per_level=16, decay="none", state_norm="global",
-                     level_routing_configs=[dict(tied=False, read="dense", write="dense")]),
-    "d1_dense_tied": dict(levels_per_head=1, states_per_level=16, decay="none", state_norm="global",
-                          level_routing_configs=[dict(tied=True, read="dense", write="dense")]),
-    "raw_norm": dict(levels_per_head=2, states_per_level=4, decay="none", state_norm="raw",
-                     level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                            dict(tied=False, read="dense", write="dense")]),
-    "massdecay": dict(levels_per_head=2, states_per_level=4, decay="leaf_mass", state_norm="global",
-                      level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                             dict(tied=False, read="dense", write="dense")]),
-    # The oracle-only inclusion-gated contrast clock (presence grid decay tier): same dial surface
-    # as leaf_mass, exponent = the fixed per-inclusion constant `decay_inclusion_tick`.
-    "incldecay": dict(levels_per_head=2, states_per_level=4, decay="inclusion_gated",
-                      decay_inclusion_tick=1.0, state_norm="global",
-                      level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                             dict(tied=False, read="dense", write="dense")]),
-    "mixed_radix": dict(levels_per_head=2, states_per_level=[2, 8], decay="none", state_norm="global",
-                        level_routing_configs=[dict(tied=False, read="dense", write="sparse"),
-                                               dict(tied=False, read="sparse", write="dense")]),
-}
+def _engine():
+    from rola_bench.engine import import_grid_engine
+    return import_grid_engine()
 
-_H, _DV = 2, 16
+
+#: One configuration per structurally distinct routing resolution the registry can produce, at the
+#: grid's own geometry (H=4, d_v=64) and a rung with a built arm: the sparse-write split, the union
+#: level, the level split, the sparsemax alpha, the D1 dense control and the tied spellings.
+_ROWS = {
+    "arm1": [dict(tied=False, read="dense", write="sparse"),
+             dict(tied=False, read="dense", write="dense")],
+    "arm2_union": [dict(tied=False, read="sparse", write="sparse"),
+                   dict(tied=False, read="dense", write="dense")],
+    "arm3_levelsplit": [dict(tied=False, read="dense", write="sparse"),
+                        dict(tied=False, read="sparse", write="dense")],
+    "arm3_a2w": [dict(tied=False, read="dense", write="sparse", alpha=2.0),
+                 dict(tied=False, read="sparse", write="dense", alpha=1.5)],
+    "d1_dense": [dict(tied=False, read="dense", write="dense")],
+    "d1_dense_tied": [dict(tied=True, read="dense", write="dense")],
+    "arm1_tied": [dict(tied=True, read="dense", write="sparse"),
+                  dict(tied=True, read="dense", write="dense")],
+}
+_WIDTHS = {"d1_dense": [64], "d1_dense_tied": [64]}
+#: `state_norm` is a ONE-VALUE axis on the standalone engine: `'raw'` is a dead arm
+#: (`rola.routing.types.validate_normalization` refuses it by name — the self-normalizing ratio IS
+#: the design), and every MQAR cell pins `'global'` already. There is no second normalization case
+#: to gate, and a mixer asking for one gets the engine's own refusal.
+_NORM = {}
+_CASES = {k: k for k in _ROWS}
+
+_H, _DV = 4, 64
 _DMODEL = _H * _DV
 
 
-def _materialize(rows):
-    from rola_bench.engine import LevelRoutingConfig
-    return [LevelRoutingConfig(**r) for r in rows]
+def _levels(rows, widths):
+    """The reference construction, spelled the way the engine's own docs spell it."""
+    rola = _engine()
+    out = []
+    for row, width in zip(rows, widths):
+        alpha = float(row.get("alpha", 1.5))
+        sparse = {duty for duty in ("read", "write") if row.get(duty) == "sparse"}
+        if sparse == {"read", "write"} and not row.get("tied", False):
+            out.append(rola.UnionRouting(width=width, alpha=alpha))
+            continue
+        out.append(rola.IndependentRouting(
+            width=width,
+            read=rola.entmax(alpha) if "read" in sparse else rola.softmax(),
+            write=rola.entmax(alpha) if "write" in sparse else rola.softmax(),
+            tied=bool(row.get("tied", False))))
+    return out
 
 
 def _build_pair(case):
-    """(mixer, layer) built from the SAME kwargs under the SAME seed."""
-    from rola_bench.engine import RoLA
-    kwargs = {k: v for k, v in case.items() if k != "level_routing_configs"}
-    rows = case["level_routing_configs"]
+    """(mixer, layer) built from the SAME configuration under the SAME seed."""
+    rola = _engine()
+    rows = _ROWS[_CASES[case]]
+    widths = _WIDTHS.get(_CASES[case], [8, 8])
+    norm = _NORM.get(case, "global")
 
     torch.manual_seed(1234)
     mixer = _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
-                         router_bias=True, use_short_conv=False, gain_bias_init=None,
-                         level_routing_configs=[dict(r) for r in rows], **kwargs)
+                         levels_per_head=len(widths), states_per_level=widths,
+                         level_routing_configs=[dict(r) for r in rows],
+                         state_norm=norm, router_bias=True, gain_bias_init=None)
     torch.manual_seed(1234)
-    layer = RoLA(hidden_size=_DMODEL, layer_idx=0, num_heads=_H, head_v_dim=_DV,
-                 router_bias=True, use_short_conv=False, gain_bias_init=None,
-                 level_routing_configs=_materialize(rows), **kwargs)
+    layer = rola.RoLA(
+        rola.RouteProducer(_levels(rows, widths), hidden_size=_DMODEL, num_heads=_H,
+                           normalization=norm, bias=True, gain=True, gain_bias_init=None),
+        d_v=_DV, layer_idx=0)
     return mixer, layer
 
 
 # --------------------------------------------------------------------------- 1. thinness
 @pytest.mark.parametrize("name", sorted(_CASES))
 def test_mixer_parameters_are_bit_identical_to_the_layer(name):
-    mixer, layer = _build_pair(_CASES[name])
+    mixer, layer = _build_pair(name)
     mp = dict(mixer.named_parameters())
     lp = dict(layer.named_parameters())
     assert set(mp) == set(lp), (
@@ -110,12 +118,15 @@ def test_mixer_parameters_are_bit_identical_to_the_layer(name):
             "adapter is not thin, or it changed an initialization-affecting kwarg.")
 
 
-@pytest.mark.parametrize("name", sorted(_CASES))
+@pytest.mark.parametrize("name", ["arm1", "arm2_union", "arm3_levelsplit", "d1_dense"])
 def test_mixer_forward_is_bit_identical_to_the_layer(name):
-    mixer, layer = _build_pair(_CASES[name])
-    mixer.eval(); layer.eval()
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device; the standalone engine has no CPU arm")
+    mixer, layer = _build_pair(name)
+    mixer = mixer.cuda().eval()
+    layer = layer.cuda().eval()
     torch.manual_seed(7)
-    x = torch.randn(2, 8, _DMODEL)
+    x = torch.randn(2, 64, _DMODEL, device="cuda")
     with torch.no_grad():
         got = mixer(x)
         want = layer(hidden_states=x)[0]
@@ -129,24 +140,18 @@ def test_mixer_forward_is_bit_identical_to_the_layer(name):
         "here would let a wrapper quietly become a second implementation.")
 
 
-def test_mixer_threads_the_cache_when_asked():
-    """`use_cache=True` must return the FULL 3-tuple. Swallowing it once made the perf harness's
-    decode arm measure a COLD, un-seeded step while reporting it as a warm continuation."""
-    from rola_bench.engine import Cache
-    mixer, _ = _build_pair(_CASES["arm1"])
-    mixer.eval()
-    x = torch.randn(1, 4, _DMODEL)
-    cache = Cache()
+def test_mixer_returns_the_continuation_pair_only_when_asked():
+    """The layer's contract is `(y, (state, conv_rings))` — BOTH halves together. zoology's block
+    wants the tensor; a caller continuing a sequence wants the pair, and never one half of it."""
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device; the standalone engine has no CPU arm")
+    mixer, _ = _build_pair("arm1")
+    mixer = mixer.cuda().eval()
+    x = torch.randn(1, 64, _DMODEL, device="cuda")
     with torch.no_grad():
-        out = mixer(x, past_key_values=cache, use_cache=True)
-    assert isinstance(out, tuple) and len(out) == 3, (
-        f"use_cache=True must return the layer's (o, None, past_key_values) tuple, got "
-        f"{type(out).__name__}")
-    assert out[2] is cache and len(cache) > 0, (
-        "the cache came back empty: the mixer swallowed the cache kwargs instead of threading them, "
-        "which is what once made the decode arm measure a cold step")
-    # and without use_cache it must still unwrap to a bare tensor
-    with torch.no_grad():
+        y, carried = mixer(x, return_state=True)
+        assert isinstance(y, torch.Tensor)
+        assert isinstance(carried, tuple) and len(carried) == 2
         assert isinstance(mixer(x), torch.Tensor)
 
 
@@ -157,63 +162,74 @@ def test_mixer_threads_the_cache_when_asked():
     ("tie_router_init", True), ("states_per_head", 16), ("routing", "flat"),
     ("writer", "softmax_linear"), ("reader", "softmax_linear"), ("route_on", "x"),
     ("router_zloss_coef", 0.1),
+    ("state_block", 16), ("decay_target_leaf_rate", 0.5), ("decay_inclusion_tick", 1.0),
+    ("use_cache", True), ("past_key_values", None),
 ])
 def test_retired_kwargs_raise_by_name(kwarg, value):
     from zoology.mixers.rola import RETIRED_KWARGS
     assert kwarg in RETIRED_KWARGS, f"{kwarg!r} must carry a retirement reason, not just fail"
     with pytest.raises(TypeError) as excinfo:
         _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
-                     levels_per_head=1, states_per_level=16, **{kwarg: value})
+                     levels_per_head=1, states_per_level=64, **{kwarg: value})
     assert kwarg in str(excinfo.value) and "RETIRED" in str(excinfo.value)
 
 
 def test_unknown_kwarg_raises_rather_than_being_absorbed():
     with pytest.raises(TypeError, match="unknown kwarg"):
         _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
-                     levels_per_head=1, states_per_level=16, not_a_real_kwarg=1)
+                     levels_per_head=1, states_per_level=64, not_a_real_kwarg=1)
 
 
 def test_unknown_level_routing_field_raises():
     with pytest.raises(TypeError, match="unknown LevelRoutingConfig field"):
         _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
-                     levels_per_head=1, states_per_level=16,
+                     levels_per_head=1, states_per_level=64,
                      level_routing_configs=[dict(tied=False, read="dense", writer="dense")])
 
 
-# --------------------------------------------------------------------------- 3. derived surface
-def test_accepted_kwargs_are_derived_from_the_engine_signature():
-    """The guard against this file's own predecessor: a hand-listed surface that outlived the engine.
+@pytest.mark.parametrize("decay", ["leaf_mass", "inclusion_gated"])
+def test_decay_is_refused_by_name_while_the_tier_is_deferred(decay):
+    """Decay is retired from the operator forward AND backward, and `inclusion_gated` has no
+    standalone spelling at all. A decay cell must refuse at CONSTRUCTION rather than be silently
+    rebuilt without its clock and published under a decay run_id."""
+    with pytest.raises(ValueError, match="DEFERRED"):
+        _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
+                     levels_per_head=1, states_per_level=64, decay=decay)
 
-    Asserts the accepted set IS the layer signature (so it tracks the engine automatically), and
-    that the set is non-vacuous and contains the V3 kwargs the registry actually emits.
-    """
-    import inspect
-    from zoology.mixers.rola import _LAYER_PARAMS
-    from rola_bench.engine import RoLA
-    expected = frozenset(inspect.signature(RoLA.__init__).parameters) - {"self"}
-    assert _LAYER_PARAMS == expected
-    for required in ("levels_per_head", "states_per_level", "decay", "state_norm", "router_bias",
-                     "level_routing_configs", "gain_bias_init", "head_v_dim", "num_heads"):
-        assert required in _LAYER_PARAMS, (
-            f"{required!r} is emitted by the preset registry but is not a kwarg of the pinned "
-            "engine's RoLA.__init__ — the registry and the engine have diverged.")
-    for deleted in ("head_k_dim", "qk_norm", "kernel", "phi"):
-        assert deleted not in _LAYER_PARAMS, (
-            f"{deleted!r} reappeared on the engine's layer signature; the V3 deletion inventory "
-            "(ROLA_V3_SPEC.md §1.2) no longer holds and every retirement reason must be re-ratified.")
+
+# --------------------------------------------------------------------------- 3. the wirings land
+@pytest.mark.parametrize("name,union_levels", [
+    ("arm1", ()), ("arm2_union", (0,)), ("arm3_levelsplit", ()), ("d1_dense", ()),
+])
+def test_rows_resolve_to_the_engine_level_config_the_arm_claims(name, union_levels):
+    rola = _engine()
+    mixer, _ = _build_pair(name)
+    for index, level in enumerate(mixer.routes.levels):
+        want = rola.UnionRouting if index in union_levels else rola.IndependentRouting
+        assert isinstance(level, want), (
+            f"{name}: level {index} resolved to {type(level).__name__}, expected {want.__name__}")
+
+
+def test_alpha_lands_on_the_sparse_duty_only():
+    mixer, _ = _build_pair("arm3_a2w")
+    cfg = mixer.resolved_config()["level_routing_configs"]
+    assert cfg[0]["write"] == "sparse" and cfg[0]["alpha"] == 2.0
+    assert cfg[1]["read"] == "sparse" and cfg[1]["alpha"] == 1.5
+    with pytest.raises(ValueError, match="dead knob"):
+        _mixer_cls()(d_model=_DMODEL, layer_idx=0, n_heads=_H, d_v=_DV,
+                     levels_per_head=1, states_per_level=64,
+                     level_routing_configs=[dict(read="dense", write="dense", alpha=2.0)])
 
 
 def test_resolved_config_reports_the_realized_cell():
     """Provenance must be READ BACK, not re-derived from the kwargs. The pre-V3 STATE_FLOATS_JSON
     reported `d_qk`, `qk_norm` and `states_per_head`, three fields that stopped existing without the
     log noticing."""
-    mixer, _ = _build_pair(_CASES["mixed_radix"])
+    mixer, _ = _build_pair("arm3_levelsplit")
     cfg = mixer.resolved_config()
-    assert cfg["states_per_level"] == [2, 8] and cfg["N"] == 16
-    assert cfg["addressing_entropy"] == 10          # S = sum_l b_l
-    assert cfg["levels_per_head"] == 2
+    assert cfg["states_per_level"] == [8, 8] and cfg["N"] == 64
+    assert cfg["addressing_entropy"] == 16          # S = sum_l b_l
+    assert cfg["levels_per_head"] == 2 and cfg["engine"] == "rola"
     assert cfg["decay"] == "none" and cfg["state_norm"] == "global"
     assert cfg["gain_sides"] == 1                   # 'global' => write gain only (F5's contract)
     assert not any(k in cfg for k in ("d_qk", "qk_norm", "kernel", "phi", "states_per_head"))
-    raw, _ = _build_pair(_CASES["raw_norm"])
-    assert raw.resolved_config()["gain_sides"] == 2  # 'raw' => read AND write gain

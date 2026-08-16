@@ -6,7 +6,8 @@ publication-grade: a preset that constructs is not enough — it must construct 
 claims, its capacity coordinate must be measured rather than computed, and its spec must expand to
 the cells its header says it does.
 
-CPU only. A visible GPU is needed only because pytest collection imports Triton.
+Mostly CPU. The standalone engine (2026-08-15 repoint) has no CPU forward arm at all, so the one
+gate that exercises a forward is CUDA-marked and skips without a device.
 """
 from __future__ import annotations
 
@@ -15,8 +16,18 @@ import os
 import pytest
 
 _EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
-_SPECS = ("law_grid", "separation", "ood_recall", "canonical", "dmodel64", "router_bias",
+_SPECS = ("law_grid", "separation", "ood_recall", "canonical", "dmodel64",
           "cue_consistency", "graph_grid", "presence_grid")
+#: `router_bias` is PARKED by the standalone repoint and is deliberately NOT in `_SPECS`: its whole
+#: routed ladder is pinned at N = 128, which has no uniform D=2 spelling (128 = 2^7) and no built
+#: D=1 arm, so every one of its cells drops with the engine's reason and `build_configs` refuses the
+#: resulting empty grid by design. It needs its own squares amendment before it is gated again
+#: (campaign-dispatch b2-3_build.md, finding F-2).
+
+#: The smallest state rung with a built arm at BOTH depths the slate uses (D=1 as [64], D=2 as
+#: [8,8]). Read the derivation off `instances._check_built_arm`: the operator's manifest is what
+#: decides, and 64 is where the ladder starts today.
+_RUNG = 64
 
 
 # =============================================================== 1. the preset registry
@@ -37,14 +48,37 @@ def test_slate_is_the_three_wirings_plus_the_d1_control():
     "rola-arm1-densread-sparsewrite", "rola-arm2-union", "rola-arm3-levelsplit",
     "rola-arm3-levelsplit-a2w", "rola-d1-dense", "rola-arm1-tied", "rola-d1-dense-tied",
 ])
-def test_every_preset_constructs_and_runs_a_forward(name):
-    import torch
+def test_every_preset_constructs(name):
+    """CPU CONSTRUCTION, at the smallest rung with a built arm.
+
+    The forward is CUDA-only in the standalone engine (there is no CPU arm and no fallback), so a
+    forward gate lives in `test_canonical_wirings_train_on_the_kernel` below and this one asserts
+    what CPU can assert: the preset's kwargs build the module the registry says they do."""
     from rola_bench.mqar.instances import rola_instance
     from zoology.mixers.rola import RoLAMixer
-    kw = rola_instance(name, 16, n_heads=2, d_v=16)
-    mixer = RoLAMixer(d_model=32, layer_idx=0, **kw)
-    out = mixer(torch.randn(2, 8, 32))
-    assert out.shape == (2, 8, 32) and bool(torch.isfinite(out).all())
+    kw = rola_instance(name, _RUNG)
+    mixer = RoLAMixer(d_model=64, layer_idx=0, **kw)
+    assert mixer.topology.N == _RUNG and mixer.d_v == 64
+
+
+@pytest.mark.parametrize("name", ["rola-arm1-densread-sparsewrite", "rola-arm2-union",
+                                  "rola-arm3-levelsplit", "rola-d1-dense"])
+def test_canonical_wirings_train_on_the_kernel(name):
+    """fwd + bwd on the CUDA arm, at the grid's own geometry — the property the grid's cells need
+    and the one a CPU construction gate cannot see (the layer-dispatch autograd gap)."""
+    import torch
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device")
+    from rola_bench.mqar.instances import MQAR_GEOM, rola_instance
+    from zoology.mixers.rola import RoLAMixer
+    d_model = MQAR_GEOM["n_heads"] * MQAR_GEOM["d_v"]
+    mixer = RoLAMixer(d_model=d_model, layer_idx=0, **rola_instance(name, _RUNG)).cuda().train()
+    x = torch.randn(2, 64, d_model, device="cuda", requires_grad=True)
+    out = mixer(x)
+    out.float().pow(2).mean().backward()
+    assert out.shape == (2, 64, d_model) and bool(torch.isfinite(out).all())
+    assert mixer.last_execution_backend == "cuda"
+    assert x.grad is not None and float(mixer.routes.route_W.grad.abs().sum()) > 0
 
 
 @pytest.mark.parametrize("name,reason_contains", [
@@ -79,7 +113,7 @@ def test_presets_emit_no_retired_kwarg():
     from zoology.mixers.rola import RETIRED_KWARGS
     from rola_bench.mqar.instances import ROLA_INSTANCES, rola_instance
     for name in ROLA_INSTANCES:
-        kw = rola_instance(name, 16)
+        kw = rola_instance(name, _RUNG)
         assert not (set(kw) & set(RETIRED_KWARGS)), f"{name} emits retired vocabulary: {sorted(set(kw) & set(RETIRED_KWARGS))}"
 
 
@@ -94,35 +128,37 @@ def test_routing_resolves_to_the_intended_engine_structure(name):
     untied sparse/sparse level becomes `UnionRouting` (one shared entmax support split by sigma),
     everything else becomes `IndependentRouting` (each duty solves its own exact activation). The
     slate is only a three-way ablation if that distinction actually lands."""
-    from rola_bench.engine import IndependentRouting, UnionRouting
+    from rola_bench.engine import import_grid_engine
     from rola_bench.mqar.instances import rola_instance
+    IndependentRouting = import_grid_engine().IndependentRouting
+    UnionRouting = import_grid_engine().UnionRouting
     from zoology.mixers.rola import RoLAMixer
-    mixer = RoLAMixer(d_model=32, layer_idx=0, **rola_instance(name, 16, n_heads=2, d_v=16))
+    mixer = RoLAMixer(d_model=64, layer_idx=0, **rola_instance(name, _RUNG))
     union_levels = _UNION_EXPECTED.get(name, ())
-    for index, level in enumerate(mixer.topology.levels):
+    for index, level in enumerate(mixer.routes.levels):
         want = UnionRouting if index in union_levels else IndependentRouting
-        assert isinstance(level.routing, want), (
-            f"{name}: level {index} resolved to {type(level.routing).__name__}, expected "
-            f"{want.__name__}")
+        assert isinstance(level, want), (
+            f"{name}: level {index} resolved to {type(level).__name__}, expected {want.__name__}")
 
 
 def test_d1_dense_control_is_a_single_dense_level():
     """The map-family control: one dense softmax level, no factorization. If this ever gains a level
     or a sparse duty it stops being the control the structured wirings are measured against."""
-    from rola_bench.engine import SoftmaxActivation
+    from rola_bench.engine import import_grid_engine
     from rola_bench.mqar.instances import rola_instance
+    SoftmaxActivation = import_grid_engine().SoftmaxActivation
     from zoology.mixers.rola import RoLAMixer
-    mixer = RoLAMixer(d_model=32, layer_idx=0, **rola_instance("rola-d1-dense", 16, n_heads=2, d_v=16))
-    assert len(mixer.topology.levels) == 1 and mixer.topology.N == 16
-    routing = mixer.topology.levels[0].routing
-    assert isinstance(routing.read_activation, SoftmaxActivation)
-    assert isinstance(routing.write_activation, SoftmaxActivation)
+    mixer = RoLAMixer(d_model=64, layer_idx=0, **rola_instance("rola-d1-dense", _RUNG))
+    assert len(mixer.routes.levels) == 1 and mixer.topology.N == _RUNG
+    level = mixer.routes.levels[0]
+    assert isinstance(level.read, SoftmaxActivation)
+    assert isinstance(level.write, SoftmaxActivation)
 
 
 def test_a2w_variant_differs_from_arm3_in_alpha_alone():
     from rola_bench.mqar.instances import rola_instance
-    base = rola_instance("rola-arm3-levelsplit", 16)
-    a2w = rola_instance("rola-arm3-levelsplit-a2w", 16)
+    base = rola_instance("rola-arm3-levelsplit", _RUNG)
+    a2w = rola_instance("rola-arm3-levelsplit-a2w", _RUNG)
     for key in set(base) | set(a2w):
         if key == "level_routing_configs":
             continue
@@ -161,7 +197,7 @@ def test_realized_state_is_read_back_not_computed():
     """H*N*d_v content + H*N denominator under 'global', MEASURED off the constructed layer."""
     from rola_bench.mqar.instances import MQAR_GEOM, realized_state_floats
     H, dv = MQAR_GEOM["n_heads"], MQAR_GEOM["d_v"]
-    for nc in (16, 64, 256):
+    for nc in (64, 256):                       # the rungs with a built arm; see `_RUNG`
         stats = realized_state_floats("rola-arm1-densread-sparsewrite", nc)
         assert stats["num_chunks"] == nc and stats["d_v"] == dv and stats["n_heads"] == H
         assert stats["content"] == H * nc * dv
@@ -399,34 +435,25 @@ def test_d1_control_ceiling_is_pinned_and_reported():
             assert all(a.get("instance") != "rola-d1-dense" for a in arms)
 
 
-def test_readout_tile_is_pinned_off_the_factorization():
-    """The engine's CUDA consumer instantiates `BC in _SUPPORTED_BC` only, and the layer's
-    `state_block` defaults to the FINEST branch width — so an un-pinned cell's EVAL-mode
-    buildability would be decided by its factorization, the very axis this grid sweeps. Found by the
-    Phase 1 smoke, where `b=[4,4]` raised out of `resolve_occupancy` while `b=[16,16]` ran."""
-    from rola_bench.engine import _SUPPORTED_BC, _SUPPORTED_DV
-    from rola_bench.mqar.instances import MQAR_GEOM, MQAR_STATE_BLOCK, ROLA_INSTANCES, rola_instance
-    assert MQAR_STATE_BLOCK in _SUPPORTED_BC, (
-        f"the pinned readout tile {MQAR_STATE_BLOCK} is not an instantiated BC {_SUPPORTED_BC}; "
-        "every eval-mode cell in the grid would be refused by the consumer")
-    assert MQAR_GEOM["d_v"] in _SUPPORTED_DV, (
-        f"the pinned MQAR d_v {MQAR_GEOM['d_v']} is not an instantiated d_v {_SUPPORTED_DV}")
-    for name in ROLA_INSTANCES:
-        for nc in (16, 64, 256):
-            try:
-                kw = rola_instance(name, nc)
-            except Exception:
-                continue
-            assert kw["state_block"] == MQAR_STATE_BLOCK, (
-                f"{name}@nc{nc} did not pin state_block; it would inherit "
-                f"{kw['states_per_level'][-1]} from its own factorization")
+def test_the_grid_refuses_a_rung_with_no_built_arm():
+    """THE READOUT TILE IS NO LONGER A CELL PARAMETER (standalone repoint, 2026-08-15). BC is the
+    operator's decision, so the grid's buildability question moved from "does the pinned tile divide
+    N" to "is this (D, B) in the built arm matrix, forward AND backward" — and it is asked of the
+    compiled binary's own census. This gate pins the CONSEQUENCE: no preset emits a `state_block`,
+    every rung on the presence grid's squares ladder resolves to a TRAINABLE arm, and a rung below
+    the built floor drops with the engine's own reason instead of failing at step 1 on a rented box.
 
-
-def test_perf_harness_pins_the_same_readout_tile():
-    from rola_bench.engine import _SUPPORTED_BC
-    from rola_bench.mqar.instances import MQAR_STATE_BLOCK
-    from rola_bench.perf import scaling
-    assert scaling.PERF_STATE_BLOCK in _SUPPORTED_BC
-    assert scaling.PERF_STATE_BLOCK == MQAR_STATE_BLOCK, (
-        "the perf harness and the MQAR grid must measure the same readout tile, or a kernel row and "
-        "a quality row of one published arm describe different launches")
+    (The perf tier still pins its own `PERF_STATE_BLOCK` against the LEGACY engine and is NOT
+    repointed — campaign-dispatch b2-3_build.md, finding F-3.)"""
+    from rola_bench.engine import chunk_arm_for, chunk_scan_arms
+    from rola_bench.mqar.instances import (CANONICAL_WIRINGS, PresetRungUnavailable, rola_instance)
+    for name in CANONICAL_WIRINGS:
+        for nc in (64, 256):
+            kw = rola_instance(name, nc)
+            assert "state_block" not in kw
+            b = kw["states_per_level"]
+            arm = chunk_arm_for(len(b), b[0])
+            assert arm is not None and (*arm, len(b), b[0]) in chunk_scan_arms(), (
+                f"{name}@nc{nc} spells widths {b}, which is not a trainable arm")
+        with pytest.raises(PresetRungUnavailable, match="no built forward arm|no UNIFORM"):
+            rola_instance(name, 16)

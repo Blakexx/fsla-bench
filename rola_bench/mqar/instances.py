@@ -70,20 +70,13 @@ from rola_bench.rola_compat import topology_from_legacy
 # --- the pinned MQAR head geometry (see the module docstring for the derivation) -----------------
 MQAR_GEOM = dict(n_heads=4, d_v=64)
 
-#: THE READOUT TILE, pinned rather than inherited (found by the Phase 1 smoke, 2026-08-02).
-#:
-#: The V3 layer defaults `state_block` to `topology.widths[-1]` — the FINEST branch width. That
-#: default couples a cell's EVAL-mode buildability to its factorization, because the CUDA consumer
-#: only instantiates `BC in _SUPPORTED_BC = (16, 64)`: `b=[16,16]` evaluates and `b=[4,4]`,
-#: `b=[32,32]`, `b=[256]` all raise `NotImplementedError` out of `resolve_occupancy`. The grid
-#: SWEEPS the factorization, so inheriting that default would make half the N ladder unrunnable at
-#: eval time for a reason that has nothing to do with the experiment — and it would have been
-#: discovered per-cell on a rented box.
-#:
-#: Pinning `state_block = 16` decouples them: every factorization on the ladder evaluates, and the
-#: readout tile is a constant across the sweep instead of a hidden covariate that moves with N.
-#: Verified on GPU across `b in {[4,4], [8,16], [16,16], [32,32], [256]}` at `d_v=64`.
-MQAR_STATE_BLOCK = 16
+#: THE READOUT TILE IS RETIRED AS A CELL PARAMETER (standalone repoint, 2026-08-15). It used to be
+#: pinned here (`state_block = 16`) because the pre-repoint layer defaulted it to the finest branch
+#: width and only two values were instantiated, which coupled a cell's buildability to its
+#: factorization. In the standalone engine BC is the OPERATOR's decision (`rola/layer.py`,
+#: `rola.expert.PlanOverrides`) and the layer takes no such kwarg, so the grid states its geometry
+#: as `(D, widths, d_v)` and the built arm matrix answers for BC — see `_check_built_arm`, which
+#: asks the compiled binary's own census instead of restating a number.
 
 #: Content recurrent floats per layer per state-rung, as a function of N. Derived from MQAR_GEOM,
 #: NOT a literal — `canonical_baselines.REF` reads it so the baseline matched-state solve and the
@@ -147,27 +140,27 @@ class PresetRungUnavailable(ValueError):
     """
 
 
-def _balanced_pair(nc: int) -> list[int]:
-    """The most balanced (b0, b1) with `b0 * b1 == nc` and `b0 <= b1`.
+def _uniform_widths(nc: int, D: int) -> list[int]:
+    """The UNIFORM `D`-level spelling of `N`: `b = [B]*D` with `B**D == N`, or no spelling at all.
 
-    The pre-V3 grid used `rola_compat.topology_from_legacy(nc, 'square')`, which demands a PERFECT
-    SQUARE and therefore excluded half of every power-of-two ladder (2, 8, 32, 128, 32768...). The
-    D=2 wirings are defined by their DUTY assignment, not by equal branch widths, so the right
-    factorization is the most balanced one that exists — `[8, 16]` at N=128 is the same wiring as
-    `[16, 16]` at N=256, which is exactly how the LM flagship is already pinned (mixed radix).
+    SQUARES ONLY (ruling 2026-08-15, presence_grid.yaml amendment item 1). The engine's built arm
+    matrix is uniform-width by construction — `rola.ops.chunk.unsupported` refuses
+    `widths=(4, 8)` by name — so a jagged factorization is not a slower cell, it is no cell. The
+    pre-repoint `_balanced_pair` produced exactly those jagged spellings at N = 32 and N = 128,
+    which is why those two rungs left the D>=2 ladders rather than being re-factorized: a uniform
+    D-level topology has `N = B**D`, so N = 2^5 and N = 2^7 have no multi-level uniform spelling at
+    any depth.
     """
-    nc = int(nc)
-    best = None
-    for b0 in range(2, int(nc ** 0.5) + 1):
-        if nc % b0 == 0:
-            best = [b0, nc // b0]
-    if best is None:
-        raise PresetRungUnavailable(
-            f"N={nc} admits no two-level factorization with both branch widths >= 2 (its only "
-            "factor pair is 1 x N, and a width-1 level is a no-op that would silently make a D=2 "
-            "wiring a D=1 one). This rung has no spelling for this preset; drop it from the ladder "
-            "or use the D=1 control at this rung.")
-    return best
+    nc, D = int(nc), int(D)
+    B = round(nc ** (1.0 / D))
+    for candidate in (B - 1, B, B + 1):                 # integer D-th root, float-error-free
+        if candidate >= 2 and candidate ** D == nc:
+            return [candidate] * D
+    raise PresetRungUnavailable(
+        f"N={nc} is not a perfect {D}-th power, so it has no UNIFORM depth-{D} spelling and the "
+        "engine's arm matrix is uniform-width by construction (jagged widths are refused by "
+        "`rola.ops.chunk`, forward and backward). This rung has no spelling for this preset; use "
+        "a square rung or the D=1 control at this rung.")
 
 
 def _topology(name: str, nc: int, states_per_level=None) -> tuple[int, list[int] | int]:
@@ -193,34 +186,33 @@ def _topology(name: str, nc: int, states_per_level=None) -> tuple[int, list[int]
                 f"preset {name!r} has depth D={D} but states_per_level={b} has depth {len(b)}. "
                 "Depth is part of the WIRING (which duties exist on which level); a different depth "
                 "is a different preset, not a different rung.")
+        _check_engine_envelope(name, nc, b)
         return D, b
-    b = [int(nc)] if D == 1 else _balanced_pair(nc)   # D=1: the unfactorized control
-    _check_engine_caps(name, nc, b)
+    b = [int(nc)] if D == 1 else _uniform_widths(nc, D)   # D=1: the unfactorized control
+    _check_engine_envelope(name, nc, b)
     return D, b
 
 
-def _check_engine_caps(name: str, nc: int, b: list[int]) -> None:
-    """Refuse a rung the ENGINE cannot build, with the engine's own numbers.
+def _check_engine_envelope(name: str, nc: int, b: list[int]) -> None:
+    """Refuse a rung the ENGINE cannot RUN, with the engine's own numbers.
 
-    The V3 routing tree caps branch width at `MAX_BRANCH_WIDTH` and depth at `MAX_ROUTING_DEPTH`.
-    The consequence is structural and worth stating plainly, because it is an argument the paper
-    makes rather than a limitation it works around: **the D1 dense control cannot exist above
-    N = MAX_BRANCH_WIDTH.** An unfactorized router is one softmax over N logits, and the kernel does
-    not instantiate one that wide — so at the separation scales the monolithic control has no
-    spelling at all, while the factorized wirings reach N = 65536 as `[256, 256]`. That is the same
-    kind of reported ceiling as GDN's `head_dim` cap, and it is reported the same way.
+    Two layers, both read off the engine rather than restated:
+
+      * the routing tree's structural caps (`MAX_BRANCH_WIDTH`, `MAX_ROUTING_DEPTH`). The
+        consequence is an argument the paper makes rather than a limitation it works around:
+        **the D1 dense control cannot exist above N = MAX_BRANCH_WIDTH.** An unfactorized router is
+        one softmax over N logits, and the kernel does not instantiate one that wide — so at the
+        separation scales the monolithic control has no spelling at all, while the factorized
+        wirings reach N = 65536 as `[256, 256]`. That is the same kind of reported ceiling as GDN's
+        `head_dim` cap, and it is reported the same way.
+      * THE BUILT ARM MATRIX (the standalone repoint, 2026-08-15). BC is no longer a cell's to pin:
+        the operator picks it from what is built for this `(D, B)`, and a topology with no built
+        arm — or with no built BACKWARD arm — has no training cell at all. Both questions are asked
+        of the compiled binary's own census (`chunk_arms()` / `chunk_scan_b_census()`), so this
+        refusal cannot drift from what shipped. It replaces the retired `MQAR_STATE_BLOCK = 16`
+        floor, which was a claim about a layer kwarg that no longer exists.
     """
     from rola_bench.engine import MAX_BRANCH_WIDTH, MAX_ROUTING_DEPTH
-    if int(nc) % MQAR_STATE_BLOCK:
-        raise PresetRungUnavailable(
-            f"N={nc} is not a multiple of the pinned readout tile "
-            f"state_block={MQAR_STATE_BLOCK}, and the engine requires the tile to divide N (owners "
-            "partition the leaf space). Leaving state_block to follow the finest branch width "
-            "instead would put BC outside the consumer's instantiated set, so eval-mode cells below "
-            f"N={MQAR_STATE_BLOCK} have no launchable geometry at all. This is a reported floor on "
-            "the state ladder, not a spec error: the matched-state curve for a ROUTED arm starts at "
-            f"N={MQAR_STATE_BLOCK}, while the monolithic baselines have no such floor and are "
-            "plotted from their smallest rung.")
     if len(b) > MAX_ROUTING_DEPTH:
         raise PresetRungUnavailable(
             f"preset {name!r} at N={nc} needs depth {len(b)}, above the engine's "
@@ -233,6 +225,31 @@ def _check_engine_caps(name: str, nc: int, b: list[int]) -> None:
             "on an unfactorized router — one softmax over N logits — and it is a REPORTED result, "
             f"not a gap: above N={MAX_BRANCH_WIDTH} the monolithic control has no spelling while the "
             "factorized wirings still do.")
+    _check_built_arm(name, nc, b)
+
+
+def _check_built_arm(name: str, nc: int, b: list[int]) -> None:
+    """Refuse a topology with no built FORWARD arm, or no built BACKWARD arm, at the pinned C."""
+    from rola_bench.engine import chunk_arm_for, chunk_scan_arms, CHUNK_TOKENS
+    D, B = len(b), b[0]
+    if len(set(b)) != 1:
+        raise PresetRungUnavailable(
+            f"preset {name!r} at N={nc} spells widths {b}, which are JAGGED: the operator's arm "
+            "manifest is uniform-width by construction and refuses them by name, forward and "
+            "backward. SQUARES ONLY (presence_grid.yaml amendment 2026-08-15).")
+    arm = chunk_arm_for(D, B)
+    if arm is None:
+        raise PresetRungUnavailable(
+            f"preset {name!r} at N={nc} needs topology (D={D}, B={B}), which has no built forward "
+            f"arm in the operator's manifest at the pinned chunk C={CHUNK_TOKENS}. This is a "
+            "reported floor on the state ladder — the routed curve starts at the smallest N whose "
+            "uniform spelling is instantiated — not a spec error.")
+    if (*arm, D, B) not in chunk_scan_arms():
+        raise PresetRungUnavailable(
+            f"preset {name!r} at N={nc} runs the forward arm {(*arm, D, B)} but the two SCANS are "
+            "not built for it, so the cell has a forward and no backward and cannot train. The "
+            "trainable arms are the census's own: "
+            f"{sorted(chunk_scan_arms())}.")
 
 
 def rola_instance(name: str, nc: int, *, n_heads: int | None = None, d_v: int | None = None,
@@ -242,18 +259,27 @@ def rola_instance(name: str, nc: int, *, n_heads: int | None = None, d_v: int | 
                   decay_inclusion_tick: float | None = None) -> dict:
     """`zoology.mixers.rola.RoLAMixer` kwargs for one named preset at state rung `nc`.
 
-    There is no `d_qk` parameter and no `kernel` parameter: V3 owns no Q/K surface, and the decay
-    vocabulary is the layer's own `decay in {'none','leaf_mass','inclusion_gated'}` —
-    'inclusion_gated' is the ORACLE-ONLY contrast clock for the presence grid's decay tier
-    (fixed per-inclusion exponent constant `decay_inclusion_tick`, default 1.0 = the point-write
-    matching value; the layer force-dispatches it to the fp64 oracle and the CUDA consumer refuses
-    it by type). `router_bias` defaults to True (the flagship pin — every `named_configs` builder
-    passes it), NOT to the layer default.
+    There is no `d_qk` parameter and no `kernel` parameter: the architecture owns no Q/K surface.
+    `router_bias` defaults to True (the flagship pin — every `named_configs` builder passes it),
+    NOT to the layer default.
+
+    DECAY IS DEFERRED (presence_grid.yaml amendment 2026-08-15 item 2). The operator refuses every
+    clock forward AND backward and `inclusion_gated` has no standalone spelling at all, so a decay
+    cell has no engine. `decay` and its two dials stay on this signature so the deferred tier's
+    spec still parses and refuses BY NAME at construction (`RoLAMixer` raises), rather than being
+    silently dropped here into a decay-free cell published under a decay run_id.
     """
     if name in RETIRED_INSTANCES:
         raise ValueError(f"RoLA MQAR preset {name!r} is RETIRED: {RETIRED_INSTANCES[name]}")
     if name not in _WIRINGS:
         raise ValueError(f"unknown RoLA instance {name!r}; expected one of {sorted(_WIRINGS)}")
+    if decay != "none":
+        raise PresetRungUnavailable(
+            f"decay={decay!r} has no engine: the operator refuses every clock forward AND backward "
+            "(the decay retirement) and 'inclusion_gated' has no standalone spelling at all. The "
+            "decay tier is DEFERRED WHOLE and re-enters with the decay reopen, on one engine "
+            "(presence_grid.yaml amendment 2026-08-15 item 2). Its cells drop with this reason "
+            "rather than being silently rebuilt without their clock.")
     D, b = _topology(name, nc, states_per_level)
     kw = dict(
         n_heads=MQAR_GEOM["n_heads"] if n_heads is None else n_heads,
@@ -261,7 +287,7 @@ def rola_instance(name: str, nc: int, *, n_heads: int | None = None, d_v: int | 
         levels_per_head=D, states_per_level=b,
         level_routing_configs=[dict(r) for r in _WIRINGS[name]["rows"]],
         decay=decay, state_norm=state_norm, router_bias=router_bias,
-        use_short_conv=use_short_conv, state_block=MQAR_STATE_BLOCK,
+        use_short_conv=use_short_conv,
         # F5's gain pin, MQAR spelling: `gain_bias_init` is the ONE gain kwarg the layer takes and
         # its default is a flagged model decision in the engine docstring. Pinned, not inherited.
         gain_bias_init=None,

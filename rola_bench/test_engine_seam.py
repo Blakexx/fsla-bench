@@ -41,20 +41,30 @@ def _package_sources():
         yield rel, path
 
 
+#: BOTH engines are behind the seam: the legacy `fla_rola` (LM tier, perf tier, V2-era gates) and
+#: the standalone `rola` the grid trains on. A direct import of either is a coupling the seam
+#: exists to prevent, and the second one is the newer risk — it is the one every repointed module
+#: is tempted to reach for.
+_ENGINE_PACKAGES = (engine.ENGINE_PACKAGE, engine.GRID_ENGINE_PACKAGE)
+
+
 def _engine_imports(path):
-    """Every `import fla_rola...` / `from fla_rola... import ...` in one file, by AST (not grep —
-    a mention inside a docstring or a comment is documentation, not a coupling)."""
+    """Every direct engine import in one file, by AST (not grep — a mention inside a docstring or
+    a comment is documentation, not a coupling)."""
     tree = ast.parse(path.read_text())
     hits = []
+
+    def names(module):
+        return [pkg for pkg in _ENGINE_PACKAGES
+                if module == pkg or module.startswith(pkg + ".")]
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == engine.ENGINE_PACKAGE or alias.name.startswith(
-                        engine.ENGINE_PACKAGE + "."):
+                if names(alias.name):
                     hits.append((node.lineno, f"import {alias.name}"))
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            if node.module == engine.ENGINE_PACKAGE or node.module.startswith(
-                    engine.ENGINE_PACKAGE + "."):
+            if names(node.module):
                 hits.append((node.lineno, f"from {node.module} import ..."))
     return hits
 
@@ -109,3 +119,15 @@ def test_unknown_symbol_says_what_to_do():
 def test_import_engine_returns_the_package_and_submodules():
     assert engine.import_engine().__name__ == engine.ENGINE_PACKAGE
     assert engine.import_engine("layers").__name__ == f"{engine.ENGINE_PACKAGE}.layers"
+
+
+def test_the_grid_engine_answers_the_built_arm_questions():
+    """The grid's tier reads its buildability off the STANDALONE engine's own census, through the
+    seam. `chunk_scan_arms()` is the trainable set; `chunk_arm_for` is the selector the launch
+    itself uses, so a refusal here and a launch there cannot disagree."""
+    assert engine.import_grid_engine().__name__ == engine.GRID_ENGINE_PACKAGE
+    arms = engine.chunk_scan_arms()
+    assert arms and all(len(a) == 4 for a in arms)
+    c, bc = engine.chunk_arm_for(2, 8)                 # the grid's N=64 D=2 rung
+    assert (c, bc, 2, 8) in arms
+    assert engine.chunk_arm_for(2, 4) is None          # N=16 D=2: no built arm
