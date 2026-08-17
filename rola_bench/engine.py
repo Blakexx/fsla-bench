@@ -82,15 +82,15 @@ def chunk_arm_for(D: int, B: int) -> tuple[int, int] | None:
     Asked of the ENGINE's own selector rather than reimplemented, so the grid's refusal and the
     launch cannot disagree about which arm a rung takes ([[matching-the-naive-antipattern]]).
     """
-    eng_rules = import_grid_engine("rules")
-    eng_manifest = import_grid_engine("facts.manifest")
+    eng_rules = import_grid_engine("engine.rules")
+    eng_manifest = import_grid_engine("engine.facts.manifest")
     return eng_rules.arm((int(B),) * int(D), eng_manifest.chunk_arms())
 
 
 def chunk_scan_arms() -> set[tuple[int, int, int, int]]:
     """The `(C, BC, D, B)` arms the two backward SCANS are built for — the TRAINABLE set, read off
     the compiled binary's census."""
-    return import_grid_engine("facts.manifest").scan_arms()
+    return import_grid_engine("engine.facts.manifest").scan_arms()
 
 
 def register_hf_models() -> ModuleType:
@@ -181,7 +181,7 @@ _GRID_SYMBOLS: dict[str, str] = {
     "MAX_BRANCH_WIDTH": "routing.topology",
     #: The operator's token quantum: `T` must be a multiple of it, which is a constraint on the
     #: grid's sequence lengths and therefore read rather than restated.
-    "CHUNK_TOKENS": "rules",
+    "CHUNK_TOKENS": "engine.rules",
 }
 #: The standalone's CLASSES (`RouteProducer`, `IndependentRouting`, `UnionRouting`,
 #: `SoftmaxActivation`, `EntmaxActivation`, `naive_rola`, ...) are deliberately NOT in that table:
