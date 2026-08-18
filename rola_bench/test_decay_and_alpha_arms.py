@@ -17,6 +17,16 @@ Everything here is CPU: config-registry assertions, `LevelRoutingConfig` resolut
 ENGINE's own `_resolve_level_routing` / `routing_factor_levels` (never a reimplementation, per
 `matching-the-naive-antipattern`), and layer construction on CPU. No CUDA, no timing.
 
+TRANSLATED onto the standalone engine's routing vocabulary on 2026-08-17 (the `fla_rola/ops/rola/`
+hollow-out). The alpha cells keep their claims and restate them in the engine's terms: the routing
+reference takes PACKED per-side logits `[BH, T, packed_logit_width]` sliced by
+`ResolvedRouting.level_logit_slice` (the legacy one took a padded `[B, T, D, real_width]`), a level
+object carries its own `width` and spells its duties `read`/`write`, and `ResolvedRouting` takes no
+`branches=` argument. The DECAY cells above are unaffected: they were already producer/source-level
+(registry surface, dial shape, dial dtype) rather than operator-level, and the operator refuses
+decay on both the forward and the backward, so operator-level decay behaviour is not gateable here
+in any vocabulary.
+
 `ENTMAX_SOLVE_TOL = 1e-12`: the exact entmax solve is an 80-iteration bisection on the threshold,
 residual O(2**-80) of the logit range — orders below fp64 eps. Off-support entries are asserted
 EXACTLY zero (entmax clamps to a representable zero), and mix/alpha equality is asserted exactly
@@ -49,15 +59,29 @@ def _dict_rows(mix):
 
 
 def _resolved_routing(kwargs):
+    """The layer's own config -> engine mapping. The engine's level object carries its own
+    `width`, so the widths are zipped INTO the levels rather than passed beside them."""
     from rola_bench.engine import _resolve_level_routing
     from rola_bench.engine import resolve_b_spec
     from rola_bench.engine import ResolvedRouting
 
     branches = resolve_b_spec(kwargs['states_per_level'], kwargs['levels_per_head'])
-    return ResolvedRouting(
-        levels=tuple(_resolve_level_routing(cfg) for cfg in kwargs['level_routing_configs']),
-        branches=tuple(branches),
-    )
+    return ResolvedRouting(levels=tuple(
+        _resolve_level_routing(cfg, int(width))
+        for width, cfg in zip(branches, kwargs['level_routing_configs'])))
+
+
+def _packed_logits(routing, per_level):
+    """Pack one per-level row into the reference's `[BH=1, T=1, packed_logit_width]` layout.
+
+    `per_level` is a 1-D tensor of length `width` applied to EVERY level's own column span; the
+    span comes from `ResolvedRouting.level_logit_slice`, the engine's single definition of the
+    packed layout, so no offset arithmetic is restated here.
+    """
+    packed = torch.zeros(1, 1, routing.packed_logit_width, dtype=torch.float64)
+    for level in range(routing.D):
+        packed[0, 0, routing.level_logit_slice(level)] = per_level
+    return packed
 
 
 # =============================================================================================
@@ -189,13 +213,18 @@ def test_a2w_resolves_to_independent_routing_with_the_declared_entmax_orders():
     coarse, fine = routing.levels
     assert type(coarse) is IndependentRouting and type(fine) is IndependentRouting
     assert not isinstance(coarse, UnionRouting) and not isinstance(fine, UnionRouting)
-    assert type(coarse.read_activation) is SoftmaxActivation
-    assert type(coarse.write_activation) is EntmaxActivation
-    assert coarse.write_activation.alpha == 2.0
-    assert type(fine.read_activation) is EntmaxActivation
-    assert fine.read_activation.alpha == 1.5
-    assert type(fine.write_activation) is SoftmaxActivation
+    # the engine spells the per-duty activations `read`/`write` on the level itself
+    assert type(coarse.read) is SoftmaxActivation
+    assert type(coarse.write) is EntmaxActivation
+    assert coarse.write.alpha == 2.0
+    assert type(fine.read) is EntmaxActivation
+    assert fine.read.alpha == 1.5
+    assert type(fine.write) is SoftmaxActivation
     assert coarse.shares_solve is False and fine.shares_solve is False
+    # the alpha must be a RATIFIED registry row, not merely a stored float: an order with no row
+    # is refused at construction, so surviving resolution is itself the ratification statement.
+    assert coarse.write.properties.exact_zeros and fine.read.properties.exact_zeros
+    assert routing.branches == (16, 16)
 
 
 def test_a2w_sparsemax_write_is_an_exact_point_mass_and_is_STRICTLY_sparser_than_alpha_1_5():
@@ -210,11 +239,10 @@ def test_a2w_sparsemax_write_is_an_exact_point_mass_and_is_STRICTLY_sparser_than
 
     # a graded write logit ramp: several entries are competitive, so the entmax order decides how
     # many survive. Read side held flat so it cannot be the cause of any difference.
-    read = torch.zeros(1, 1, 2, width, dtype=torch.float64)
-    write = torch.zeros(1, 1, 2, width, dtype=torch.float64)
+    assert a2w.branches == split.branches == (width, width)   # one packed layout, one logit pair
     ramp = torch.linspace(1.0, 0.0, width, dtype=torch.float64)
-    write[0, 0, 0] = ramp
-    write[0, 0, 1] = ramp
+    read = _packed_logits(a2w, torch.zeros(width, dtype=torch.float64))
+    write = _packed_logits(a2w, ramp)
 
     _, w_a2w = routing_factor_levels(read, write, a2w)
     _, w_split = routing_factor_levels(read, write, split)
@@ -229,8 +257,9 @@ def test_a2w_sparsemax_write_is_an_exact_point_mass_and_is_STRICTLY_sparser_than
     assert torch.all(soft[hard > 0] > 0)
 
     # and the corner case still gives an exact delta with hard zeros everywhere else.
-    corner_w = torch.zeros(1, 1, 2, width, dtype=torch.float64)
-    corner_w[0, 0, :, 3] = 3.0
+    corner = torch.zeros(width, dtype=torch.float64)
+    corner[3] = 3.0
+    corner_w = _packed_logits(a2w, corner)
     _, w_corner = routing_factor_levels(read, corner_w, a2w)
     c = w_corner[0][0, 0]
     assert c[3] == pytest.approx(1.0, abs=ENTMAX_SOLVE_TOL)
@@ -246,10 +275,8 @@ def test_a2w_read_stays_softer_than_its_write():
     width = 16
     routing = _resolved_routing(named_configs._levelsplit_a2w_kwargs(width * width, False, 'rla', 'global'))
     ramp = torch.linspace(1.0, 0.0, width, dtype=torch.float64)
-    read = torch.zeros(1, 1, 2, width, dtype=torch.float64)
-    write = torch.zeros(1, 1, 2, width, dtype=torch.float64)
-    read[0, 0, 0] = ramp; read[0, 0, 1] = ramp
-    write[0, 0, 0] = ramp; write[0, 0, 1] = ramp
+    read = _packed_logits(routing, ramp)
+    write = _packed_logits(routing, ramp)
 
     reads, writes = routing_factor_levels(read, write, routing)
     n_write = int((writes[0][0, 0] > 0).sum())      # coarse, sparsemax

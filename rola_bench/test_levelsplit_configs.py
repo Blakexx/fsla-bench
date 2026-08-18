@@ -5,13 +5,20 @@ The level-split arm gives every level one sparse duty and one dense duty, opposi
 entmax/softmax on its OWN projected logits. See `rola_bench.named_configs._levelsplit_kwargs`.
 
 Everything here runs on CPU in fp64 against the ENGINE's own canonical references
-(`fla_rola.ops.rola.routing.reference.routing_factor_levels` and
-`fla_rola.ops.rola.naive.naive_rola_v3`) — never against a freshly written reimplementation
-(memory: `matching-the-naive-antipattern`). The engine's CUDA consumer is forward-only, so the
+(`rola.routing.reference.routing_factor_levels` and `rola.ops.naive.naive_rola`, reached through
+`rola_bench.engine`) — never against a freshly written reimplementation (memory:
+`matching-the-naive-antipattern`). The engine's CUDA consumer is forward-only, so the
 forward+backward gate necessarily exercises the differentiable canonical oracle, which is exactly
-what the V3 layer's own `'oracle'` backend runs under `self.training` — the only implemented
+what the layer's own `'oracle'` backend runs under `self.training` — the only implemented
 training path for this engine. Migrated off the V2 `naive_rola_routed` (q/k/route_W) surface onto
-the V3 oracle (routing simplices, no q/k, no feature map) by campaign-prereqs E1, 2026-08-01.
+the V3 oracle (routing simplices, no q/k, no feature map) by campaign-prereqs E1, 2026-08-01, and
+TRANSLATED onto the standalone engine's routing vocabulary on 2026-08-17 (the `fla_rola/ops/rola/`
+hollow-out): each cell keeps the property it proved and restates it in the engine's terms. What
+changed is the vocabulary, not the claim — the routing reference now takes PACKED per-side logits
+`[BH, T, packed_logit_width]` whose level spans come from `ResolvedRouting.level_logit_slice`
+(where the legacy one took a padded `[B, T, D, real_width]`), a level object carries its own
+`width` and spells its duties `read`/`write` (so there is no `branches=` argument and no
+`LevelConfig` wrapper), and `Topology` no longer carries `d_v` (the oracle reads it off `v`).
 
 Declared tolerances and their derivation:
 
@@ -39,17 +46,21 @@ def _mix_rows(configs):
 
 
 def _resolved_routing(kwargs):
-    """Resolve a named-config kwargs dict to the ops-internal ResolvedRouting, exactly as the
-    layer's own constructor does (no reimplementation of the mapping)."""
+    """Resolve a named-config kwargs dict to the engine's ResolvedRouting, exactly as the layer's
+    own constructor does (no reimplementation of the mapping).
+
+    The engine's level object carries its own `width`, so the widths are zipped INTO the levels
+    here rather than passed beside them — `ResolvedRouting` has no `branches=` argument and reads
+    `branches` back off the levels.
+    """
     from rola_bench.engine import _resolve_level_routing
     from rola_bench.engine import resolve_b_spec
     from rola_bench.engine import ResolvedRouting
 
     branches = resolve_b_spec(kwargs['states_per_level'], kwargs['levels_per_head'])
-    return ResolvedRouting(
-        levels=tuple(_resolve_level_routing(cfg) for cfg in kwargs['level_routing_configs']),
-        branches=tuple(branches),
-    )
+    return ResolvedRouting(levels=tuple(
+        _resolve_level_routing(cfg, int(width))
+        for width, cfg in zip(branches, kwargs['level_routing_configs'])))
 
 
 # --------------------------------------------------------------------------------------------
@@ -101,12 +112,15 @@ def test_levelsplit_resolves_to_independent_routing_never_union():
     coarse, fine = routing.levels
     assert type(coarse) is IndependentRouting and type(fine) is IndependentRouting
     assert not isinstance(coarse, UnionRouting) and not isinstance(fine, UnionRouting)
-    assert type(coarse.read_activation) is SoftmaxActivation
-    assert type(coarse.write_activation) is EntmaxActivation
-    assert type(fine.read_activation) is EntmaxActivation
-    assert type(fine.write_activation) is SoftmaxActivation
+    # the engine spells the per-duty activations `read`/`write` on the level itself
+    assert type(coarse.read) is SoftmaxActivation
+    assert type(coarse.write) is EntmaxActivation
+    assert type(fine.read) is EntmaxActivation
+    assert type(fine.write) is SoftmaxActivation
     # untied + not shares_solve => read and write are solved separately, from separate logits
     assert coarse.shares_solve is False and fine.shares_solve is False
+    # the level carries its own branch width now: the arm's topology is read off the levels
+    assert routing.branches == (16, 16)
 
     union = _resolved_routing(named_configs._union_kwargs(256, False, 'rla', 'global'))
     assert type(union.levels[0]) is UnionRouting   # the contrast case
@@ -116,13 +130,21 @@ def test_levelsplit_resolves_to_independent_routing_never_union():
 # (a) CORNER PURITY -- the theoretical property union-split structurally lacks
 # --------------------------------------------------------------------------------------------
 
-def _corner_logits(width, *, write_corner, read_corner, gap=3.0, device='cpu'):
-    """One token's [1,1,D,width] read/write logits with each side peaked on a different index."""
-    read = torch.zeros(1, 1, 2, width, dtype=torch.float64, device=device)
-    write = torch.zeros(1, 1, 2, width, dtype=torch.float64, device=device)
-    for level in range(2):
-        write[0, 0, level, write_corner] = gap
-        read[0, 0, level, read_corner] = gap
+def _corner_logits(routing, *, write_corner, read_corner, gap=3.0, device='cpu'):
+    """One token's PACKED [BH=1, T=1, packed_logit_width] read/write logits, each side peaked on a
+    different index inside EVERY level's own column span.
+
+    The engine's routing reference takes one packed tensor per side, with level `l` owning
+    `branches[l]` contiguous columns and no padding to `max(branches)`; the span comes from
+    `ResolvedRouting.level_logit_slice`, which is the engine's single definition of that layout —
+    restating the offset arithmetic here would be a second definition of it.
+    """
+    read = torch.zeros(1, 1, routing.packed_logit_width, dtype=torch.float64, device=device)
+    write = torch.zeros_like(read)
+    for level in range(routing.D):
+        start = routing.level_logit_slice(level).start
+        write[0, 0, start + write_corner] = gap
+        read[0, 0, start + read_corner] = gap
     return read, write
 
 
@@ -134,7 +156,7 @@ def test_levelsplit_sparse_write_duty_is_an_exact_point_mass_at_the_corner():
     width = 16
     kwargs = named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global')
     routing = _resolved_routing(kwargs)
-    read_logits, write_logits = _corner_logits(width, write_corner=3, read_corner=11)
+    read_logits, write_logits = _corner_logits(routing, write_corner=3, read_corner=11)
     reads, writes = routing_factor_levels(read_logits, write_logits, routing)
 
     # coarse level (index 0) carries the SPARSE WRITE duty
@@ -157,10 +179,10 @@ def test_union_split_write_cannot_reach_the_corner_the_level_split_write_reaches
     from rola_bench.engine import routing_factor_levels
 
     width = 16
-    read_logits, write_logits = _corner_logits(width, write_corner=3, read_corner=11)
-
     split = _resolved_routing(named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global'))
     union = _resolved_routing(named_configs._union_kwargs(width * width, False, 'rla', 'global'))
+    assert split.branches == union.branches == (width, width)   # same packed layout, one logit pair
+    read_logits, write_logits = _corner_logits(split, write_corner=3, read_corner=11)
 
     _, split_writes = routing_factor_levels(read_logits, write_logits, split)
     _, union_writes = routing_factor_levels(read_logits, write_logits, union)
@@ -184,7 +206,7 @@ def test_union_split_write_cannot_reach_the_corner_the_level_split_write_reaches
     # logits push, union keeps strictly positive mass on the read corner while level-split holds
     # an exact zero there.
     for gap in (3.0, 5.0, 10.0, 40.0):
-        r, w = _corner_logits(width, write_corner=3, read_corner=11, gap=gap)
+        r, w = _corner_logits(split, write_corner=3, read_corner=11, gap=gap)
         _, sw = routing_factor_levels(r, w, split)
         _, uw = routing_factor_levels(r, w, union)
         assert float(uw[0][0, 0][11]) > 0.0, gap
@@ -198,8 +220,9 @@ def test_levelsplit_write_purity_is_independent_of_the_read_logits():
     width = 8
     routing = _resolved_routing(
         named_configs._levelsplit_kwargs(width * width, False, 'rla', 'global'))
+    assert routing.branches == (width, width)
     for read_corner in range(width):
-        read_logits, write_logits = _corner_logits(width, write_corner=5, read_corner=read_corner)
+        read_logits, write_logits = _corner_logits(routing, write_corner=5, read_corner=read_corner)
         _, writes = routing_factor_levels(read_logits, write_logits, routing)
         w = writes[0][0, 0]
         assert w[5] == pytest.approx(1.0, abs=ENTMAX_SOLVE_TOL), read_corner
@@ -213,7 +236,6 @@ def test_levelsplit_write_purity_is_independent_of_the_read_logits():
 
 def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
     from rola_bench.engine import routing_factor_levels
-    from rola_bench.engine import LevelRoutingConfig
     from rola_bench.engine import ResolvedRouting, IndependentRouting, SoftmaxActivation
 
     width = 16
@@ -224,25 +246,23 @@ def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
     degenerate_routing = _resolved_routing(degenerate)
 
     # the reference "base dense arm": plain untied dense/dense on the same topology, built from the
-    # ops vocabulary directly rather than from the level-split builder.
-    dense_routing = ResolvedRouting(
-        levels=tuple(
-            IndependentRouting(tied=False, read_activation=SoftmaxActivation(),
-                               write_activation=SoftmaxActivation())
-            for _ in range(2)),
-        branches=(width, width),
-    )
+    # engine vocabulary directly rather than from the level-split builder. The width goes ON the
+    # level (there is no separate branch tuple to hand `ResolvedRouting`), which is why the
+    # equality below now also witnesses that the level-split builder resolved the right topology.
+    dense_routing = ResolvedRouting(levels=tuple(
+        IndependentRouting(width=width, read=SoftmaxActivation(), write=SoftmaxActivation(),
+                           tied=False)
+        for _ in range(2)))
     assert degenerate_routing == dense_routing
 
     torch.manual_seed(0)
-    read_logits = torch.randn(2, 7, 2, width, dtype=torch.float64)
-    write_logits = torch.randn(2, 7, 2, width, dtype=torch.float64)
+    read_logits = torch.randn(2, 7, degenerate_routing.packed_logit_width, dtype=torch.float64)
+    write_logits = torch.randn(2, 7, degenerate_routing.packed_logit_width, dtype=torch.float64)
     got_r, got_w = routing_factor_levels(read_logits, write_logits, degenerate_routing)
     ref_r, ref_w = routing_factor_levels(read_logits, write_logits, dense_routing)
     for level in range(2):
         assert torch.equal(got_r[level], ref_r[level])   # atol = 0.0, see module docstring
         assert torch.equal(got_w[level], ref_w[level])
-    _ = LevelRoutingConfig  # imported for the vocabulary assertion above
 
 
 # --------------------------------------------------------------------------------------------
@@ -250,48 +270,49 @@ def test_levelsplit_dense_degenerate_equals_plain_dense_routing_bit_for_bit():
 # --------------------------------------------------------------------------------------------
 
 def _run_reference_step(kwargs, *, B=1, T=6, H=2, V=4, seed=0):
-    """One forward+backward through `naive_rola_v3`, the mainline engine's canonical fp64 oracle
-    (and, via the layer's `'oracle'` backend, its only differentiable path — the CUDA consumer is
-    forward-only). Routing factors come from the engine's own producer reference, so nothing about
-    the arm's semantics is reimplemented here.
+    """One forward+backward through `naive_rola`, the engine's canonical fp64 oracle (and, via the
+    layer's `'oracle'` backend, its only differentiable path — the CUDA consumer is forward-only).
+    Routing factors come from the engine's own producer reference, so nothing about the arm's
+    semantics is reimplemented here.
 
-    There is no q, no k and no feature map in V3: the routing simplices ARE the addressing.
+    There is no q, no k and no feature map: the routing simplices ARE the addressing.
+
+    The logits are packed `[BH, T, packed_logit_width]`, and this cell runs them at `BH = B` — one
+    routing shared across the `H` heads, broadcast into the oracle's `[B,T,H,width_l]` inputs by
+    the same `expand` the legacy cell used. Head-sharing is the gate's own simplification (it
+    isolates the routing arm from the head axis), not an engine property.
     """
-    from rola_bench.engine import naive_rola_v3
+    from rola_bench.engine import naive_rola
     from rola_bench.engine import routing_factor_levels
-    from rola_bench.engine import LevelConfig, Topology
+    from rola_bench.engine import Topology
 
     routing = _resolved_routing(kwargs)
     assert kwargs['state_norm'] == 'global'   # spec §4.2 fixes g_read := 1 there (g_read=None)
+    # Every level-split arm is decay-off, and this cell asserts that rather than carrying a decay
+    # branch it never takes. The decay arm's own gates live in `test_decay_and_alpha_arms.py`,
+    # where they are producer/source-level (dial shape, `validate_against`) plus the operator's
+    # refusal — the operator refuses decay on both the forward and the backward.
+    assert kwargs['decay'] == 'none'
     torch.manual_seed(seed)
-    read_logits = torch.randn(B, T, routing.D, routing.real_width,
+    read_logits = torch.randn(B, T, routing.packed_logit_width,
                               dtype=torch.float64, requires_grad=True)
-    write_logits = torch.randn(B, T, routing.D, routing.real_width,
+    write_logits = torch.randn(B, T, routing.packed_logit_width,
                                dtype=torch.float64, requires_grad=True)
     v = torch.randn(B, T, H, V, dtype=torch.float64, requires_grad=True)
     g_write = torch.ones(B, T, H, dtype=torch.float64, requires_grad=True)
 
     reads, writes = routing_factor_levels(read_logits, write_logits, routing)
-    # producer factors are [B,T,width] per level; the oracle takes [B,T,H,width].
+    # producer factors are [BH,T,width_l] per level; the oracle takes [B,T,H,width_l].
     reads = tuple(r.unsqueeze(2).expand(B, T, H, r.shape[-1]) for r in reads)
     writes = tuple(w.unsqueeze(2).expand(B, T, H, w.shape[-1]) for w in writes)
 
-    topology = Topology(
-        levels=tuple(LevelConfig(width=int(b), routing=level)
-                     for b, level in zip(routing.branches, routing.levels)),
-        d_v=V)
-    out, _ = naive_rola_v3(v, reads, writes, None, g_write, topology,
-                           None if kwargs['decay'] == 'none' else _leaf_mass_decay(topology),
-                           kwargs['state_norm'])
+    # `Topology` is the routing and ONLY the routing: the levels already carry their widths, and
+    # `d_v` is no longer a topology field (the oracle reads it off `v.shape[-1]`).
+    topology = Topology(levels=routing.levels)
+    out, _ = naive_rola(v, reads, writes, None, g_write, topology, None, kwargs['state_norm'])
     assert torch.isfinite(out).all()
     out.sum().backward()
     return out, dict(read_logits=read_logits, write_logits=write_logits, v=v, g_write=g_write)
-
-
-def _leaf_mass_decay(topology):
-    from rola_bench.engine import LeafMassDecay
-    return LeafMassDecay(rates=tuple(torch.full((w,), 0.5, dtype=torch.float64)
-                                     for w in topology.widths))
 
 
 def test_levelsplit_forward_and_backward_run_without_error():
@@ -315,9 +336,12 @@ def test_levelsplit_runs_at_the_union_arms_pinned_routing_width():
     kwargs = named_configs.NAMED_CONFIGS['RoLA-base-levelsplit-global'].build_kwargs(256, False)
     assert (kwargs['levels_per_head'], kwargs['states_per_level']) == (2, 16)
     routing = _resolved_routing(kwargs)
+    assert routing.branches == (16, 16) and routing.packed_logit_width == 32
     torch.manual_seed(1)
-    read_logits = torch.randn(2, 64, 2, 16, dtype=torch.float64, requires_grad=True)
-    write_logits = torch.randn(2, 64, 2, 16, dtype=torch.float64, requires_grad=True)
+    read_logits = torch.randn(2, 64, routing.packed_logit_width,
+                              dtype=torch.float64, requires_grad=True)
+    write_logits = torch.randn(2, 64, routing.packed_logit_width,
+                               dtype=torch.float64, requires_grad=True)
     reads, writes = routing_factor_levels(read_logits, write_logits, routing)
     for level in range(2):
         for side in (reads[level], writes[level]):
