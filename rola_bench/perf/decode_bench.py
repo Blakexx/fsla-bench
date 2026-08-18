@@ -2,10 +2,10 @@
 
 The actual decode measurement lives in `scaling.py` (the mature architecture-comparison harness —
 IQR, sentinel rows, state-MiB, round-robin scheduling): `_decode_layer_sample` (eager) /
-`_decode_layer_sample_graphed` (the C9 `RoLADecodeGraph` pattern, falling back to a generic
-`torch.cuda.graph` capture on a pre-C9 engine — `rola-scratch/workflows/dag/dag_tasks/
-C9-decode-swap-graph.md`). This script does NOT reimplement a second timing discipline; it just
-builds one RoLA layer via `scaling.build_rola`, times ONE eager sample and ONE graphed sample through
+`_decode_layer_sample_graphed` (the C9 pattern — a `torch.cuda.graph` capture of the decode call,
+`rola-scratch/workflows/dag/dag_tasks/C9-decode-swap-graph.md`). This script does NOT reimplement a
+second timing discipline; it just builds one RoLA layer via `scaling.build_rola`, times ONE eager
+sample and ONE graphed sample through
 those same functions, and reports the pair as a JSON line — for ad hoc / `rola_bench.suites.perf`
 use. For a real sweep (multiple nc/L/routing cells, round-robin, sentinels), use
 `scaling.py --benches decode` with `SCALE_DECODE_GRAPHED=1` (see METHODOLOGY.md / `paper_v1.yaml`).
@@ -39,8 +39,6 @@ def parse_args(argv=None):
              "the normal import path (pip-installed on the fleet perf image)")
     p.add_argument("--nc", type=int, default=256)
     p.add_argument("--dqk", type=int, default=16)
-    p.add_argument("--gla", action="store_true", default=True)
-    p.add_argument("--rla", dest="gla", action="store_false", help="kernel='rla' instead of gla_scalar")
     p.add_argument("--routing", default="square", choices=("flat", "square", "tree"))
     p.add_argument("--L", type=int, default=512, help="prefill length used to seed the decode state")
     p.add_argument("--out", default=None)
@@ -61,23 +59,18 @@ def main(argv=None):
 
     import rola_bench.perf.scaling as sc
 
-    module = sc.build_rola(a.gla, a.nc, a.dqk, routing=a.routing)
+    module = sc.build_rola(a.nc, a.dqk, routing=a.routing)
 
     eager_ms, eager_peak = sc._decode_layer_sample(module, a.L)
-    graph_kind, graphed_ms, graphed_peak, graph_error = "none", None, None, None
-    try:
-        from rola_bench.engine import RoLADecodeGraph  # noqa: F401
-        graph_kind = "RoLADecodeGraph"
-    except ImportError:
-        graph_kind = "generic_cuda_graph"
+    graph_kind, graphed_ms, graphed_peak, graph_error = "cuda_graph", None, None, None
     try:
         graphed_ms, graphed_peak = sc._decode_layer_sample_graphed(module, a.L)
     except Exception as e:
         graph_kind, graph_error = f"unsupported ({graph_kind})", f"{type(e).__name__}: {e}"
 
     row = dict(
-        bench="decode_bench", worktree=wt, nc=a.nc, dqk=a.dqk, kernel="gla_scalar" if a.gla else "rla",
-        routing=a.routing, L=a.L, eager_ms=round(eager_ms, 4), eager_peak_mib=eager_peak,
+        bench="decode_bench", worktree=wt, nc=a.nc, dqk=a.dqk, routing=a.routing, L=a.L,
+        eager_ms=round(eager_ms, 4), eager_peak_mib=eager_peak,
         graphed_ms=(round(graphed_ms, 4) if graphed_ms is not None else None),
         graphed_peak_mib=graphed_peak, graph_kind=graph_kind, graph_error=graph_error,
         uplift_pct=(round((eager_ms / graphed_ms - 1.0) * 100.0, 1)

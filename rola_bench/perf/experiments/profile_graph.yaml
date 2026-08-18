@@ -10,18 +10,7 @@ benches: [profile-graph]
 
 profiles:
   - name: "v34_rla_l131k_d16_nc64_square"
-    arm: "rola-rla"
-    L: 131072
-    batch: 2
-    d_qk: 16
-    nc: 64
-    routing: "square"
-    warmup: 3
-    reps: 7
-    torch_profiler: true
-
-  - name: "v34_gla_l131k_d16_nc64_square"
-    arm: "rola-gla"
+    arm: "rola"
     L: 131072
     batch: 2
     d_qk: 16
@@ -32,18 +21,7 @@ profiles:
     torch_profiler: true
 
   - name: "v34_rla_l131k_d16_nc256_square"
-    arm: "rola-rla"
-    L: 131072
-    batch: 2
-    d_qk: 16
-    nc: 256
-    routing: "square"
-    warmup: 3
-    reps: 7
-    torch_profiler: true
-
-  - name: "v34_gla_l131k_d16_nc256_square"
-    arm: "rola-gla"
+    arm: "rola"
     L: 131072
     batch: 2
     d_qk: 16

@@ -44,7 +44,7 @@ Example:
 
 ```bash
 PERF_B=2 python -m rola_bench.perf.profile_graph \
-  --arm rola-gla --L 65536 --d-qk 16 --nc 64 --routing square \
+  --arm rola --L 65536 --d-qk 16 --nc 64 --routing square \
   --torch-profiler --out /home/blake/rola-scratch/results/profile_graph
 ```
 

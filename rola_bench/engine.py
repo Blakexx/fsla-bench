@@ -131,7 +131,6 @@ _SYMBOLS: dict[str, str] = {
     "DeltaNet": "layers.delta_net",
     "GatedSlotAttention": "layers.gsa",
     "LevelRoutingConfig": "layers.rola",
-    "RoLADecodeGraph": "layers.rola",
     # `_resolve_level_routing` is private to the vehicle but is the ONLY faithful public-config ->
     # engine-level mapping; the gates use it rather than reimplementing it
     # ([[matching-the-naive-antipattern]]). Since the 2026-08-17 repoint it takes `(config, width)`
@@ -159,6 +158,10 @@ _GRID_SYMBOLS: dict[str, str] = {
     #: The operator's token quantum: `T` must be a multiple of it, which is a constraint on the
     #: grid's sequence lengths and therefore read rather than restated.
     "CHUNK_TOKENS": "engine.rules",
+    #: The state FACTORY. A bound-but-empty state is what makes a prefill a continuation's first
+    #: leg: pass it in and the forward hands back a carrying one. Reached through the seam because
+    #: a decode arm that constructed its own state object would be constructing the engine's.
+    "state": "_state",
 
     # --- routing vocabulary + the canonical fp64 oracle the gates check against. These moved
     # here from the legacy table on 2026-08-17, when `fla_rola/ops/rola/` was deleted and the
@@ -187,6 +190,8 @@ _GRID_SYMBOLS: dict[str, str] = {
 #:                        compiled binary's census, which is a fact rather than a pair of lists.
 #:   `chunk_rola`, `chunk_rola_routed`, `rola_perstate_den_*`, `_rola_chunk_core`
 #:                      — V2 surface of a package that no longer exists (see the module docstring).
+#:   `RoLADecodeGraph`  — the V3 layer's own capture went with that stack; a graphed decode cell is
+#:                        a `torch.cuda.graph` capture of the layer call, which needs no seam.
 #: The engine's CLASSES are in the table now: the shadowing hazard that kept them out was two
 #: engines exporting one set of names, and there is one engine.
 

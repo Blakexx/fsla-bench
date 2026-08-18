@@ -105,7 +105,7 @@ def run_smoke():
     try:
         import torch
         import rola_bench.perf.scaling as sc
-        m = sc.build_rola(False, 16, 16, routing="square")   # d_qk=16 -- the engine's only compiled prototype
+        m = sc.build_rola(16, 16, routing="square")
         x = torch.randn(1, 4, sc.DM, device=sc.C.DEV, dtype=sc.C.DT)
         with torch.no_grad():
             o = m(x)

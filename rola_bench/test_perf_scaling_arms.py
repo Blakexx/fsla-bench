@@ -128,8 +128,8 @@ def test_named_arm_builds_the_registry_cell(kind):
 @pytest.mark.parametrize("routing,nc,expect", [
     ("flat", 256, [256]), ("square", 256, [16, 16]), ("tree", 256, [2] * 8)])
 def test_sweep_arm_topology_axis(routing, nc, expect):
-    """The (d, nc, routing) sweep arm's STRUCTURE axis. `d_qk` is gone from it — a V3 state is
-    [N, d_v] — and `gla` now selects `decay`, not the retired `kernel='gla_scalar'`."""
+    """The (d, nc, routing) sweep arm's STRUCTURE axis — the only axis it has. A state is
+    [N, d_v], so there is no `d_qk`, and the operator carries no decay clock."""
     from zoology.mixers.rola import RoLAMixer
     from rola_bench.rola_compat import level_routing_config_from_tie_routers, topology_from_legacy
     from rola_bench.engine import MAX_ROUTING_DEPTH
@@ -145,13 +145,3 @@ def test_sweep_arm_topology_axis(routing, nc, expect):
     assert cfg["states_per_level"] == expect and cfg["N"] == nc
     assert cfg["decay"] == "none"
 
-
-def test_sweep_arm_gla_flag_selects_the_leaf_mass_clock():
-    from zoology.mixers.rola import RoLAMixer
-    from rola_bench.rola_compat import level_routing_config_from_tie_routers
-    mixer = RoLAMixer(d_model=scaling.DM, layer_idx=0, n_heads=C.H, d_v=16,
-                      levels_per_head=2, states_per_level=16,
-                      level_routing_configs=[level_routing_config_from_tie_routers(False)] * 2,
-                      decay="leaf_mass", state_norm="global", router_bias=True,
-                      use_short_conv=False, gain_bias_init=None)
-    assert mixer.resolved_config()["decay"] == "leaf_mass"

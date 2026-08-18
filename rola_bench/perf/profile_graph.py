@@ -599,14 +599,10 @@ def _build_arm(arm: str, L: int, d: int, nc: int, routing: str):
     C.set_shape(L=L, DQK=d, DV=d)
     if arm == "attn":
         return sc._CausalMHA(sc.DM, C.H).to(C.DEV, C.DT)
-    if arm == "rola-rla":
-        return sc.build_rola(False, nc, d, routing=routing)
-    if arm == "rola-gla":
-        return sc.build_rola(True, nc, d, routing=routing)
-    if arm == "monolith-rla":
-        return sc.build_monolith(False, nc, d)
-    if arm == "monolith-gla":
-        return sc.build_monolith(True, nc, d)
+    if arm == "rola":
+        return sc.build_rola(nc, d, routing=routing)
+    if arm == "monolith":
+        return sc.build_monolith(nc, d)
     raise ValueError(f"unknown arm {arm!r}")
 
 
@@ -1018,8 +1014,7 @@ def run(args) -> dict[str, Any]:
 
 def main():
     p = argparse.ArgumentParser(description="Profile one RoLA scaling graph arm.")
-    p.add_argument("--arm", choices=("rola-rla", "rola-gla", "monolith-rla", "monolith-gla", "attn"),
-                   default="rola-rla")
+    p.add_argument("--arm", choices=("rola", "monolith", "attn"), default="rola")
     p.add_argument("--L", type=int, default=65536)
     p.add_argument("--batch", type=int, default=int(os.environ.get("PERF_B", "2")))
     p.add_argument("--d-qk", type=int, default=16)

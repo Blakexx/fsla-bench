@@ -80,7 +80,7 @@ def _as_bool(v):
 
 def _profile_from_env():
     return {
-        "arm": os.environ.get("PROFILE_ARM", "rola-rla"),
+        "arm": os.environ.get("PROFILE_ARM", "rola"),
         "L": int(os.environ.get("PROFILE_L", "65536")),
         "batch": int(os.environ.get("PROFILE_B", os.environ.get("PERF_B", "2"))),
         "d_qk": int(os.environ.get("PROFILE_DQK", "16")),
@@ -117,7 +117,7 @@ def run_profile_graph(out_dir, run_id="perf-profile-graph"):
     from rola_bench.perf import profile_graph as pg
     profile = _profile_from_spec(run_id)
     args = SimpleNamespace(
-        arm=profile.get("arm", "rola-rla"),
+        arm=profile.get("arm", "rola"),
         L=int(profile.get("L", 65536)),
         batch=int(profile.get("batch", os.environ.get("PERF_B", "2"))),
         d_qk=int(profile.get("d_qk", profile.get("dqk", 16))),
@@ -200,7 +200,7 @@ def _has_successful_measurement(data):
         return True
     timing_fields = ("fwd_ms", "fb_ms", "decode_ms")
     return any(
-        any(r.get(k) not in (None, "ERR", "OOM") for k in timing_fields)
+        any(r.get(k) not in (None, "ERR", "OOM", "UNBUILT") for k in timing_fields)
         for r in rows
     )
 

@@ -9,24 +9,7 @@ benches: [profile-graph]
 
 profiles:
   - name: "v37_scan_rla_l131k_d16_nc64_square"
-    arm: "rola-rla"
-    L: 131072
-    batch: 2
-    d_qk: 16
-    nc: 64
-    routing: "square"
-    warmup: 1
-    reps: 1
-    torch_profiler: true
-    deep_profile: "ncu"
-    deep_kernel_name: ".*kappa_fwd_scan_cb_atomic.*"
-    deep_launch_skip: 0
-    deep_launch_count: 1
-    deep_ncu_set: "basic"
-    deep_timeout: 1800
-
-  - name: "v37_scan_gla_l131k_d16_nc64_square"
-    arm: "rola-gla"
+    arm: "rola"
     L: 131072
     batch: 2
     d_qk: 16
@@ -43,24 +26,7 @@ profiles:
     deep_timeout: 1800
 
   - name: "v37_scan_rla_l131k_d16_nc256_square"
-    arm: "rola-rla"
-    L: 131072
-    batch: 2
-    d_qk: 16
-    nc: 256
-    routing: "square"
-    warmup: 1
-    reps: 1
-    torch_profiler: true
-    deep_profile: "ncu"
-    deep_kernel_name: ".*kappa_fwd_scan_cb_atomic.*"
-    deep_launch_skip: 0
-    deep_launch_count: 1
-    deep_ncu_set: "basic"
-    deep_timeout: 1800
-
-  - name: "v37_scan_gla_l131k_d16_nc256_square"
-    arm: "rola-gla"
+    arm: "rola"
     L: 131072
     batch: 2
     d_qk: 16
