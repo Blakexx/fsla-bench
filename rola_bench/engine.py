@@ -7,11 +7,13 @@ and mainline is then extracted as the standalone `rola` package (`fla_rola` -> `
 file existed that rename was ~60 edits across 18 files, each an independent chance to miss one and
 discover it at runtime on a rented box. Now it is a package constant, here, once.
 
-**TWO CONSTANTS, ONE PER TIER (2026-08-15).** The migration turned out not to be atomic: the
-MQAR/presence grid trains on the standalone `rola` package while the LM tier's whole vehicle
-(`models.rola` / `RoLAConfig` / the AutoClass registration) exists only on `fla_rola`. So the seam
-carries `ENGINE_PACKAGE` (legacy: LM tier, perf tier, the V2-era gates) and `GRID_ENGINE_PACKAGE`
-(standalone: the grid), with a symbol table each. A name lives in exactly one table.
+**TWO CONSTANTS, TWO ROLES (2026-08-17).** They are no longer two engines. `fla_rola` is the
+FLA-INTEGRATION VEHICLE — the HF model (`models.rola` / `RoLAConfig` / the AutoClass registration),
+the mixer class the LM tier constructs, and FLA's own baseline layers and ops — and its RoLA layer
+is now a thin shim over the standalone. `rola` is THE ENGINE: the operator, the producer, the
+routing vocabulary and the oracle. So `ENGINE_PACKAGE` names the vehicle (LM tier, perf tier, the
+baseline ops) and `GRID_ENGINE_PACKAGE` names the engine (the grid, and now every routing/oracle
+symbol any tier reads), with a symbol table each. A name lives in exactly one table.
 
 It also gives the migration a single place to answer "which engine did this result come from?" and
 a single place to shim a symbol that moves between engine submodules — instead of 18 files each
@@ -24,12 +26,13 @@ function body triggers exactly the same import, at exactly the same moment, as t
 several call sites import inside functions specifically to keep Triton (and therefore a CUDA driver)
 off the module-import path, which is what lets the config gates run CPU-only.
 
-**A symbol that does not exist on the pinned engine raises at ACCESS time, as before.** Some entries
-below are V2-surface (`chunk_rola`, `_rola_chunk_core`, `rola_perstate_den_*`) and are absent from
-the V3 mainline engine; they are listed so the seam is complete over the tree as it stands, not
-because they resolve. Their callers (`mqar/verify.py`, `similarity/`, `perf/profile_graph.py`) are
-known untouched V2 debt (rola-bench-audit §5.1) and will fail the same way through the seam as
-around it.
+**A symbol that does not exist on the pinned engine raises at ACCESS time, as before.** The
+V2-surface entries (`chunk_rola`, `_rola_chunk_core`, `rola_perstate_den_*`) are GONE from this
+table with the engine that never had them: `fla_rola/ops/rola/` was deleted by the 2026-08-17
+repoint, so they now name a package that does not exist rather than a symbol a package lacks.
+Their callers (`mqar/verify.py`, `similarity/`, `perf/profile_graph.py`) are the same known
+untouched V2 debt (rola-bench-audit §5.1) and fail as they already did — through the seam's own
+"add it to a table" message instead of an ImportError.
 
 **One deliberate exception.** `perf/engine_bench.py` still imports `fla_rola` directly. Its
 uncommitted V2-era WIP is parked at
@@ -40,7 +43,7 @@ when the patch lands or is dropped. It is explicitly not paper material and reti
 Usage:
     from rola_bench.engine import RoLA, LevelRoutingConfig      # lazy symbol access
     from rola_bench import engine; engine.register_hf_models()  # HF AutoClass registration
-    engine.import_engine("ops.rola.routing.reference")          # a whole submodule
+    engine.import_grid_engine("routing.reference")              # a whole engine submodule
 """
 from __future__ import annotations
 
@@ -100,10 +103,9 @@ def register_hf_models() -> ModuleType:
     `train_lm`, `eval_lm`, `ar_ppl` and `niah_eval` all depend on: without it
     `AutoModelForCausalLM.from_config(RoLAConfig(...))` does not know the architecture.
 
-    NOTE (staleness, rola-bench-audit §5.2): the standalone `rola` package has `layers/`, `ops/`,
-    `planner/`, `routing/` and `integrations/hf.py` but NO `models/rola/` — no `RoLAConfig`, no
-    AutoModel registration. The whole LM tier rests on this call, so when `ENGINE_PACKAGE` flips,
-    this function is the one that must be answered for first.
+    The HF model is the VEHICLE's, and stays there: the standalone engine has no `models/rola/`
+    and wants none. Since the 2026-08-17 repoint the mixer that model builds is a shim over the
+    engine, so this call registers an architecture whose arithmetic is the standalone's.
     """
     return import_engine("models.rola")
 
@@ -130,44 +132,19 @@ _SYMBOLS: dict[str, str] = {
     "GatedSlotAttention": "layers.gsa",
     "LevelRoutingConfig": "layers.rola",
     "RoLADecodeGraph": "layers.rola",
-    # `_resolve_level_routing` is private to the engine but is the ONLY faithful config ->
-    # ResolvedRouting mapping; the gates use it rather than reimplementing the mapping
-    # ([[matching-the-naive-antipattern]]).
+    # `_resolve_level_routing` is private to the vehicle but is the ONLY faithful public-config ->
+    # engine-level mapping; the gates use it rather than reimplementing it
+    # ([[matching-the-naive-antipattern]]). Since the 2026-08-17 repoint it takes `(config, width)`
+    # and returns a STANDALONE level object, because that is what the engine's level carries.
     "_resolve_level_routing": "layers.rola",
 
     # --- HF model surface (the LM tier's entire vehicle) ---
     "RoLAConfig": "models.rola",
     "Cache": "models.utils",
 
-    # --- routing vocabulary + the canonical CPU/fp64 references the gates check against ---
-    "resolve_b_spec": "ops.rola.routing.topology",
-    # The (BC, d_v) the CUDA consumer INSTANTIATES. Private to the engine by name, but it is a
-    # hard buildability constraint on any EVAL-mode cell, so the benches read it rather than
-    # rediscovering it as a NotImplementedError on a rented box.
-    "_SUPPORTED_BC": "ops.rola.routing.schedule_v3",
-    "_SUPPORTED_DV": "ops.rola.routing.schedule_v3",
-    "ResolvedRouting": "ops.rola.routing.types",
-    "IndependentRouting": "ops.rola.routing.types",
-    "UnionRouting": "ops.rola.routing.types",
-    "SoftmaxActivation": "ops.rola.routing.types",
-    "EntmaxActivation": "ops.rola.routing.types",
-    "LevelConfig": "ops.rola.routing.types",
-    "Topology": "ops.rola.routing.types",
-    "LeafMassDecay": "ops.rola.routing.types",
-    "routing_factor_levels": "ops.rola.routing.reference",
-    "naive_rola_v3": "ops.rola.naive",
-
     # --- baseline ops used by the similarity tier ---
     "chunk_linear_attn": "ops.linear_attn",
     "chunk_gated_delta_rule": "ops.gated_delta_rule",
-
-    # --- V2-SURFACE, absent from the V3 mainline engine. Listed so the seam is complete over the
-    # tree as it stands; they raise at access exactly as their direct imports did.
-    "chunk_rola": "ops.rola",
-    "chunk_rola_routed": "ops.rola",
-    "rola_perstate_den_triton": "ops.rola",
-    "rola_perstate_den_gla_triton": "ops.rola",
-    "_rola_chunk_core": "ops.rola.interface",
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -182,12 +159,36 @@ _GRID_SYMBOLS: dict[str, str] = {
     #: The operator's token quantum: `T` must be a multiple of it, which is a constraint on the
     #: grid's sequence lengths and therefore read rather than restated.
     "CHUNK_TOKENS": "engine.rules",
+
+    # --- routing vocabulary + the canonical fp64 oracle the gates check against. These moved
+    # here from the legacy table on 2026-08-17, when `fla_rola/ops/rola/` was deleted and the
+    # vehicle's layer became a shim: there is now ONE routing vocabulary and ONE oracle, and they
+    # are the engine's.
+    "resolve_b_spec": "routing.topology",
+    "ResolvedRouting": "routing.types",
+    "IndependentRouting": "routing.types",
+    "UnionRouting": "routing.types",
+    "SoftmaxActivation": "routing.types",
+    "EntmaxActivation": "routing.types",
+    "Topology": "routing.types",
+    "LeafMassDecay": "routing.types",
+    "routing_factor_levels": "routing.reference",
+    #: THE ORACLE, under the engine's own name. The legacy `naive_rola_v3` spelling retired with
+    #: the engine that had two generations to tell apart; the contract is unchanged (same
+    #: positional arguments, same `eps=1e-5`, same `(y, final_state)`), except that this one
+    #: returns fp64 unconditionally instead of casting back to the caller's dtype.
+    "naive_rola": "ops.naive",
 }
-#: The standalone's CLASSES (`RouteProducer`, `IndependentRouting`, `UnionRouting`,
-#: `SoftmaxActivation`, `EntmaxActivation`, `naive_rola`, ...) are deliberately NOT in that table:
-#: the legacy engine exports several of the same NAMES, and a shadowing entry would silently hand a
-#: legacy gate the standalone's class to isinstance against. They are reached as attributes of
-#: `import_grid_engine()`, which says which engine's class a caller means at the call site.
+#: DELETED FROM THE TABLES rather than repointed, each with its reason:
+#:   `LevelConfig`      — the engine's level object carries its own width, so a separate
+#:                        `LevelConfig(width, routing)` wrapper has no counterpart to name.
+#:   `_SUPPORTED_BC` / `_SUPPORTED_DV`
+#:                      — buildability is answered by `chunk_arm_for` / `chunk_scan_arms` off the
+#:                        compiled binary's census, which is a fact rather than a pair of lists.
+#:   `chunk_rola`, `chunk_rola_routed`, `rola_perstate_den_*`, `_rola_chunk_core`
+#:                      — V2 surface of a package that no longer exists (see the module docstring).
+#: The engine's CLASSES are in the table now: the shadowing hazard that kept them out was two
+#: engines exporting one set of names, and there is one engine.
 
 
 def __getattr__(name: str):

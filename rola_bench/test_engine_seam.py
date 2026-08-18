@@ -104,8 +104,12 @@ def test_seam_import_does_not_pull_in_the_engine():
     assert "lazy" in out.stdout
 
 
+#: `naive_rola` replaces the `naive_rola_v3` cell (2026-08-17): the oracle it named lived in
+#: `fla_rola.ops.rola.naive`, which was deleted when the vehicle's layer became a shim over the
+#: standalone. The cell is repointed rather than dropped — the engine's `rola.ops.naive.naive_rola`
+#: is the same oracle under the name that does not carry a generation number.
 @pytest.mark.parametrize("name", ["RoLA", "LevelRoutingConfig", "RoLAConfig",
-                                  "routing_factor_levels", "naive_rola_v3", "EntmaxActivation"])
+                                  "routing_factor_levels", "naive_rola", "EntmaxActivation"])
 def test_load_bearing_symbols_resolve_through_the_seam(name):
     assert getattr(engine, name) is not None
     assert name in dir(engine)
