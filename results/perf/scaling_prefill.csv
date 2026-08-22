@@ -1,0 +1,6 @@
+bench,L,state_axis,X_pct,d_qk,nc,routing,arm,fwd_ms,fwd_iqr_ms,fb_ms,fb_iqr_ms,peak_mib,act_mib,fwd_iqr_pct,fb_iqr_pct,decode_iqr_pct,fwd_samples_ms,fb_samples_ms,decode_samples_ms,peak_samples_mib,act_samples_mib,state_mib,attn_backend,sdpa_flags
+prefill,1024,nc,6.6,16,16,,attn,0.103,0.0,,,5,,0.0,,,[0.103],,,[5.0],,,auto:flash+efficient+math+cudnn,"{'flash': True, 'efficient': True, 'math': True, 'cudnn': True}"
+prefill,1024,nc,6.6,16,16,flat,rola-rla,2.235,0.0,,,5,,0.0,,,[2.235],,,[4.7],,,,
+prefill,1024,nc,6.6,16,16,flat,rola-gla,2.448,0.0,,,5,,0.0,,,[2.448],,,[4.8],,,,
+prefill,1024,nc,6.6,16,16,,monolith-rla,0.513,0.0,,,21,,0.0,,,[0.513],,,[20.5],,,,
+prefill,1024,nc,6.6,16,16,,monolith-gla,0.284,0.0,,,24,,0.0,,,[0.284],,,[24.0],,,,
