@@ -4,8 +4,9 @@ A fleet `Job` is almost entirely boilerplate; the only real per-experiment knobs
 (run_ids), the box-side run command, and a few fleet settings. This assembles the Job from those,
 so benchmarks don't each hand-roll a `*_job.py`.
 
-Result store is uniform: results/<bench>/<config>/<run_id>.jsonl (the fleet dispatcher writes that
-dir/run_id format; `done_ids` reads it back for resume).
+Results are stored through `rola_results` at `<bench>/<config>`: each row the dispatcher pulls is a sample of the
+record keyed by (bench, config, cell, image), stored once however often it is re-pulled, and a cell is done when the
+CURRENT image's record has an ok sample -- an image bump runs the grid again (`fleet_store`).
 
 `fleet` (a dict, usually a spec's `fleet:` block) supplies simple knobs: image / offer_query / batch
 / per_batch_timeout / idle_timeout / env, plus any other plain fleet.Job field (no_kill,
@@ -20,13 +21,13 @@ either a plain string (taken to be `vast_filter`, which is what every existing s
 or a `{dialect: query}` mapping; asking for a dialect the active provider does not speak is a loud
 error, never a silent downgrade.
 """
+import hashlib
+import json
 import os
 
 from fleet import Job, provider, semantics_of
+from rola_results import Store, key
 
-from rola_bench import results as R
-
-RESULTS_ROOT = os.environ.get("ROLA_BENCH_RESULTS", "/home/blake/rola-bench/results")
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
 DEFAULT_IMAGE = "blakeresearch/rola-bench:v40"   # ⚠ keep in sync with the experiments yamls (paper_v1 pins v40); bumps are manual   # v27: DROP the warm pre-pass entirely (it was ~95% serial autotune-do_bench, net-negative; cells self-warm via WARMUP reps). v26: affinity-aware warm worker count. v25: scaling-bench fixes (nc->even-pow2 snap for flat|square|tree, infeasible-shape SKIP)
@@ -70,20 +71,47 @@ def offer_query_for(spec_query, dialect):
                          f"set one in rola_bench.jobs.DEFAULT_OFFER or in the spec") from None
 
 
+def fleet_store(bench, config, image, job):
+    """The job's result sink and completion reader over `rola_results` at `<bench>/<config>`."""
+    store = Store(f"{bench}/{config}")
+
+    def semantics(cell):
+        return {"bench": bench, "config": config, "cell": cell, "image": image}
+
+    def store_result(row):
+        sem = semantics(row["run_id"])
+        digest = hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
+        record = store.get(key(sem))
+        if record and any(s.get("row_sha256") == digest for s in record["samples"]):
+            return
+        if row.get("ok"):
+            store.put(sem, output=row, provenance={"job": job}, row_sha256=digest)
+        else:
+            store.put(sem, error=str(row.get("error") or "the box reported ok=false"), provenance={"job": job},
+                      row=row, row_sha256=digest)
+
+    def done_ids():
+        return {r["semantics"]["cell"] for r in store.records() if r["semantics"]["image"] == image and Store.complete(r)}
+
+    return store_result, done_ids
+
+
 def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
     fleet = dict(fleet or {})
     dialect = semantics_of(provider()).offer_query_dialect
-    cfg_dir = os.path.join(RESULTS_ROOT, bench, config)            # results store (dir/run_id)
     runtime = os.path.join(RUNTIME_ROOT, f"{bench}-{config}")
+    name = fleet.pop("name", f"{bench}-{config}")
+    image = os.environ.get("ROLA_BENCH_IMAGE", fleet.pop("image", DEFAULT_IMAGE))
+    store_result, done_ids = fleet_store(bench, config, image, name)
     spec = dict(
-        name=fleet.pop("name", f"{bench}-{config}"),
-        image=os.environ.get("ROLA_BENCH_IMAGE", fleet.pop("image", DEFAULT_IMAGE)),
+        name=name,
+        image=image,
         offer_query=os.environ.get("OFFER_QUERY") or offer_query_for(fleet.pop("offer_query", None),
                                                                      dialect),
-        results_path=cfg_dir,
+        store_result=store_result,
         ckpt_dir=job_kwargs.pop("ckpt_dir", CKPT_DIR),
         work_list=work_list,
-        done_ids=lambda: R.done_ids(cfg_dir),
+        done_ids=done_ids,
         env={"FLEET_RUN_CMD": run_cmd, **fleet.pop("env", {})},
         bad_hosts=os.path.join(runtime, "bad_hosts.txt"),
         state_path=os.path.join(runtime, "hosts.json"),

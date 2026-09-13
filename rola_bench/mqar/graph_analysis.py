@@ -81,24 +81,14 @@ TASKS = {
 }
 
 
-def _load_rows(results_dir: Path):
-    """Every completed cell record under `results_dir` (one JSON per run_id, plus any jsonl)."""
+def _load_rows(location: str):
+    """Every completed cell stored at `location` (`rola_results`), the newest sample per run_id."""
+    from rola_results import outputs
+
     rows = {}
-    for path in sorted(results_dir.glob("*.json")):
-        try:
-            r = json.loads(path.read_text())
-        except Exception:
-            continue
+    for _record, sample, r in sorted(outputs(location), key=lambda x: x[1]["utc"]):
         if r.get("ok") and r.get("run_id"):
             rows[r["run_id"]] = r
-    for path in sorted(results_dir.glob("*.jsonl")):
-        for line in path.read_text().splitlines():
-            try:
-                r = json.loads(line)
-            except Exception:
-                continue
-            if r.get("ok") and r.get("run_id"):
-                rows.setdefault(r["run_id"], r)
     return list(rows.values())
 
 
@@ -177,7 +167,7 @@ def crossing(points, criterion):
     return None, "below"
 
 
-def analyse(config: str, criterion: float | None = None, results_dir: Path | None = None):
+def analyse(config: str, criterion: float | None = None, location: str | None = None):
     from rola_bench.mqar.build_configs import load_spec
 
     spec = load_spec(str(_EXP_DIR / f"{config}.yaml"))
@@ -187,8 +177,7 @@ def analyse(config: str, criterion: float | None = None, results_dir: Path | Non
         raise ValueError(
             f"criterion {criterion} is at or below this task's chance line ({task.chance}): the "
             "crossing would be the threshold of GUESSING, not of recall. Raise the criterion.")
-    results_dir = results_dir or REPO / "results" / "mqar" / config
-    rows = _load_rows(Path(results_dir))
+    rows = _load_rows(location or f"mqar/{config}")
     conds = {c["tag"]: c for c in spec.get("conditions", [])}
     proto = spec["data"]["protocol"]
 
@@ -305,12 +294,11 @@ def main(argv=None):
                     help="accuracy the collapse threshold is defined at (default: the TASK's own, "
                          "0.5 for graph_recall and 0.75 for presence_recall, which is halfway from "
                          "that task's 0.5 chance line to the ceiling)")
-    ap.add_argument("--results", default=None)
+    ap.add_argument("--location", default=None, help="the rola_results location (default: mqar/<config>)")
     ap.add_argument("--json", default=None, help="also write the rows here")
     a = ap.parse_args(argv)
 
-    spec, rows, floor, attn_rows = analyse(a.config, a.criterion,
-                                           Path(a.results) if a.results else None)
+    spec, rows, floor, attn_rows = analyse(a.config, a.criterion, a.location)
     task = task_of(spec)
     crit = task.criterion if a.criterion is None else a.criterion
     if not rows and not floor:

@@ -56,8 +56,8 @@ system. Each declares its pinned config list + seeds + output schema, and suppor
 
 | Suite | Smoke command | Real results land in | Locked numbers |
 |---|---|---|---|
-| `rola_bench.suites.mqar` | `python -m rola_bench.suites.mqar --smoke` | `results/mqar/<config>/<cell>.json` (via `launch.py mqar <config>`) | `rola_bench/mqar/instances.py` (`ROLA_INSTANCES`) + `rola_bench.named_configs` (flagship) |
-| `rola_bench.suites.lm` | `python -m rola_bench.suites.lm --smoke` | `results/lm/<dataset>/*.json` (via `launch.py lm <config>`) | `rola_bench/lm/arms.py` (`ARMS`) |
+| `rola_bench.suites.mqar` | `python -m rola_bench.suites.mqar --smoke` | `rola_results` at `mqar/<config>` (via `launch.py mqar <config>`) | `rola_bench/mqar/instances.py` (`ROLA_INSTANCES`) + `rola_bench.named_configs` (flagship) |
+| `rola_bench.suites.lm` | `python -m rola_bench.suites.lm --smoke` | `rola_results` at `lm/<config>` (via `launch.py lm <config>`) | `rola_bench/lm/arms.py` (`ARMS`) |
 | `rola_bench.suites.perf` | `flock /tmp/rola_gpu.lock python -m rola_bench.suites.perf --smoke` | `results/perf/*.csv` (`scaling.py`) + JSON lines (`engine_bench.py`/`decode_bench.py --out`) | `rola_bench.named_configs`; fleet configs `experiments/{paper_v1,engine_regression}.yaml` |
 
 ### The flagship named configs (`rola_bench/named_configs.py`)
@@ -122,16 +122,13 @@ runs (a baseline, a ratio) are computed when the data is read. Standard library 
 
 ## Result store
 
-Uniform, one file per cell — parallel writers never contend and resume is just "does this cell exist
-with an ok result":
-
-```
-results/<bench>/<config>/<cell>.json     # one JSON object per cell (grid point incl. seed)
-```
-
-`rola_bench/results.py` is the only reader/writer (`write_cell`, `read_cell`, `done_ids`,
-`all_records`); re-running a cell overwrites it (latest wins). The store is checked into the repo so the
-paper's tables are reproducible; `runtime/` and `fleet_ckpts` are operational state (gitignored).
+Every result is stored through `rola_results` (the rola-results repository, the one store every repo uses) at
+`<bench>/<config>`. A fleet job plugs it into `fleet`'s `store_result` and `done_ids` (`rola_bench/jobs.py`): each
+pulled row is a sample of the record keyed by (bench, config, cell, image), stored once however often it is re-pulled,
+and a cell is done when the CURRENT image has an ok sample, so an image bump runs the grid again. The local MQAR grid
+stores beside it, keyed by its checkouts (`rola_bench/mqar/run_local_grid.py`). Every sample is kept, failures
+included. `runtime/` and `fleet_ckpts` are operational state (gitignored). The per-cell JSON store that lived in
+`results/` until 2026-09-12 is archived outside the repository.
 
 ## Dependencies
 

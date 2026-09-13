@@ -5,18 +5,19 @@ causal mask (see similarity/evaluator.py). Selection: per CELL (= kernel, nc-run
 best-accuracy run's checkpoint from the MQAR store and score that one (dedups the LR axis, ~5x
 cheaper). Each cell's .pt ships to the box via the payload channel. SSE has no faithful extractor.
 
-Results: results/similarity/<config>/<run_id>.jsonl. Launch: launch.py similarity main
+Results: `rola_results` at similarity/<config> (rola_bench.jobs). Launch: launch.py similarity main
 """
 import glob
 import json
 import os
 import re
 
-from rola_bench.jobs import make_job, RESULTS_ROOT
+from rola_results import ROOT, Store, locations
+
+from rola_bench.jobs import make_job
 from rola_bench.spec import load
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
-MQAR_DIR = os.path.join(RESULTS_ROOT, "mqar")            # the unified MQAR store (dir/run_id)
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)                  # SSE has no faithful extractor
 
 
@@ -41,16 +42,19 @@ def _cell_key(run_id):
 
 
 def _mqar_accuracy():
-    """run_id -> best accuracy, from the unified MQAR store (results/mqar/<config>/<run_id>.jsonl)."""
+    """run_id -> best accuracy over every stored MQAR sample (`rola_results` at mqar/<config>, any image)."""
     acc = {}
-    for f in glob.glob(os.path.join(MQAR_DIR, "**", "*.json"), recursive=True):
-        try:
-            j = json.load(open(f))                       # one cell object per file
-            if j.get("ok") and j.get("run_id"):
+    for loc in locations(ROOT):
+        if not loc.startswith("mqar/"):
+            continue
+        store = Store(loc)
+        for record in store.records():
+            for sample in record["samples"]:
+                if not sample["ok"]:
+                    continue
+                j = json.loads((store.dir / sample["output"]).read_text())
                 a = j.get("max_acc") or j.get("best_overall") or j.get("final_overall") or 0.0
                 acc[j["run_id"]] = max(acc.get(j["run_id"], -1.0), a)
-        except Exception:
-            pass
     return acc
 
 

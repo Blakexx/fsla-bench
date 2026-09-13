@@ -3,7 +3,7 @@
 `lm_job(config)` reads rola_bench/lm/experiments/<config>.yaml (arms × seeds + backbone/geometry/
 budget + fleet) and builds the fleet.Job via rola_bench.jobs.make_job. The spec's backbone/geometry/
 budget sections are flattened to the LM_* box env the runner (run_lm.py) + arms.py read, so the spec
-file is the single source of truth. Results: results/lm/<config>/<cell>.json (cell = <arm>_s<seed>).
+file is the single source of truth. Results: `rola_results` at lm/<config> (cell = <arm>_s<seed>).
 LM keeps preemption-safe checkpoint resume (payload_for + pull_in_progress + no_kill).
 
 Launch: launch.py lm default

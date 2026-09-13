@@ -47,7 +47,25 @@ import sys
 import time
 from pathlib import Path
 
+from rola_results import Store, checkout, key
+
 REPO = Path(__file__).resolve().parents[2]
+
+
+def local_store(config: str):
+    """The local grid's store (`rola_results` at `mqar/<config>`, beside the fleet's rows) and its semantics: the cell
+    and the code that trains it -- this checkout and the rola engine's, each commit and tracked diff."""
+    import importlib.util
+
+    code = {}
+    for name, path in (("rola_bench", REPO), ("rola", Path(importlib.util.find_spec("rola").origin).resolve().parents[1])):
+        here = checkout(path)
+        code[name] = {"git_sha": here["git_sha"], "diff_sha256": here["diff_sha256"]}
+
+    def semantics(cell: str) -> dict:
+        return {"bench": "mqar", "config": config, "cell": cell, "local": code}
+
+    return Store(f"mqar/{config}"), semantics
 GPU_LOCK = "/tmp/rola_gpu.lock"
 
 #: Bytes per parameter held on the card during training: the fp32 weight, its gradient, and Adam's
@@ -178,7 +196,6 @@ def main(argv=None):
     ap.add_argument("--sec-per-step", type=float, default=None,
                     help="wall-clock model for --dry-run: seconds per optimizer step at L=128 on "
                          "this box (default: the measured value in SEC_PER_STEP_L128)")
-    ap.add_argument("--results", default=None, help="jsonl path (default: results/mqar/<config>/)")
     ap.add_argument("--limit", type=int, default=None, help="run only the first N pending cells")
     ap.add_argument("--smoke", action="store_true",
                     help="ONE toy cell per data condition (2 epochs, 512 train examples, the "
@@ -191,19 +208,10 @@ def main(argv=None):
     configs, envs = load_configs(a.config)
     if a.smoke:
         configs, envs = _smoke_cells(configs, envs)
-    out_dir = Path(a.results).parent if a.results else REPO / "results" / "mqar" / a.config
-    out_dir.mkdir(parents=True, exist_ok=True)
-    results_file = Path(a.results) if a.results else out_dir / f"{tier}_results.jsonl"
-
-    done = set()
-    if results_file.exists():
-        for line in open(results_file):
-            try:
-                r = json.loads(line)
-                if r.get("ok"):
-                    done.add(r.get("run_id"))
-            except Exception:
-                pass
+    store, semantics = local_store(a.config)
+    #: DONE FOR THIS CODE: a cell is complete when the current checkouts (this repository and the rola engine it
+    #: trains) have an ok sample, the local counterpart of the fleet's current image (`rola_bench.jobs`).
+    done = {c.run_id for c in configs if Store.complete(store.get(key(semantics(c.run_id))))}
 
     pending = [(i, c, e) for i, (c, e) in enumerate(zip(configs, envs)) if c.run_id not in done]
     if a.limit:
@@ -211,7 +219,7 @@ def main(argv=None):
 
     sec_per_step = a.sec_per_step if a.sec_per_step is not None else SEC_PER_STEP_L128
     print(f"spec={a.config} tier={tier}: {len(configs)} cells, {len(done)} done, "
-          f"{len(pending)} to run -> {results_file}", flush=True)
+          f"{len(pending)} to run -> {store.location}", flush=True)
     total_bytes, total_sec = 0, 0.0
     plan = []
     for i, cfg, _env in pending:
@@ -238,32 +246,32 @@ def main(argv=None):
     os.environ["ROLA_GPU_MEM_FRACTION"] = env_cap
     print(f"per-process memory cap: {a.mem_fraction} of the card; cells run SEQUENTIALLY", flush=True)
     bad = []
-    with open(results_file, "a") as fout:
-        for n, (i, cfg, fp, steps, est) in enumerate(plan, 1):
-            print(f"\n[{n}/{len(plan)}] {cfg.run_id} | peak~{fp['total']/2**30:.2f}GiB | "
-                  f"~{est/60:.0f}min", flush=True)
-            t0 = time.time()
-            peak_file = Path(f"/tmp/_rla_peak_{i}.json")
-            peak_file.unlink(missing_ok=True)
-            os.environ["ROLA_PEAK_MEM_PATH"] = str(peak_file)
-            r = run_one(i, cfg.run_id, cfg, dict(envs[i]))
-            r["footprint_estimate_bytes"] = fp
-            r["wall_clock_estimate_s"] = est
-            r["peak_bytes"] = (json.loads(peak_file.read_text())["peak_bytes"]
-                               if peak_file.exists() else None)
-            if r["peak_bytes"]:
-                print(f"  peak {r['peak_bytes']/2**30:.2f}GiB measured vs "
-                      f"{fp['total']/2**30:.2f}GiB estimated "
-                      f"({r['peak_bytes']/fp['total']:.2f}x)", flush=True)
-            fout.write(json.dumps(r) + "\n")
-            fout.flush()
-            # ... and one file per cell, which is the layout the analysis glob expects
-            (out_dir / f"{cfg.run_id}.json").write_text(json.dumps(r))
-            ok = bool(r.get("ok"))
-            if not ok:
-                bad.append(cfg.run_id)
-            print(f"  -> {'OK' if ok else 'FAIL'} max_acc={r.get('max_acc', 0):.3f} "
-                  f"t={time.time()-t0:.0f}s (est {est:.0f}s)", flush=True)
+    for n, (i, cfg, fp, steps, est) in enumerate(plan, 1):
+        print(f"\n[{n}/{len(plan)}] {cfg.run_id} | peak~{fp['total']/2**30:.2f}GiB | "
+              f"~{est/60:.0f}min", flush=True)
+        t0 = time.time()
+        peak_file = Path(f"/tmp/_rla_peak_{i}.json")
+        peak_file.unlink(missing_ok=True)
+        os.environ["ROLA_PEAK_MEM_PATH"] = str(peak_file)
+        r = run_one(i, cfg.run_id, cfg, dict(envs[i]))
+        r["footprint_estimate_bytes"] = fp
+        r["wall_clock_estimate_s"] = est
+        r["peak_bytes"] = (json.loads(peak_file.read_text())["peak_bytes"]
+                           if peak_file.exists() else None)
+        if r["peak_bytes"]:
+            print(f"  peak {r['peak_bytes']/2**30:.2f}GiB measured vs "
+                  f"{fp['total']/2**30:.2f}GiB estimated "
+                  f"({r['peak_bytes']/fp['total']:.2f}x)", flush=True)
+        if r.get("ok"):
+            store.put(semantics(cfg.run_id), output=r, wall_s=time.time() - t0, provenance={"tier": tier})
+        else:
+            store.put(semantics(cfg.run_id), error=str(r.get("error") or "the cell reported ok=false"),
+                      wall_s=time.time() - t0, provenance={"tier": tier}, row=r)
+        ok = bool(r.get("ok"))
+        if not ok:
+            bad.append(cfg.run_id)
+        print(f"  -> {'OK' if ok else 'FAIL'} max_acc={r.get('max_acc', 0):.3f} "
+              f"t={time.time()-t0:.0f}s (est {est:.0f}s)", flush=True)
     if bad:
         print(f"\n{len(bad)} FAILED cell(s): {bad}", flush=True)
     return 1 if bad else 0
