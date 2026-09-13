@@ -1,1 +1,0 @@
-{"run_id": "attn_s42", "ok": true, "arm": "attn", "seed": 42, "params_m": 30.85, "state_floats": null, "hidden_size": 256, "num_hidden_layers": 6, "tokens": 245760000, "eval_loss": 1.6402, "ppl": 5.156, "bpc": null, "dataset": "roneneldan/TinyStories", "block_size": 512, "answer_acc": null, "train_tok_per_s": 348574.7, "peak_mib": 6155, "ckpt": "/workspace/ckpts/attn_s42.pt"}

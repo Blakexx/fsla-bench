@@ -1,1 +1,0 @@
-{"run_id": "gla_s1337", "ok": true, "arm": "gla", "seed": 1337, "params_m": 31.29, "state_floats": 16384, "hidden_size": 256, "num_hidden_layers": 6, "tokens": 245760000, "eval_loss": 1.6994, "ppl": 5.471, "bpc": null, "dataset": "roneneldan/TinyStories", "block_size": 512, "train_tok_per_s": 230208.5, "peak_mib": 6400, "ckpt": "/workspace/ckpts/gla_s1337.pt"}
