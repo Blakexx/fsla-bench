@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-from pathlib import Path
+
+from rola_results import Store
 
 from . import engine
 from .modules import Options, nodes_for
-from .target import config, parse
+from .target import parse
 
 
 def main() -> int:
@@ -29,27 +29,25 @@ def main() -> int:
             p.add_argument("--force", action="store_true", help="run every selected node again")
     p = sub.add_parser("show", help="print the records of a module")
     p.add_argument("module")
-    p.add_argument("--store", type=Path, required=True, help="the store root (tools/dev.py get store.root)")
     a = ap.parse_args()
 
     if a.cmd == "show":
-        for path in sorted((a.store / "suite" / a.module).glob("*.json")):
-            if path.name.count(".") == 1:
-                rec = json.loads(path.read_text())
-                print(f"{rec['key'][:12]} {rec['semantics']['unit'] or '-':40s} ok={rec['ok']} samples={len(rec['samples'])}"
-                      f" {rec['meta'].get('label', '')} {rec['meta'].get('git_sha', '')[:7]}")
+        for rec in Store(f"suite/{a.module}").records():
+            ok = [s for s in rec["samples"] if s["ok"]]
+            last = rec["samples"][-1]["provenance"]
+            print(f"{rec['key'][:12]} {rec['semantics']['unit'] or '-':40s} {len(ok)} ok / {len(rec['samples']) - len(ok)} "
+                  f"failed  {last.get('label', '')} {(last.get('git_sha') or '')[:7]}")
         return 0
 
     target = parse(a.target)
     opt = Options([parse(r) for r in a.reference], a.cells, a.subjects, a.reps, a.warmup, a.rounds)
-    store = engine.Store(Path(config(target, "store.root")))
     nodes = nodes_for(target, opt, a.modules)
-    outcomes = engine.run(nodes, store, dry=a.cmd == "plan", repeat=getattr(a, "repeat", False),
+    outcomes = engine.run(nodes, dry=a.cmd == "plan", repeat=getattr(a, "repeat", False),
                           force=getattr(a, "force", False), log=lambda line: print(line, flush=True))
     counts: dict[str, int] = {}
     for o in outcomes:
         counts[o.status] = counts.get(o.status, 0) + 1
-    print("suite: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())) + f"; records under {store.root}")
+    print("suite: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())) + f"; records under {Store('suite').dir}")
     return 1 if counts.get("failed") or counts.get("blocked") else 0
 
 

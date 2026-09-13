@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rola_results import Store
+
 from rola_bench.suite import engine
 
 
@@ -37,14 +39,14 @@ class Graph:
 class EngineTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = engine.Store(Path(self.tmp.name))
+        self.root = Path(self.tmp.name)
         self.g = Graph()
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_graph(self, **kw):
-        return {o.name: o for o in engine.run(self.g.nodes(), self.store, log=lambda _m: None, **kw)}
+        return {o.name: o for o in engine.run(self.g.nodes(), self.root, log=lambda _m: None, **kw)}
 
     def test_cold_then_complete(self):
         first = self.run_graph()
@@ -72,12 +74,14 @@ class EngineTest(unittest.TestCase):
         self.g.fail.add("a")
         out = self.run_graph()
         self.assertEqual((out["m.a"].status, out["m.b"].status, out["m.c@cell"].status), ("failed", "blocked", "ran"))
-        record = self.store.load("m.a", out["m.a"].key)
-        self.assertFalse(record["ok"])
-        self.assertIn("a failed", record["error"])
+        record = Store("suite/m.a", self.root).get(out["m.a"].key)
+        self.assertFalse(Store.complete(record))
+        self.assertIn("a failed", record["samples"][-1]["error"])
         self.g.fail.clear()
         out = self.run_graph()
         self.assertEqual((out["m.a"].status, out["m.b"].status, out["m.c@cell"].status), ("ran", "ran", "complete"))
+        record = Store("suite/m.a", self.root).get(out["m.a"].key)
+        self.assertEqual([s["ok"] for s in record["samples"]], [False, True])
 
     def test_repeat_accumulates_samples_under_one_key(self):
         first = self.run_graph()
@@ -85,8 +89,9 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(out["m.a"].key, first["m.a"].key)
         self.assertEqual(out["m.a"].samples, 2)
         self.assertEqual(out["m.c@cell"].status, "complete")
-        record = self.store.load("m.a", out["m.a"].key)
-        outputs = [json.loads((self.store.root / "m.a" / s["output"]).read_text())["n"] for s in record["samples"]]
+        store = Store("suite/m.a", self.root)
+        record = store.get(out["m.a"].key)
+        outputs = [json.loads(store.output(record, s["n"]).read_text())["n"] for s in record["samples"]]
         self.assertEqual(outputs, [1, 2])
 
     def test_dry_run_changes_nothing(self):

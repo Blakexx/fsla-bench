@@ -1,15 +1,15 @@
 # `rola_bench.suite` — rola checkouts measured by their own instruments, every result kept
 
 The local measurement tier of rola-bench. A run takes the checkouts to measure, builds a graph of measurement nodes on
-them, runs what is not already stored, and keeps every result in the measurements store (`store.root` in rola's dev
-config, `<store>/suite/`). Standard library only: it runs from any rola venv or the dev container without fleet,
-zoology or transformers. Rented, citable runs stay on the fleet tier (`launch.py`, `rola_bench/perf/METHODOLOGY.md`);
+them, runs what is not already stored, and keeps every result through `rola_results` at the location `suite/<module>`
+(rola's dev config names the rola-results checkout as `store.root`; `tools/dev.py init` makes it importable). Standard
+library and `rola_results` only: it runs from any rola venv or the dev container without fleet, zoology or transformers. Rented, citable runs stay on the fleet tier (`launch.py`, `rola_bench/perf/METHODOLOGY.md`);
 this tier is the engineering gate.
 
     python -m rola_bench.suite plan --target worktree:PATH --reference worktree:PATH,label:master,schedule:box/sparse-g32 --cells gate
     python -m rola_bench.suite run  --target ... [--reference ...] [--modules carry,timing] [--cells all|gate|a,b]
                                     [--subjects all|a,b] [--repeat] [--force]
-    python -m rola_bench.suite show carry.phases --store <store root>
+    python -m rola_bench.suite show carry.phases
 
 ## Targets and arms
 
@@ -37,17 +37,18 @@ A node is one module on one unit (a cell, or a subject at a cell). Its key is sh
 
 A change anywhere re-keys exactly the nodes that depend on it, and a revert finds the old key's result again.
 
-- A key with an ok record is complete and does not run.
-- A failure is recorded with its error and retried on the next run. Nodes depending on it are blocked, not recorded.
+- A key with a successful sample is complete and does not run.
+- A failure is a sample too, kept with its error, and a key with no successful sample runs again. Nodes depending on a
+  failure are blocked, not recorded.
 - `--repeat` adds a sample to complete nodes of repeatable modules (every measurement, not the static SASS or register
   reads).
 - `--force` runs every selected node again.
 
 ## Records
 
-`<store>/suite/<module>/<key>.json` holds the semantics that made the key, `ok`, the error of the last failure, the
-target's label, commit and dirtiness (`meta`), and the samples. Each sample is an output file `<key>.<n>.out.json`, when
-it ran, and how long it took. Outputs are the instruments' raw JSON. Nothing relational is stored: no baseline ratio, no
+A record (`rola_results`, `records/suite/<module>/<key>.json`) holds the semantics that made the key and every sample:
+its output (`<key>.<n>.out.json`, the instrument's raw JSON) or its error, when it ran, how long it took, and its
+provenance (the target's label, commit and dirtiness; a timing session's every arm). Nothing relational is stored: no baseline ratio, no
 delta between commits.
 
 ## Modules
