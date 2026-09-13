@@ -5,10 +5,10 @@ in canonical_baselines.py (baseline_cell / NCS / REF), which this module re-expo
 Backbone/data sizes are NOT hardcoded here — they belong in the experiment spec. `DEFAULTS` is just
 the fallback a spec's `backbone:` block overrides.
 """
-from zoology.config import ModuleConfig, DataConfig
+from zoology.config import DataConfig, ModuleConfig
 from zoology.data.multiquery_ar import MQARConfig
 
-from rola_bench.mqar.experiments.canonical_baselines import baseline_cell, NCS, REF  # noqa: F401
+from rola_bench.mqar.experiments.canonical_baselines import NCS, REF, baseline_cell  # noqa: F401
 
 # Fallbacks; any of these can be overridden per-experiment via the spec's `backbone:` block.
 DEFAULTS = {"d_model": 128, "vocab": 8192, "n_layers": 2, "l_max": 1024}
@@ -132,6 +132,7 @@ def _make_knobbed_data(config_cls, knob_names, label, vocab, train_batch, test_b
             f"unknown {label} knob(s) {sorted(unknown)}; the axis set is {list(knob_names)}. "
             "An unrecognised key would otherwise be dropped silently and the cell would report a "
             "condition it did not run.")
+
     def _cell(seq_len, n_examples):
         return config_cls(vocab_size=vocab, input_seq_len=seq_len, num_examples=n_examples, **knobs)
     return DataConfig(train_configs=[_cell(train_seq_len, train_examples)],
@@ -248,8 +249,8 @@ def make_presence_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_l
 
 # --- hybrid backbone (short conv + the sequence mixer) --------------------------------------------
 def base_conv_mixer(l_max):
-    return dict(name="zoology.mixers.base_conv.BaseConv",
-                kwargs={"l_max": l_max, "kernel_size": 3, "implicit_long_conv": True})
+    return {"name": "zoology.mixers.base_conv.BaseConv",
+                "kwargs": {"l_max": l_max, "kernel_size": 3, "implicit_long_conv": True}}
 
 
 def wrap_hybrid(kernel_kwargs, l_max):
@@ -258,4 +259,4 @@ def wrap_hybrid(kernel_kwargs, l_max):
 
 
 # MHA ceiling, canonical kwargs (matches add_attention in models_repo.py).
-mha = dict(name="zoology.mixers.attention.MHA", kwargs={"num_heads": 2, "dropout": 0.1})
+mha = {"name": "zoology.mixers.attention.MHA", "kwargs": {"num_heads": 2, "dropout": 0.1}}

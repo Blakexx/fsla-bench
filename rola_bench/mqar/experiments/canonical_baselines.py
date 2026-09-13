@@ -5,7 +5,7 @@ canonical occupant per TRANSITION-STRUCTURE rung, and nothing else:
 
   | rung | transition structure `S_t = f(S_{t-1}, k_t, v_t)` | occupant |
   |---|---|---|
-  | vanilla linear attention | `S + k v^T` (no forgetting)             | `rla`  (FLA `LinearAttention`, elu feature map, normalized readout) |
+  | vanilla linear attention | `S + k v^T` (no forgetting)             | `rla`  (FLA `LinearAttention`, elu, normalized) |
   | gated linear attention   | `diag(g) S + k v^T` (elementwise decay) | `gla`  (zoology `GatedLinearAttention`) |
   | gated delta rule         | `g(I - b k k^T) S + b k v^T` (state-dependent erasure) | `gdn` (FLA `GatedDeltaNet`) |
   | attention                | unbounded KV cache                      | `attn` (the MHA oracle, in `build_configs`) |
@@ -60,15 +60,18 @@ MAX_BASELINE_HEADS = 64
 #: FLA's GatedDeltaNet kernel caps `head_dim`; a cell above it is a kernel refusal, not a run failure.
 MAX_GDN_HEAD_DIM = 256
 BASE_H = MQAR_GEOM["n_heads"]
+
+
 #: The matched-state reference: RoLA's CONTENT recurrent floats at the pinned MQAR geometry.
 #: Derived from `common.MQAR_GEOM`, never a literal: H * N * d_v, so a geometry re-pin moves the baselines with it.
-REF = lambda nc: MQAR_GEOM["n_heads"] * int(nc) * MQAR_GEOM["d_v"]
+def REF(nc):
+    return MQAR_GEOM["n_heads"] * int(nc) * MQAR_GEOM["d_v"]
 
 
 def _gla(d_k_total, d_v_total, num_heads):
-    return dict(name="zoology.mixers.gla.GatedLinearAttention",
-                kwargs=dict(expand_k=d_k_total / DMODEL, expand_v=d_v_total / DMODEL,
-                            num_heads=num_heads, use_short_conv=False))
+    return {"name": "zoology.mixers.gla.GatedLinearAttention",
+                "kwargs": {"expand_k": d_k_total / DMODEL, "expand_v": d_v_total / DMODEL,
+                            "num_heads": num_heads, "use_short_conv": False}}
 
 
 def _lin(feature_map, d_k_total, d_v_total, num_heads):
@@ -81,19 +84,19 @@ def _lin(feature_map, d_k_total, d_v_total, num_heads):
     # (fla's fused_recurrent omits the `scale=k.shape[-1]**-0.5` default chunk has, crashing the
     # normalized short-seq path). The fix is committed/visible in the fork, so results reproduce for
     # anyone using fla-rola — no hidden runtime monkeypatch of the canonical library.
-    return dict(name="fla_rola.layers.LinearAttention",
-                kwargs=dict(hidden_size=DMODEL, expand_k=d_k_total / DMODEL,
-                            expand_v=d_v_total / DMODEL, num_heads=num_heads,
-                            feature_map=feature_map, do_feature_map_norm=True))
+    return {"name": "fla_rola.layers.LinearAttention",
+                "kwargs": {"hidden_size": DMODEL, "expand_k": d_k_total / DMODEL,
+                            "expand_v": d_v_total / DMODEL, "num_heads": num_heads,
+                            "feature_map": feature_map, "do_feature_map_norm": True}}
 
 
 def _gdn(head_dim, num_heads, dv_head):
     # FLA's canonical GatedDeltaNet, explicit head_dim widens KEYS (recall axis); expand_v
     # holds d_v at the task level. v_out = expand_v*num_heads*head_dim, so d_v_head=dv_head
     # needs expand_v = dv_head/head_dim. head_dim kernel-capped at 256.
-    return dict(name="fla.layers.GatedDeltaNet",
-                kwargs=dict(hidden_size=DMODEL, num_heads=num_heads, head_dim=head_dim,
-                            expand_v=dv_head / head_dim, use_short_conv=False))
+    return {"name": "fla.layers.GatedDeltaNet",
+                "kwargs": {"hidden_size": DMODEL, "num_heads": num_heads, "head_dim": head_dim,
+                            "expand_v": dv_head / head_dim, "use_short_conv": False}}
 
 
 def baseline_cell(method, shape, nc):
@@ -110,17 +113,21 @@ def baseline_cell(method, shape, nc):
     H = BASE_H
     if method == "rla":                                   # vanilla LA rung, elu feature map
         if shape == "wide":                               # H*dk_head*DV = S
-            dk = max(1, round(S / (H * DV)));             return _lin("elu", dk * H, DV * H, H), S
+            dk = max(1, round(S / (H * DV)))
+            return _lin("elu", dk * H, DV * H, H), S
         if shape == "square":                             # H*d*d = S
-            d = max(1, round(math.sqrt(S / H)));          return _lin("elu", d * H, d * H, H), S
+            d = max(1, round(math.sqrt(S / H)))
+            return _lin("elu", d * H, d * H, H), S
         if shape == "heads":                              # h*DV*DV = S
             h = max(1, round(S / (DV * DV)))
             return (None if h > MAX_BASELINE_HEADS else (_lin("elu", DV * h, DV * h, h), S))
     if method == "gla":                                   # gated LA rung
         if shape == "wide":
-            dk = max(1, round(S / (H * DV)));             return _gla(dk * H, DV * H, H), S
+            dk = max(1, round(S / (H * DV)))
+            return _gla(dk * H, DV * H, H), S
         if shape == "square":
-            d = max(1, round(math.sqrt(S / H)));          return _gla(d * H, d * H, H), S
+            d = max(1, round(math.sqrt(S / H)))
+            return _gla(d * H, d * H, H), S
         if shape == "heads":
             h = max(1, round(S / (DV * DV)))
             return (None if h > MAX_BASELINE_HEADS else (_gla(DV * h, DV * h, h), S))

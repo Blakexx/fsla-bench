@@ -66,6 +66,8 @@ def local_store(config: str):
         return {"bench": "mqar", "config": config, "cell": cell, "local": code}
 
     return Store(f"mqar/{config}"), semantics
+
+
 GPU_LOCK = "/tmp/rola_gpu.lock"
 
 #: Bytes per parameter held on the card during training: the fp32 weight, its gradient, and Adam's
@@ -90,7 +92,7 @@ ACT_FLOATS_PER_TOKEN_PER_LAYER = 64
 def _refuse_without_the_gpu_lock():
     """Refuse unless someone else already holds `/tmp/rola_gpu.lock` — i.e. unless we are running
     under the `flock` prefix. Two training processes on this card is the failure this prevents."""
-    fh = open(GPU_LOCK, "w")
+    fh = open(GPU_LOCK, "w")  # noqa: SIM115 -- closed on both branches below, after the lock probe
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -155,7 +157,7 @@ def _smoke_cells(configs, envs, epochs=2, train_examples=512, test_examples=128)
     """
     import copy
     picked, out_c, out_e = set(), [], []
-    for cfg, env in zip(configs, envs):
+    for cfg, env in zip(configs, envs, strict=True):
         cond = cfg.run_id.split("_s")[-1].partition("-")[2]     # the "-{cond}" run_id suffix
         # one cell per (condition, ARM FAMILY): the attention reference reaches the model through a
         # different mixer, so a smoke that only covered the routed arms would leave half the grid's
@@ -213,7 +215,7 @@ def main(argv=None):
     #: trains) have an ok sample, the local counterpart of the fleet's current image (`rola_bench.fleet.jobs`).
     done = {c.run_id for c in configs if Store.complete(store.get(key(semantics(c.run_id))))}
 
-    pending = [(i, c, e) for i, (c, e) in enumerate(zip(configs, envs)) if c.run_id not in done]
+    pending = [(i, c, e) for i, (c, e) in enumerate(zip(configs, envs, strict=True)) if c.run_id not in done]
     if a.limit:
         pending = pending[:a.limit]
 
@@ -246,7 +248,7 @@ def main(argv=None):
     os.environ["ROLA_GPU_MEM_FRACTION"] = env_cap
     print(f"per-process memory cap: {a.mem_fraction} of the card; cells run SEQUENTIALLY", flush=True)
     bad = []
-    for n, (i, cfg, fp, steps, est) in enumerate(plan, 1):
+    for n, (i, cfg, fp, _, est) in enumerate(plan, 1):
         print(f"\n[{n}/{len(plan)}] {cfg.run_id} | peak~{fp['total']/2**30:.2f}GiB | "
               f"~{est/60:.0f}min", flush=True)
         t0 = time.time()

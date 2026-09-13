@@ -81,7 +81,7 @@ class Cell:
         rows = WIRINGS[self.wiring]
         if len(self.widths) != len(rows):
             raise ValueError(f"{self.wiring} has {len(rows)} level(s); widths {self.widths} have {len(self.widths)}")
-        object.__setattr__(self, "levels", tuple({"width": int(w), **row} for w, row in zip(self.widths, rows)))
+        object.__setattr__(self, "levels", tuple({"width": int(w), **row} for w, row in zip(self.widths, rows, strict=True)))
 
     @property
     def n(self) -> int:

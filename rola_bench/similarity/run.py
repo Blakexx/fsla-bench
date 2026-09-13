@@ -15,18 +15,17 @@ Probes (registry below):
              faithful extractor: attention, GDN, GLA, Based, linear attention. RoLA has none until its
              effective matrix is defined from the route factors (carded).
 """
+import base64
 import json
 import math
 import os
 import sys
 import traceback
+import zlib
 
 import torch
 
 from rola_bench.similarity import evaluator as E
-
-import base64
-import zlib
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 PAYLOAD_DIR = os.environ.get("FLEET_PAYLOAD_DIR", "/workspace/payloads")
@@ -42,6 +41,8 @@ def _b64_f16(arr):
 def _unb64_f16(s, shape):
     import numpy as np
     return np.frombuffer(zlib.decompress(base64.b64decode(s)), dtype=np.float16).astype(np.float32).reshape(shape)
+
+
 RANK_FRAC = float(os.environ.get("RANK_FRAC", "0.25"))     # fraction of each test slice's examples to eval
 MEM_BUDGET = float(os.environ.get("RANK_MEM_BUDGET", "3e9"))  # bytes for the [chunk,H,L,L] W tensor (4090-safe)
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
@@ -53,8 +54,12 @@ def _agg(vals):
     """Summarize a concatenated per-slice distribution -> mean + percentiles (compact)."""
     if not vals:
         return None
-    s = sorted(vals); n = len(s)
-    q = lambda p: s[min(n - 1, int(p * (n - 1) + 0.5))]
+    s = sorted(vals)
+    n = len(s)
+
+    def q(p):
+        return s[min(n - 1, int(p * (n - 1) + 0.5))]
+
     return {"mean": round(sum(s) / n, 3), "p10": round(q(0.1), 3), "p50": round(q(0.5), 3),
             "p90": round(q(0.9), 3), "min": round(s[0], 3), "max": round(s[-1], 3), "n": n}
 
@@ -188,14 +193,17 @@ def main():
         cfg = by_id.get(cell)
         if cfg is None:
             _append({"run_id": rid, "ok": False, "error": "cell is in no MQAR experiment spec"})
-            print(f"[sim] {rid}: no config", flush=True); continue
+            print(f"[sim] {rid}: no config", flush=True)
+            continue
         if probe not in PROBES:
             _append({"run_id": rid, "ok": False, "error": f"unknown probe '{probe}'; have {list(PROBES)}"})
-            print(f"[sim] {rid}: unknown probe", flush=True); continue
+            print(f"[sim] {rid}: unknown probe", flush=True)
+            continue
         ck = _ckpt_path(rid)
         if ck is None:
             _append({"run_id": rid, "ok": False, "probe": probe, "error": "checkpoint payload missing"})
-            print(f"[sim] {rid}: no ckpt", flush=True); continue
+            print(f"[sim] {rid}: no ckpt", flush=True)
+            continue
         try:
             model = _build_model(cfg).to(DEV)
             sd = E._load_state_dict(ck, map_location=DEV, state_dict_key="model")

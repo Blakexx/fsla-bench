@@ -30,7 +30,7 @@ from rola_results import Store, key
 
 RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME",
                               os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "runtime"))
-DEFAULT_IMAGE = "blakeresearch/rola-bench:v40"   # ⚠ keep in sync with the experiments yamls (paper_v1 pins v40); bumps are manual   # v27: DROP the warm pre-pass entirely (it was ~95% serial autotune-do_bench, net-negative; cells self-warm via WARMUP reps). v26: affinity-aware warm worker count. v25: scaling-bench fixes (nc->even-pow2 snap for flat|square|tree, infeasible-shape SKIP)
+DEFAULT_IMAGE = "blakeresearch/rola-bench:v40"   # keep in sync with the specs' fleet.image pins; bumps are manual
 # Default offer query PER DIALECT. The vast filter caps bandwidth $/GB (we pull a big image +
 # checkpoints) and screens on reliability — both are marketplace concepts with no analogue on a
 # provider-owned catalogue, where you pick a SKU and the only real question is whether a node is free.
@@ -112,22 +112,22 @@ def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
     name = fleet.pop("name", f"{bench}-{config}")
     image = os.environ.get("ROLA_BENCH_IMAGE", fleet.pop("image", DEFAULT_IMAGE))
     store_result, done_ids = fleet_store(bench, config, image, name)
-    spec = dict(
-        name=name,
-        image=image,
-        offer_query=os.environ.get("OFFER_QUERY") or offer_query_for(fleet.pop("offer_query", None),
+    spec = {
+        "name": name,
+        "image": image,
+        "offer_query": os.environ.get("OFFER_QUERY") or offer_query_for(fleet.pop("offer_query", None),
                                                                      dialect),
-        store_result=store_result,
-        ckpt_dir=job_kwargs.pop("ckpt_dir", None) or checkpoints(),
-        work_list=work_list,
-        done_ids=done_ids,
-        env={"FLEET_RUN_CMD": run_cmd, **fleet.pop("env", {})},
-        bad_hosts=os.path.join(runtime, "bad_hosts.txt"),
-        state_path=os.path.join(runtime, "hosts.json"),
-        idle_timeout=fleet.pop("idle_timeout", 1200),
-        batch=fleet.pop("batch", 1),
-        per_batch_timeout=fleet.pop("per_batch_timeout", 18000),
-    )
+        "store_result": store_result,
+        "ckpt_dir": job_kwargs.pop("ckpt_dir", None) or checkpoints(),
+        "work_list": work_list,
+        "done_ids": done_ids,
+        "env": {"FLEET_RUN_CMD": run_cmd, **fleet.pop("env", {})},
+        "bad_hosts": os.path.join(runtime, "bad_hosts.txt"),
+        "state_path": os.path.join(runtime, "hosts.json"),
+        "idle_timeout": fleet.pop("idle_timeout", 1200),
+        "batch": fleet.pop("batch", 1),
+        "per_batch_timeout": fleet.pop("per_batch_timeout", 18000),
+    }
     spec.update(fleet)         # remaining plain fleet.Job fields (no_kill, pull_in_progress, ...)
     spec.update(job_kwargs)    # bench callables / path overrides (payload_for, ckpt_dir already popped)
     return Job(**spec)

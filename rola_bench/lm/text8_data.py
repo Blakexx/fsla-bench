@@ -19,7 +19,7 @@ def vocab_size():
 def text8_dataset(block_size, max_train_blocks=None, val_blocks=2000):
     """Materialize the contiguous char stream into fixed block_size LM blocks (labels=input_ids,
     standard next-char LM; drop the trailing remainder so every block is full → no padding)."""
-    from datasets import load_dataset, Dataset, DatasetDict
+    from datasets import Dataset, DatasetDict, load_dataset
 
     def enc(split, maxb):
         txt = load_dataset(DATASET, split=split)[0]["text"]      # one row = the full split string

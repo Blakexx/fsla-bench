@@ -24,7 +24,7 @@ def run() -> bool:
     x = torch.randn(1, 64, sc.DM, device=C.DEV, dtype=C.DT)
     for kind in ("attn", *sc.BASELINE_GEOM, *sc.ROLA_ARMS):
         try:
-            module = sc.build_arm(dict(kind=kind), n=64, dv=64)
+            module = sc.build_arm({"kind": kind}, n=64, dv=64)
             with torch.inference_mode():
                 sc._fwd(module, x)
             sc._train_rep(module, x)

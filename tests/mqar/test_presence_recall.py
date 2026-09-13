@@ -32,7 +32,7 @@ import numpy as np
 import pytest
 import torch
 
-BASE = dict(vocab_size=1024, num_examples=2000, input_seq_len=64)
+BASE = {"vocab_size": 1024, "num_examples": 2000, "input_seq_len": 64}
 
 
 def _episodes(**kw):
@@ -52,10 +52,10 @@ def _segment(**kw):
 
 # =============================================================== 1. the label IS the task
 @pytest.mark.parametrize("kw", [
-    dict(demand=8),
-    dict(demand=16, keys_per_sequence=8),
-    dict(demand=16, keys_per_sequence=12),
-    dict(demand=32, keys_per_sequence=16, input_seq_len=128),
+    {"demand": 8},
+    {"demand": 16, "keys_per_sequence": 8},
+    {"demand": 16, "keys_per_sequence": 12},
+    {"demand": 32, "keys_per_sequence": 16, "input_seq_len": 128},
 ])
 def test_labels_are_a_prefix_membership_check_on_pi(kw):
     """The whole task, checked one position at a time against a from-the-definition implementation.
@@ -256,14 +256,14 @@ def test_every_stamp_field_reaches_the_segment_slices():
 
 
 @pytest.mark.parametrize("kw,reason", [
-    (dict(demand=1), "demand"),
-    (dict(demand=16, keys_per_sequence=16), "keys_per_sequence"),
-    (dict(demand=16, keys_per_sequence=20), "keys_per_sequence"),
-    (dict(demand=16, keys_per_sequence=12, input_seq_len=16), "input_seq_len"),
-    (dict(demand=16, min_separation=0), "min_separation"),
-    (dict(demand=16, positive_rate=0.0), "positive_rate"),
-    (dict(demand=16, split="nonesuch"), "split"),
-    (dict(demand=1021, keys_per_sequence=2), "vocab_size"),
+    ({"demand": 1}, "demand"),
+    ({"demand": 16, "keys_per_sequence": 16}, "keys_per_sequence"),
+    ({"demand": 16, "keys_per_sequence": 20}, "keys_per_sequence"),
+    ({"demand": 16, "keys_per_sequence": 12, "input_seq_len": 16}, "input_seq_len"),
+    ({"demand": 16, "min_separation": 0}, "min_separation"),
+    ({"demand": 16, "positive_rate": 0.0}, "positive_rate"),
+    ({"demand": 16, "split": "nonesuch"}, "split"),
+    ({"demand": 1021, "keys_per_sequence": 2}, "vocab_size"),
 ])
 def test_unbuildable_cells_refuse_by_name(kw, reason):
     """Structural impossibilities raise HERE, by name, rather than asserting deep in the draw — the
@@ -301,6 +301,7 @@ def test_no_global_rng_reads_in_source():
     false-fail it."""
     import ast
     import inspect
+
     from zoology.data import presence_recall as mod
 
     banned = {("np", "random", "seed"), ("np", "random", "choice"), ("np", "random", "randint"),
@@ -337,8 +338,10 @@ def test_gen_version_is_in_the_cache_key():
 # =============================================================== 6. the grid around the generator
 def _spec():
     import os
+
     from rola_bench.mqar.build_configs import load_spec
-    here = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    here = os.path.join(repo, "rola_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "presence_grid.yaml"))
 
 
@@ -348,6 +351,7 @@ def test_every_tier_is_the_size_its_header_states(tier, cells):
     """The header's arithmetic is a schedule commitment (each tier is an overnight unit on the local
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""
     import os
+
     from rola_bench.mqar.build_configs import build_configs
     old = os.environ.get("GRID_TIERS")
     os.environ["GRID_TIERS"] = tier
@@ -391,7 +395,7 @@ def test_the_N_ladders_are_pointed_at_the_solved_demand():
                 chi = conds[tag]["demand"]
                 assert max(ncs) >= chi, f"{tier}/{tag}: ladder {ncs} ends below chi={chi}"
                 assert min(ncs) <= chi, f"{tier}/{tag}: ladder {ncs} starts above chi={chi}"
-    k64 = [a for a in spec["tiers"]["presence64"]]
+    k64 = list(spec["tiers"]["presence64"])
     assert all(min(a["ncs"]) < 64 for a in k64), "the resize tier must bracket chi from BELOW"
 
 
@@ -433,8 +437,9 @@ def test_every_run_id_parses_for_the_analysis():
     """The analysis keys its rows off the run_id, so a template change the parser does not know
     about would silently produce an empty headline table rather than an error."""
     import os
-    from rola_bench.mqar.build_configs import build_configs
+
     from rola_bench.mqar.analysis.graph import parse_run_id
+    from rola_bench.mqar.build_configs import build_configs
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     tags = {c["tag"] for c in _spec()["conditions"]}

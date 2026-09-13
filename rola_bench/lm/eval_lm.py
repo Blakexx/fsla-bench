@@ -10,7 +10,9 @@ piqa, arc_easy, arc_challenge, winogrande, openbookqa, + wikitext (held-out PPL 
 standard, NOT the training corpus's own val split). RECALL suite = the Based/Zoology info-extraction
 tasks (swde, fda, squad_completion).
 """
-import argparse, json
+import argparse
+import json
+
 import fla_rola.models  # noqa: F401 -- registers fla_rola's architectures so HFLM can load them
 from lm_eval import simple_evaluate
 from lm_eval.models.huggingface import HFLM
@@ -47,7 +49,8 @@ def main():
         print(f"  {task}: " + ", ".join(f"{k}={v:.4f}" for k, v in m.items()
                                          if isinstance(v, (int, float))))
     if a.out:
-        json.dump(rows, open(a.out, "w"), indent=2, default=str)
+        with open(a.out, "w") as fh:
+            json.dump(rows, fh, indent=2, default=str)
 
 
 if __name__ == "__main__":

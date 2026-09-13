@@ -15,7 +15,6 @@ import sys
 import traceback
 from pathlib import Path
 
-
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 REPS = int(os.environ.get("PERF_REPS", "15"))
 
@@ -72,6 +71,7 @@ def _has_successful_measurement(data):
 
 def main():
     import torch
+
     import rola_bench.perf._common as C
     run_ids = [r for r in os.environ.get("RUN_IDS", "").split(",") if r]
     # Capture CUDA status EXPLICITLY. Previously require_cuda() raised SystemExit on a failed init

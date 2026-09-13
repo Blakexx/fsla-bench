@@ -11,7 +11,10 @@ This is the suite's orchestration entrypoint. Each benchmark exposes a job BUILD
 provisioning, HTTP control, result/checkpoint sync, and idle-free teardown. Per-experiment `*_job.py`
 files are gone — an experiment is `<bench> <config>`, with launch knobs in the spec's `fleet:` block.
 """
-import argparse, importlib, os
+import argparse
+import importlib
+import os
+
 # The dispatcher is a pure orchestrator — it builds job configs and HTTP-coordinates remote boxes;
 # ALL training/benchmarking runs on the cloud GPUs, never locally. But importing the job configs
 # pulls in torch/rola, which would grab a ~1GB local CUDA context for nothing. Hide the GPU so the
@@ -24,7 +27,7 @@ JOBS = {
     "mqar": ("rola_bench.mqar.job", "mqar_job"),
     "lm":   ("rola_bench.lm.job", "lm_job"),
     "perf": ("rola_bench.perf.job", "perf_job"),     # kernel-efficiency (whole-bench cells, no ckpt)
-    "similarity": ("rola_bench.similarity.job", "sim_job"),  # post-hoc similarity-matrix eval (rank+sharpness), best-per-cell ckpts
+    "similarity": ("rola_bench.similarity.job", "sim_job"),  # post-hoc similarity-matrix eval, best-per-cell ckpts
 }
 
 

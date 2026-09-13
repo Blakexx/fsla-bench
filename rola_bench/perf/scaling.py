@@ -46,10 +46,10 @@ SEED_PREFILL = 256       # tokens that seed a recurrent state before the timed d
 STATE_DTYPE = torch.float32
 
 BASELINE_GEOM = {
-    "gla": dict(num_heads=4, expand_k=2.0, expand_v=8.0, gate_logit_normalizer=16),
-    "gdn": dict(num_heads=8, head_dim=256, expand_v=2.0),
-    "deltanet": dict(num_heads=8, expand_k=1.0, expand_v=1.0),
-    "gsa": dict(num_heads=4, expand_k=1.0, expand_v=1.0, num_slots=64),
+    "gla": {"num_heads": 4, "expand_k": 2.0, "expand_v": 8.0, "gate_logit_normalizer": 16},
+    "gdn": {"num_heads": 8, "head_dim": 256, "expand_v": 2.0},
+    "deltanet": {"num_heads": 8, "expand_k": 1.0, "expand_v": 1.0},
+    "gsa": {"num_heads": 4, "expand_k": 1.0, "expand_v": 1.0, "num_slots": 64},
 }
 BASELINE_CLASSES = {"gla": "GatedLinearAttention", "gdn": "GatedDeltaNet", "deltanet": "DeltaNet",
                     "gsa": "GatedSlotAttention"}
@@ -170,10 +170,10 @@ def arm_specs(include_graphed=False):
     """The cell's arms in order: attention, then the recurrent arms, each with a CUDA-graph decode variant when asked."""
     idx = 0
     for kind in arm_kinds():
-        yield dict(idx=idx, kind=kind, arm=kind, graphed=False)
+        yield {"idx": idx, "kind": kind, "arm": kind, "graphed": False}
         idx += 1
         if include_graphed and kind != "attn":
-            yield dict(idx=idx, kind=kind, arm=f"{kind}-graphed", graphed=True)
+            yield {"idx": idx, "kind": kind, "arm": f"{kind}-graphed", "graphed": True}
             idx += 1
 
 
@@ -312,18 +312,19 @@ def _decode_sample(L, n, dv, spec):
 
 # ------------------------------------------------------------------ rows
 def _row(**kw):
-    base = dict(bench=None, L=None, X_pct=None, n=None, dv=None, arm=None, fwd_ms=None, fwd_iqr_ms=None, fb_ms=None,
-                fb_iqr_ms=None, peak_mib=None, act_mib=None, fwd_iqr_pct=None, fb_iqr_pct=None, decode_ms=None,
-                decode_iqr_ms=None, decode_iqr_pct=None, fwd_samples_ms=None, fb_samples_ms=None,
-                decode_samples_ms=None, peak_samples_mib=None, act_samples_mib=None, state_mib=None,
-                attn_backend=None, sdpa_flags=None)
+    base = {"bench": None, "L": None, "X_pct": None, "n": None, "dv": None, "arm": None, "fwd_ms": None,
+                "fwd_iqr_ms": None, "fb_ms": None, "fb_iqr_ms": None, "peak_mib": None, "act_mib": None,
+                "fwd_iqr_pct": None, "fb_iqr_pct": None, "decode_ms": None,
+                "decode_iqr_ms": None, "decode_iqr_pct": None, "fwd_samples_ms": None, "fb_samples_ms": None,
+                "decode_samples_ms": None, "peak_samples_mib": None, "act_samples_mib": None, "state_mib": None,
+                "attn_backend": None, "sdpa_flags": None}
     base.update(kw)
     return base
 
 
 def _attn_fields(spec):
     attn = spec["kind"] == "attn"
-    return dict(attn_backend=_sdpa_backend_label() if attn else None, sdpa_flags=str(_sdpa_flags()) if attn else None)
+    return {"attn_backend": _sdpa_backend_label() if attn else None, "sdpa_flags": str(_sdpa_flags()) if attn else None}
 
 
 def _error_row(rows, bench, cell, spec, label, exc=None, detail=None):
@@ -360,19 +361,19 @@ def _summarize(rows, bench, cell, spec, recs):
     L, x_pct, n, dv = cell
     row = _row(bench=bench, L=L, X_pct=x_pct, n=n, dv=dv, arm=spec["arm"], **_attn_fields(spec))
     if bench == "train":
-        f, fb, pk, ac = zip(*recs)
+        f, fb, pk, ac = zip(*recs, strict=True)
         fs, fbs = C.sample_stats(f), C.sample_stats(fb)
         row.update(fwd_ms=fs["median"], fwd_iqr_ms=fs["iqr"], fwd_iqr_pct=fs["iqr_pct"], fb_ms=fbs["median"],
                    fb_iqr_ms=fbs["iqr"], fb_iqr_pct=fbs["iqr_pct"], peak_mib=round(max(pk)), act_mib=round(max(ac)),
                    fwd_samples_ms=C.samples_json(f), fb_samples_ms=C.samples_json(fb),
                    peak_samples_mib=C.samples_json(pk, digits=1), act_samples_mib=C.samples_json(ac, digits=1))
     elif bench == "prefill":
-        f, pk = zip(*recs)
+        f, pk = zip(*recs, strict=True)
         fs = C.sample_stats(f)
         row.update(fwd_ms=fs["median"], fwd_iqr_ms=fs["iqr"], fwd_iqr_pct=fs["iqr_pct"], peak_mib=round(max(pk)),
                    fwd_samples_ms=C.samples_json(f), peak_samples_mib=C.samples_json(pk, digits=1))
     else:
-        ms, state, pk = zip(*recs)
+        ms, state, pk = zip(*recs, strict=True)
         ds = C.sample_stats(ms, digits=4)
         row.update(decode_ms=ds["median"], decode_iqr_ms=ds["iqr"], decode_iqr_pct=ds["iqr_pct"],
                    decode_samples_ms=C.samples_json(ms, digits=4), state_mib=state[0], peak_mib=round(max(pk)),
@@ -439,7 +440,7 @@ def timed_cell(bench, cell, rows):
             continue
         prepared = True if decode else _guarded(rows, bench, cell, spec, lambda s=spec: _prepare(bench, L, n, dv, s))
         if prepared is not None:
-            active.append(dict(spec=spec, prepared=prepared, data=[]))
+            active.append({"spec": spec, "prepared": prepared, "data": []})
 
     warmup, reps = (DECODE_WARMUP, DECODE_STEPS) if decode else (C.WARMUP, C.REPS)
     with warnings.catch_warnings():

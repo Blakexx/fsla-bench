@@ -9,7 +9,7 @@ from rola_bench.models import rola as cells
 
 
 def _params(module):
-    return {name: p for name, p in module.named_parameters()}
+    return dict(module.named_parameters())
 
 
 @pytest.mark.parametrize("wiring", sorted(cells.WIRINGS))

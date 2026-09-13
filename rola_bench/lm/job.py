@@ -11,7 +11,7 @@ Launch: python -m rola_bench.fleet lm default
 import os
 
 from rola_bench.fleet.jobs import checkpoints, make_job
-from rola_bench.fleet.spec import load, env_from
+from rola_bench.fleet.spec import env_from, load
 
 
 def validate_matched_states(spec, box_env) -> None:

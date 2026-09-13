@@ -126,8 +126,8 @@ python -m pytest tests/mqar
 python -m unittest tests.measure.test_engine
 ```
 
-The commit gate (`.githooks/pre-commit` -> `.pre-commit-config.yaml`) runs ruff and the engine contract tests over
-`rola_bench/measure`.
+The commit gate (`.githooks/pre-commit` -> `.pre-commit-config.yaml`) runs ruff with rola's rule set and its E30x spacing family
+over `rola_bench` and `tests`, and the measurement engine's contract tests.
 
 ## Images
 

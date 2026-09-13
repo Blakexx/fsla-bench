@@ -66,7 +66,7 @@ def build():
     spec = BASE if BASE.endswith((".yaml", ".yml")) else os.path.join(_HERE, f"{BASE}.yaml")
     base_cfgs, base_envs = build_configs(load_spec(spec))
     by_id = {c.run_id: c for c in base_cfgs}
-    env_by = {c.run_id: e for c, e in zip(base_cfgs, base_envs)}
+    env_by = {c.run_id: e for c, e in zip(base_cfgs, base_envs, strict=True)}
     winners = pick_winners(set(by_id))   # only this spec's own cells
     cfgs, envs, missing = [], [], []
     for rid in sorted(winners):

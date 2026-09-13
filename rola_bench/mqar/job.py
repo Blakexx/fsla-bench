@@ -14,7 +14,7 @@ import os
 
 from rola_bench.fleet.jobs import make_job
 from rola_bench.mqar.build_configs import load_spec
-from rola_bench.mqar.run import load_configs, _EXP_DIR
+from rola_bench.mqar.run import _EXP_DIR, load_configs
 
 
 def _fleet_knobs(config):
@@ -34,7 +34,10 @@ def _filtered_ids(config, tiers):
     ids = [c.run_id for c in load_configs(config)[0]]
     # Optional manager-side run_id filters (run_id = grid-<family>-<shape>-...): FAMILIES / SHAPES /
     # EXCLUDE_FAMILIES / EXCLUDE_SHAPES env (comma lists) — e.g. a 4090-safe subset of canonical.
-    part = lambda r, i: (r.split("-")[i] if len(r.split("-")) > i else None)
+
+    def part(r, i):
+        return r.split("-")[i] if len(r.split("-")) > i else None
+
     for env, idx, keep in (("FAMILIES", 1, True), ("SHAPES", 2, True),
                            ("EXCLUDE_FAMILIES", 1, False), ("EXCLUDE_SHAPES", 2, False)):
         v = os.environ.get(env)

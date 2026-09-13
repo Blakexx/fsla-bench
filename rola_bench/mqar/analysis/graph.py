@@ -53,6 +53,7 @@ import argparse
 import json
 import math
 import re
+from itertools import pairwise
 from pathlib import Path
 from typing import NamedTuple
 
@@ -86,7 +87,7 @@ def _load_rows(location: str):
     from rola_results import outputs
 
     rows = {}
-    for _record, sample, r in sorted(outputs(location), key=lambda x: x[1]["utc"]):
+    for _record, _sample, r in sorted(outputs(location), key=lambda x: x[1]["utc"]):
         if r.get("ok") and r.get("run_id"):
             rows[r["run_id"]] = r
     return list(rows.values())
@@ -158,7 +159,7 @@ def crossing(points, criterion):
         return None, "empty"
     if pts[0][1] >= criterion:
         return float(pts[0][0]), "above"
-    for (n0, a0), (n1, a1) in zip(pts, pts[1:]):
+    for (n0, a0), (n1, a1) in pairwise(pts):
         if a1 >= criterion:
             if a1 == a0:
                 return float(n1), None
@@ -216,12 +217,12 @@ def analyse(config: str, criterion: float | None = None, location: str | None = 
         pts = [(nc, sum(v) / len(v)) for nc, v in by_nc.items()]      # mean over seeds
         n_star, note = crossing(pts, criterion)
         centre = (chi["lower"] + chi["upper"]) / 2
-        out.append(dict(condition=cond, arm=tag, chi_lower=chi["lower"], chi_upper=chi["upper"],
-                        chi_exact=chi["exact"], chi_method=chi["method"], nodes=chi["nodes"],
-                        edges=chi["edges"], n_star=n_star, note=note,
-                        ratio=(n_star / centre if n_star else None),
-                        curve=sorted(pts), seeds=len(next(iter(by_nc.values()))) if by_nc else 0,
-                        attn_reference=_floor_of(floor.get(cond))))
+        out.append({"condition": cond, "arm": tag, "chi_lower": chi["lower"], "chi_upper": chi["upper"],
+                        "chi_exact": chi["exact"], "chi_method": chi["method"], "nodes": chi["nodes"],
+                        "edges": chi["edges"], "n_star": n_star, "note": note,
+                        "ratio": (n_star / centre if n_star else None),
+                        "curve": sorted(pts), "seeds": len(next(iter(by_nc.values()))) if by_nc else 0,
+                        "attn_reference": _floor_of(floor.get(cond))})
 
     # --- attention's OWN capacity axis: d_qk* against log2(chi), whose slope is 1/c ----------------
     attn_rows = []
@@ -234,9 +235,9 @@ def analyse(config: str, criterion: float | None = None, location: str | None = 
         # LINEAR in d_qk, not in log(d_qk): the predicted law is d_qk* = log(chi)/c, so d_qk is
         # already the log-scaled coordinate and interpolating it geometrically would double-log it.
         d_star, note = _crossing_linear(pts, criterion)
-        attn_rows.append(dict(condition=cond, chi_lower=chi["lower"], chi_upper=chi["upper"],
-                              log2_chi=math.log2(max(chi["lower"], 1)), d_qk_star=d_star, note=note,
-                              curve=sorted(pts)))
+        attn_rows.append({"condition": cond, "chi_lower": chi["lower"], "chi_upper": chi["upper"],
+                              "log2_chi": math.log2(max(chi["lower"], 1)), "d_qk_star": d_star, "note": note,
+                              "curve": sorted(pts)})
     return spec, out, {k: _floor_of(v) for k, v in floor.items()}, attn_rows
 
 
@@ -257,7 +258,7 @@ def _crossing_linear(points, criterion):
         return None, "empty"
     if pts[0][1] >= criterion:
         return float(pts[0][0]), "above"
-    for (x0, a0), (x1, a1) in zip(pts, pts[1:]):
+    for (x0, a0), (x1, a1) in pairwise(pts):
         if a1 >= criterion:
             if a1 == a0:
                 return float(x1), None
@@ -276,8 +277,10 @@ def fit_packing_constant(attn_rows):
     if len(distinct) < 3:
         return None, f"only {len(distinct)} distinct demand(s) crossed; a slope needs >= 3"
     n = len(pts)
-    sx = sum(x for x, _ in pts); sy = sum(y for _, y in pts)
-    sxx = sum(x * x for x, _ in pts); sxy = sum(x * y for x, y in pts)
+    sx = sum(x for x, _ in pts)
+    sy = sum(y for _, y in pts)
+    sxx = sum(x * x for x, _ in pts)
+    sxy = sum(x * y for x, y in pts)
     denom = n * sxx - sx * sx
     if abs(denom) < 1e-12:
         return None, "degenerate design matrix"

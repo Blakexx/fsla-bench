@@ -13,7 +13,16 @@ Per-run JSONL fields:
   slice_accs (per-difficulty kv accuracy from slice_keys=["num_kv_pairs"]),
   valid_acc_curve, env, stderr_tail.
 """
-import argparse, sys, os, json, time, pickle, subprocess, re, signal, importlib
+import argparse
+import importlib
+import json
+import os
+import pickle
+import re
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 ZOO = Path(__file__).resolve().parent
@@ -39,7 +48,6 @@ def load_configs(name):
 def load_configs_and_envs():
     """Shard-runner entry point. Uses RLA_CONFIG env var (default: the canonical spec)."""
     return load_configs(os.environ.get('RLA_CONFIG', 'canonical'))
-
 
 
 _JSON_DECODER = json.JSONDecoder()
@@ -194,6 +202,7 @@ def parse_stdout(stdout):
         by = {}
         for r in rank_recs:
             by.setdefault((r.get('epoch', -1), r.get('seqlen', r.get('seq_len', -1))), []).append(r)
+
         def mean(recs, key):
             vals = [x[key] for x in recs if key in x]
             return round(sum(vals) / len(vals), 3) if vals else None
@@ -221,29 +230,29 @@ def parse_stdout(stdout):
         rank_final = {**rank_final, 'nc_dqk': rank_recs[0].get('nc_dqk'),
                       'd_model': rank_recs[0].get('d_model'), 'nc': rank_recs[0].get('nc')}
 
-    return dict(
-        max_acc=max_acc, grok_ep=grok_ep, epochs_run=epochs_run,
-        valid_acc_curve=valid_acc_curve, slice_accs=slice_accs,
+    return {
+        "max_acc": max_acc, "grok_ep": grok_ep, "epochs_run": epochs_run,
+        "valid_acc_curve": valid_acc_curve, "slice_accs": slice_accs,
         # Rigorous + flexible reporting: full per-epoch x per-slice matrix plus
         # the coherent single-checkpoint views derived from it.
-        epoch_curve=epoch_curve,
-        slice_accs_final=slice_accs_final,
-        slice_accs_best=slice_accs_best,
-        final_overall=final_overall,
-        best_overall=best_overall,
-        best_ep_idx=best_ep_idx,
-        model_state_total=model_state_total,
-        n_params=n_params,
-        fwd_flops=fwd_flops,
-        flops_by_op=flops_by_op,
-        flops_batch=flops_batch,
-        flops_seq=flops_seq,
-        flops_cache_hit=flops_cache_hit,
-        flops_error=flops_error,
-        peakiness=peakiness,
-        rank_curve=rank_curve,
-        rank_final=rank_final,
-    )
+        "epoch_curve": epoch_curve,
+        "slice_accs_final": slice_accs_final,
+        "slice_accs_best": slice_accs_best,
+        "final_overall": final_overall,
+        "best_overall": best_overall,
+        "best_ep_idx": best_ep_idx,
+        "model_state_total": model_state_total,
+        "n_params": n_params,
+        "fwd_flops": fwd_flops,
+        "flops_by_op": flops_by_op,
+        "flops_batch": flops_batch,
+        "flops_seq": flops_seq,
+        "flops_cache_hit": flops_cache_hit,
+        "flops_error": flops_error,
+        "peakiness": peakiness,
+        "rank_curve": rank_curve,
+        "rank_final": rank_final,
+    }
 
 
 def run_one(idx, run_id, cfg, env_overrides, results_file=None):
@@ -302,6 +311,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
     # imports + calls this synchronously, so the handler installed here runs
     # in that same process). Without forwarding, the training subprocess never
     # receives SIGTERM and its checkpoint handler never fires.
+
     def _forward_sigterm(signum, frame):
         if proc is not None and proc.poll() is None:
             print(f"\n[run_one] forwarding SIGTERM → subprocess pid={proc.pid}", flush=True)
@@ -380,7 +390,7 @@ def main():
     # if RUN_IDS is set but empty/garbage we abort rather than quietly training the whole grid.
     raw_ids = os.environ.get("RUN_IDS")
     if raw_ids is not None:
-        only_ids = set(x for x in raw_ids.split(",") if x)
+        only_ids = {x for x in raw_ids.split(",") if x}
         if not only_ids:
             print("FATAL: RUN_IDS is set but empty — refusing to run (no fallback).", flush=True)
             sys.exit(2)
@@ -398,7 +408,9 @@ def main():
     # so idx-resume would skip the wrong cells). A cell is done iff its run_id has an ok row.
     completed = set()
     if results_file.exists():
-        for line in open(results_file):
+        with open(results_file) as fh:
+            lines = fh.readlines()
+        for line in lines:
             try:
                 r = json.loads(line)
                 if r.get("ok"):
@@ -409,7 +421,7 @@ def main():
         print(f"Resuming: skipping {len(completed)} done (by run_id)", flush=True)
 
     with open(results_file, "a") as fout:
-        for i, (cfg, env_o) in enumerate(zip(configs, envs)):
+        for i, (cfg, env_o) in enumerate(zip(configs, envs, strict=True)):
             run_id = cfg.run_id
             if only_ids is not None:
                 if run_id not in only_ids:

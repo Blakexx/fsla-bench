@@ -2,7 +2,8 @@
 
 Companion to `test_cue_consistency.py`'s "determinism and the tokenization" section (§4), whose
 `cue_consistency` generator already used a per-call `np.random.default_rng(seed)` stream. Auditing
-`multiquery_ar.py` against that pattern (the 2026-08-02 cue-consistency record, "DELIBERATE DEPARTURES") found it still read TWO global RNGs: `np.random.seed(seed)` followed by
+`multiquery_ar.py` against that pattern (the 2026-08-02 cue-consistency record, "DELIBERATE DEPARTURES") found it
+still read TWO global RNGs: `np.random.seed(seed)` followed by
 `np.random.choice`/`np.apply_along_axis` (global numpy), and an unseeded `torch.randint(...)` for the
 `random_non_queries` filler (global torch, not even keyed off `seed` at all). Both are fixed the same
 way `cue_consistency` was built: every draw now comes from one `np.random.default_rng(seed)` local to
@@ -24,7 +25,7 @@ import numpy as np
 import pytest
 import torch
 
-BASE = dict(vocab_size=200, num_examples=64, input_seq_len=48, num_kv_pairs=4)
+BASE = {"vocab_size": 200, "num_examples": 64, "input_seq_len": 48, "num_kv_pairs": 4}
 
 
 def _gen(**kw):
@@ -70,6 +71,7 @@ def test_no_global_rng_reads_in_source():
     the gate."""
     import ast
     import inspect
+
     from zoology.data import multiquery_ar as mod
 
     tree = ast.parse(inspect.getsource(mod))

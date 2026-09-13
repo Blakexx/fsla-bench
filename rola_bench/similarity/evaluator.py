@@ -41,10 +41,9 @@ forward the architecture no longer has, and the V3 effective matrix (from the ro
 """
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import torch
-
 
 # Default numerical-rank tolerances — identical to rola.py:342 (_effective_attention_rank
 # default `tols=(1e-1, 1e-2, 1e-3, 1e-4)`).
@@ -54,8 +53,8 @@ DEFAULT_TOLS: tuple[float, ...] = (1e-1, 1e-2, 1e-3, 1e-4)
 # ======================================================================================
 # Core metric — mirrors rola.py `_rank_stats` (lines 311-338).
 # ======================================================================================
-def _rank_stats_from_sv(sv: torch.Tensor, l: int, tols: Sequence[float], prefix: str = "") -> dict:
-    """Rank statistics from singular values sv:[N,l] (sorted desc per row), over the
+def _rank_stats_from_sv(sv: torch.Tensor, seq_len: int, tols: Sequence[float], prefix: str = "") -> dict:
+    """Rank statistics from singular values sv:[N,seq_len] (sorted desc per row), over the
     N = b*H per-(sequence,head) slices. VERBATIM port of rola.py `_rank_stats`
     (rola.py:311-338). Every estimator is emitted both as the legacy mean and as the
     full sorted per-slice distribution `*_dist` (the paper's barrier claim is
@@ -122,10 +121,10 @@ def rank_stats(
     if L != L2:
         raise ValueError(f"attention matrix must be square in its last two dims; got {L}x{L2}")
     b = min(max_b, B)
-    l = min(max_l, L)
+    seq_len = min(max_l, L)
 
-    # Per-slice SVD loop (rola.py:373-381). Subsample to [:b, :, :l, :l] up front so the
-    # singular-value tensor is l-wide (matches rola.py q[:b,:l] subsampling at line 366).
+    # Per-slice SVD loop (rola.py:373-381). Subsample to [:b, :, :seq_len, :seq_len] up front so the
+    # singular-value tensor is seq_len-wide (matches rola.py q[:b,:seq_len] subsampling at line 366).
     #
     # SHARPNESS VALIDITY GUARD: the sharpness panel below treats each ROW of W as a selection
     # distribution (clamp<0 -> 0, then renormalize). That is meaningful ONLY for an effectively
@@ -143,7 +142,7 @@ def rank_stats(
     n_signed = 0
     for bi in range(b):
         for hi in range(H):
-            W = attn[bi, hi, :l, :l].float()
+            W = attn[bi, hi, :seq_len, :seq_len].float()
             svs.append(torch.linalg.svdvals(W))               # rola.py:378
             if W.amin() < -SHARP_SIGN_TOL * W.abs().amax().clamp_min(1e-20):  # signed -> sharpness undefined
                 n_signed += 1                                 # (rank above is still measured for it)
@@ -156,25 +155,27 @@ def rank_stats(
             # blends; sharpness = how PEAKED each blend is (orthogonal axes).
             is_causal = W.triu(1).abs().max().item() < 1e-8
             A = W.clamp(min=0)
-            P = A / A.sum(-1, keepdim=True).clamp_min(1e-20)   # [l, l] row-stochastic
+            P = A / A.sum(-1, keepdim=True).clamp_min(1e-20)   # [seq_len, seq_len] row-stochastic
             ent = -(P * P.clamp_min(1e-20).log()).sum(-1)      # nats, per row
             ipr = 1.0 / P.pow(2).sum(-1).clamp_min(1e-20)      # effective #keys blended, per row
-            Kav = (torch.arange(1, l + 1, device=W.device).float() if is_causal
-                   else torch.full((l,), float(l), device=W.device))  # available keys per row
+            Kav = (torch.arange(1, seq_len + 1, device=W.device).float() if is_causal
+                   else torch.full((seq_len,), float(seq_len), device=W.device))  # available keys per row
             m = Kav >= 2                                       # drop trivial rows (<2 available keys)
             if m.any():
                 diff_l.append(ent[m] / Kav[m].log())           # diffuseness in [0,1]: 0=one-hot,1=uniform
                 effrac_l.append(ipr[m] / Kav[m])               # eff-keys as a FRACTION of available
                 t1_l.append(P[m].amax(-1))                     # top-1 selection mass
-    sv = torch.stack(svs)                                     # [b*H, l]   rola.py:381
+    sv = torch.stack(svs)                                     # [b*H, seq_len]   rola.py:381
 
-    out = _rank_stats_from_sv(sv, l, tols)                    # rola.py:382
+    out = _rank_stats_from_sv(sv, seq_len, tols)                    # rola.py:382
 
     # SHARPNESS panel (L-normalized, scale-free -> comparable across models/seq-len/normalization).
     # Complements rank: a full-rank matrix can still be diffuse (diffuseness~1), which rank alone
     # can't see; together they pin down "many sharp distinct selections" = a (partial) permutation.
     if diff_l:
-        D = torch.cat(diff_l); E = torch.cat(effrac_l); T = torch.cat(t1_l)
+        D = torch.cat(diff_l)
+        E = torch.cat(effrac_l)
+        T = torch.cat(t1_l)
         out["sharp_diffuseness_mean"] = round(D.mean().item(), 4)   # 0=one-hot select, 1=uniform blend
         out["sharp_diffuseness_p90"] = round(torch.quantile(D, 0.9).item(), 4)  # most-diffuse decile
         out["sharp_eff_key_frac_mean"] = round(E.mean().item(), 4)  # eff #keys / available keys
@@ -193,17 +194,17 @@ def rank_stats(
         # Spectrum sigma_i/sigma_max at log-spaced indices, quantiles over slices — the
         # "supply thins" plot of the paper's section 4. (rola.py:385-398)
         smax = sv[..., :1].clamp_min(1e-20)                   # rola.py:385
-        idx = sorted({0, 1} | {2 ** i for i in range(1, l.bit_length())} | {l - 1})
-        idx = [i for i in idx if i < l]
+        idx = sorted({0, 1} | {2 ** i for i in range(1, seq_len.bit_length())} | {seq_len - 1})
+        idx = [i for i in idx if i < seq_len]
         rel = (sv / smax)[:, idx]
         qs = torch.quantile(rel, torch.tensor([0.1, 0.5, 0.9], device=rel.device), dim=0)
         out["spec_idx"] = idx
         out["spec_p10"] = [round(v, 5) for v in qs[0].tolist()]
         out["spec_p50"] = [round(v, 5) for v in qs[1].tolist()]
         out["spec_p90"] = [round(v, 5) for v in qs[2].tolist()]
-        out["sv_ratio_128"] = round((sv[..., min(127, l - 1)] / smax.squeeze(-1)).mean().item(), 4)
-        out["sv_ratio_256"] = round((sv[..., min(255, l - 1)] / smax.squeeze(-1)).mean().item(), 4)
-    out["seq_len"] = l                                        # rola.py:399
+        out["sv_ratio_128"] = round((sv[..., min(127, seq_len - 1)] / smax.squeeze(-1)).mean().item(), 4)
+        out["sv_ratio_256"] = round((sv[..., min(255, seq_len - 1)] / smax.squeeze(-1)).mean().item(), 4)
+    out["seq_len"] = seq_len                                        # rola.py:399
     out["n_slices"] = sv.shape[0]                             # rola.py:400
     return out
 
@@ -277,13 +278,13 @@ def make_mqar_eval(
 
 @torch.no_grad()
 def evaluate_rank(
-    checkpoint_path: Optional[str],
+    checkpoint_path: str | None,
     model_builder: Callable[[], torch.nn.Module],
     attention_extractor: Callable[[torch.nn.Module, object], torch.Tensor],
     eval_batch: object,
     *,
     map_location: str = "cpu",
-    state_dict_key: Optional[str] = None,
+    state_dict_key: str | None = None,
     strict: bool = True,
     tols: Sequence[float] = DEFAULT_TOLS,
     max_b: int = 4,
@@ -323,7 +324,7 @@ def evaluate_rank(
     return rank_stats(attn, tols=tols, max_b=max_b, max_l=max_l, emit_spectrum=emit_spectrum)
 
 
-def _load_state_dict(path: str, map_location: str, state_dict_key: Optional[str]) -> dict:
+def _load_state_dict(path: str, map_location: str, state_dict_key: str | None) -> dict:
     """Load a checkpoint and dig out the state_dict. Fails LOUD if it can't find one
     (per the project's no-silent-fallbacks principle)."""
     # weights_only=False permits arbitrary pickled objects — TRUSTED LOCAL checkpoints only
@@ -460,7 +461,9 @@ def build_gla_extractor(layer_index: int = 0, causal: bool = True, eps: float = 
         x = _to_hidden_states(model, layer, eval_batch)
         Bx, Lx, _ = x.shape
         d = layer.head_k_dim
-        q = layer.q_proj(x); k = layer.k_proj(x); gk = layer.gk_proj(x)
+        q = layer.q_proj(x)
+        k = layer.k_proj(x)
+        gk = layer.gk_proj(x)
         if layer.feature_map_fn is not None:                  # elementwise → order vs rearrange is moot
             q, k = layer.feature_map_fn(q), layer.feature_map_fn(k)
         q = rearrange(q, "b s (h d) -> b s h d", d=d)
@@ -525,7 +528,7 @@ def build_gdn_extractor(layer_index: int = 0, causal: bool = True) -> Callable:
     from einops import rearrange, repeat
 
     def extractor(model: torch.nn.Module, eval_batch) -> torch.Tensor:
-        from fla.ops.gated_delta_rule import chunk_gated_delta_rule   # match fla.layers.GatedDeltaNet
+        from fla.ops.gated_delta_rule import chunk_gated_delta_rule  # match fla.layers.GatedDeltaNet
         layer = _find_layer(model, layer_index, _is_gdn, "fla GatedDeltaNet layer")
         if getattr(layer, "use_short_conv", False):
             raise NotImplementedError("GDN extractor: use_short_conv=True not supported (baselines use it off)")

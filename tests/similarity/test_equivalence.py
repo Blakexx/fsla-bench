@@ -69,9 +69,9 @@ def test_gdn_equiv_gpu():
     """GDN probe: M (= kernel output at v=identity) must satisfy M@v_rand == kernel(v_rand) for the
     SAME q/k/beta/g — proving the recovered M is the delta-rule operator (output linear in v)."""
     import torch.nn.functional as F
+    from einops import rearrange
     from fla_rola.layers import GatedDeltaNet
     from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
-    from einops import rearrange
     torch.manual_seed(0)
     dev = "cuda"
     gdn = GatedDeltaNet(hidden_size=DM, num_heads=H, head_dim=DM // H, use_short_conv=False).to(dev).eval()
@@ -97,9 +97,9 @@ def test_gdn_equiv_gpu():
 def test_gla_equiv_gpu():
     """GLA content gram (undecayed; decay is rank-preserving, omitted): M@v must equal
     chunk_linear_attn(q,k,v) — GLA with φ=identity and no gate IS unnormalized linear attn."""
-    from zoology.mixers.gla import GatedLinearAttention
-    from fla_rola.ops.linear_attn import chunk_linear_attn
     from einops import rearrange
+    from fla_rola.ops.linear_attn import chunk_linear_attn
+    from zoology.mixers.gla import GatedLinearAttention
     torch.manual_seed(0)
     dev = "cuda"
     gla = GatedLinearAttention(d_model=DM, expand_k=1.0, expand_v=1.0, num_heads=H,

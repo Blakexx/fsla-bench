@@ -53,14 +53,13 @@ Spec schema (see experiments/*.yaml):
 import os
 from itertools import product
 
-from zoology.config import TrainConfig, ModelConfig, ModuleConfig, LoggerConfig
+from zoology.config import LoggerConfig, ModelConfig, ModuleConfig, TrainConfig
 
+from rola_bench.models import rola as cells
+from rola_bench.mqar import MQAR_GEOM, realized_state
 from rola_bench.mqar import common as C
 from rola_bench.mqar.experiments import canonical_baselines as _cb
-from rola_bench.mqar import realized_state
 from rola_bench.mqar.experiments.canonical_baselines import baseline_cell
-from rola_bench.models import rola as cells
-from rola_bench.mqar import MQAR_GEOM
 
 _ROUTED_RUNID = "grid-routed-{tag}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
 _BASELINE_RUNID = "grid-{method}-{shape}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
@@ -287,7 +286,7 @@ def build_configs(spec):
                     except cells.NoSpelling as e:
                         # Structural, not a failure: a D=2 wiring has no spelling at N=2. Reported
                         # exactly like a baseline's kernel ceiling — an omitted cell with a reason.
-                        if seed == seeds[0] and L == a_lens[0] and ctag == a_conds[0][0]:
+                        if seed == seeds[0] and a_lens[0] == L and ctag == a_conds[0][0]:
                             dropped.append(f"{arm['tag']}/nc{nc}: {e}")
                         continue
                     kernel = cells.mixer_config(cell, n_heads=n_heads, d_v=d_v)
@@ -314,7 +313,7 @@ def build_configs(spec):
                                 # NOT a run failure: an undefined shape or a STRUCTURAL EXIT (the
                                 # method's own kernel/memory bound). Logged once, and it is a
                                 # reportable cost column for that method, never missing data.
-                                if seed == seeds[0] and L == a_lens[0] and ctag == a_conds[0][0]:
+                                if seed == seeds[0] and a_lens[0] == L and ctag == a_conds[0][0]:
                                     dropped.append(f"{method}/{shape}/nc{nc}")
                                 continue
                             kernel, _nominal = cell
@@ -349,8 +348,8 @@ def build_configs(spec):
                         f"attention head width d_qk={d_qk} does not divide d_model="
                         f"{bb['d_model']}; zoology's MHA derives head_dim = d_model // num_heads, "
                         "so the ladder must be built from divisors.")
-                cells.append((dict(name="zoology.mixers.attention.MHA",
-                                   kwargs=dict(num_heads=bb["d_model"] // d_qk, dropout=0.1)), d_qk))
+                cells.append(({"name": "zoology.mixers.attention.MHA",
+                                   "kwargs": {"num_heads": bb["d_model"] // d_qk, "dropout": 0.1}}, d_qk))
         for seed, (ctag, cknobs) in product(seeds, _arm_conds(arm)):
             for L in a_lens:
                 for kernel, d_qk in cells:

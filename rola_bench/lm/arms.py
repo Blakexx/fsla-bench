@@ -23,7 +23,6 @@ from transformers import AutoModelForCausalLM
 
 from rola_bench.models import rola as cells
 
-
 ROLA_WIDTHS = (8, 16)
 
 
@@ -33,18 +32,18 @@ def geometry(env=os.environ) -> dict:
         return kind(env.get(name, default))
 
     hidden = get("LM_HIDDEN", 512)
-    return dict(
-        backbone=dict(hidden_size=hidden, num_hidden_layers=get("LM_LAYERS", 12), hidden_ratio=4, norm_eps=1e-6,
-                      max_position_embeddings=get("LM_MAX_POS", 2048), tie_word_embeddings=False,
-                      fuse_cross_entropy=True),
-        rola=dict(num_heads=get("LM_ROLA_NH", 8), head_v_dim=get("LM_ROLA_DV", 128)),
-        gdn=dict(num_heads=get("LM_GDN_NH", 8), head_dim=get("LM_GDN_HEAD_DIM", 128),
-                 expand_v=get("LM_GDN_EXPAND_V", 1.0, float)),
-        gla=dict(num_heads=get("LM_GLA_NH", 8), expand_k=get("LM_GLA_EK", 2.0, float),
-                 expand_v=get("LM_GLA_EV", 2.0, float), gate_logit_normalizer=16),
-        attn_heads=get("LM_ATTN_HEADS", 8),
-        qk_norm=str(env.get("LM_QK_NORM", "0")).lower() in ("1", "true", "yes"),
-    )
+    return {
+        "backbone": {"hidden_size": hidden, "num_hidden_layers": get("LM_LAYERS", 12), "hidden_ratio": 4, "norm_eps": 1e-6,
+                      "max_position_embeddings": get("LM_MAX_POS", 2048), "tie_word_embeddings": False,
+                      "fuse_cross_entropy": True},
+        "rola": {"num_heads": get("LM_ROLA_NH", 8), "head_v_dim": get("LM_ROLA_DV", 128)},
+        "gdn": {"num_heads": get("LM_GDN_NH", 8), "head_dim": get("LM_GDN_HEAD_DIM", 128),
+                 "expand_v": get("LM_GDN_EXPAND_V", 1.0, float)},
+        "gla": {"num_heads": get("LM_GLA_NH", 8), "expand_k": get("LM_GLA_EK", 2.0, float),
+                 "expand_v": get("LM_GLA_EV", 2.0, float), "gate_logit_normalizer": 16},
+        "attn_heads": get("LM_ATTN_HEADS", 8),
+        "qk_norm": str(env.get("LM_QK_NORM", "0")).lower() in ("1", "true", "yes"),
+    }
 
 
 GEOMETRY = geometry()

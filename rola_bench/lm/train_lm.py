@@ -8,16 +8,26 @@ checkpoint runs in lm-evaluation-harness as-is.
 For SCALED multi-GPU FineWeb pretraining use flame (torchtitan) instead; this is the cheap
 single-GPU path (WikiText-103 first).
 """
-import argparse, math, os, json, tarfile, tempfile
+import argparse
+import json
+import math
+import os
+import tarfile
+import tempfile
 from itertools import chain
-import torch
-from transformers.trainer_utils import get_last_checkpoint
-from transformers import TrainerCallback
-import arms  # iso-backbone registry (RoLA/GDN/GLA/attention); importing it registers fla_rola's HF models
-from datasets import load_dataset
-from transformers import (AutoTokenizer, Trainer, TrainingArguments,
-                          DataCollatorForLanguageModeling, default_data_collator)
 
+import arms  # iso-backbone registry (RoLA/GDN/GLA/attention); importing it registers fla_rola's HF models
+import torch
+from datasets import load_dataset
+from transformers import (
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+    default_data_collator,
+)
+from transformers.trainer_utils import get_last_checkpoint
 
 FINEWEB = "HuggingFaceFW/fineweb-edu"  # natural text -> matches lm-eval's detokenized format
 
@@ -25,7 +35,7 @@ FINEWEB = "HuggingFaceFW/fineweb-edu"  # natural text -> matches lm-eval's detok
 def _group(ex, block_size):
     # Canonical run_clm group_texts: concatenate + chunk EVERY key consistently (drops the
     # per-batch remainder — negligible at LM scale).
-    cat = {k: list(chain(*ex[k])) for k in ex.keys()}
+    cat = {k: list(chain(*ex[k])) for k in ex}
     n = (len(cat["input_ids"]) // block_size) * block_size
     res = {k: [t[i:i + block_size] for i in range(0, n, block_size)] for k, t in cat.items()}
     res["labels"] = [x[:] for x in res["input_ids"]]
@@ -81,7 +91,8 @@ def _tar_dir_atomic(src_dir, dest_pt):
     """tar `src_dir` -> `dest_pt` via temp + atomic rename (dest is the box's served <run_id>.pt)."""
     d = os.path.dirname(dest_pt) or "."
     os.makedirs(d, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tar.tmp"); os.close(fd)
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tar.tmp")
+    os.close(fd)
     with tarfile.open(tmp, "w") as t:
         t.add(src_dir, arcname=os.path.basename(src_dir))
     os.replace(tmp, dest_pt)                              # atomic on same fs
@@ -92,6 +103,7 @@ class CkptTarCallback(TrainerCallback):
     box serves only a COMPLETE checkpoint (the callback fires after the save finishes)."""
     def __init__(self, out_dir, dest_pt):
         self.out_dir, self.dest_pt = out_dir, dest_pt
+
     def on_save(self, args, state, control, **kw):
         ck = get_last_checkpoint(self.out_dir)
         if ck:
@@ -108,7 +120,8 @@ def _ckpt_config_matches(ck, cfg):
     geometry nor dataset, so a checkpoint from a DIFFERENT regime (e.g. d_model=512 vs 256) can land
     at the same id; resuming from it would train garbage (or crash on shape mismatch). Refuse it."""
     try:
-        cj = json.load(open(os.path.join(ck, "config.json")))
+        with open(os.path.join(ck, "config.json")) as fh:
+            cj = json.load(fh)
     except Exception:
         return False
     for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "levels", "head_v_dim", "decay",
@@ -173,7 +186,8 @@ def main():
     p.add_argument("--weight_decay", type=float, default=0.1)
     p.add_argument("--eval_steps", type=int, default=1000)
     p.add_argument("--save_steps", type=int, default=1000, help="periodic checkpoint cadence (preemption-resume)")
-    p.add_argument("--grad_ckpt", type=int, default=0, help="gradient checkpointing (1=on, frees activation mem for bigger batch)")
+    p.add_argument("--grad_ckpt", type=int, default=0,
+                   help="gradient checkpointing (1=on, frees activation mem for bigger batch)")
     p.add_argument("--out_dir", default=None)
     p.add_argument("--num_proc", type=int, default=8)
     p.add_argument("--max_train_samples", type=int, default=None,
@@ -188,11 +202,15 @@ def main():
     is_char = (a.dataset == "text8")
     if is_char:
         import text8_data
-        tok = None; vocab_sz = text8_data.vocab_size(); eos_id = 0
+        tok = None
+        vocab_sz = text8_data.vocab_size()
+        eos_id = 0
         ds = text8_data.text8_dataset(a.block_size, max_train_blocks=a.max_train_samples)
     else:
-        tok = AutoTokenizer.from_pretrained("gpt2"); tok.pad_token = tok.eos_token
-        vocab_sz = len(tok); eos_id = tok.eos_token_id
+        tok = AutoTokenizer.from_pretrained("gpt2")
+        tok.pad_token = tok.eos_token
+        vocab_sz = len(tok)
+        eos_id = tok.eos_token_id
         ds = build_dataset(a.dataset, a.dataset_config, a.block_size, tok, a.num_proc, a.max_train_samples)
     model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
     #: THE REALIZED STATE: the registry's number for the arm's geometry and the built model's own must agree, or the
@@ -263,14 +281,15 @@ def main():
     tok_per_s = round(tr.metrics.get("train_samples_per_second", 0.0) * a.block_size, 1)
     peak_mib = round(torch.cuda.max_memory_allocated() / 2**20) if torch.cuda.is_available() else None
     print(f"DONE {run_id} eval_loss={metrics['eval_loss']:.4f} ppl={ppl:.2f} "
-          f"{'bpc=%.4f ' % bpc if bpc is not None else ''}"
+          f"{f'bpc={bpc:.4f} ' if bpc is not None else ''}"
           f"tok/s={tok_per_s} peak_mib={peak_mib}", flush=True)
     # Final EVAL artifact: a clean save_pretrained dir (model+config+tokenizer, no optimizer/checkpoints)
     # → tar to the box-served <run_id>.pt, overwriting the last resume tar. from_pretrained-able for the
     # post-hoc recall eval. .bin (safe_serialization=False) allows sym's shared routers.
     final_dir = os.path.join(out, "final")
     model.save_pretrained(final_dir, safe_serialization=False)
-    if tok is not None: tok.save_pretrained(final_dir)   # char path has no HF tokenizer to save
+    if tok is not None:   # char path has no HF tokenizer to save
+        tok.save_pretrained(final_dir)
     if a.ckpt_dir:
         try:
             _tar_dir_atomic(final_dir, ckpt_pt)
@@ -279,17 +298,18 @@ def main():
             print(f"[ckpt-sync] WARN final tar failed: {e!r}", flush=True)
 
     if a.results:   # fleet result row — recall-downstream eval is a separate post-hoc pass over the ckpt
-        row = dict(run_id=run_id, ok=True, arm=a.arm, seed=a.seed,
-                   params_m=round(n_params / 1e6, 2), state_floats=state_floats,
-                   state_overhead_floats=state_overhead_floats, decay_parameter_floats=decay_parameter_floats,
-                   hidden_size=getattr(model.config, "hidden_size", None),
-                   num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
-                   tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,
-                   eval_loss=round(metrics["eval_loss"], 4), ppl=round(ppl, 3), bpc=bpc,
-                   dataset=a.dataset, block_size=a.block_size,
-                   train_tok_per_s=tok_per_s, peak_mib=peak_mib, ckpt=ckpt_pt)
+        row = {"run_id": run_id, "ok": True, "arm": a.arm, "seed": a.seed,
+                   "params_m": round(n_params / 1e6, 2), "state_floats": state_floats,
+                   "state_overhead_floats": state_overhead_floats, "decay_parameter_floats": decay_parameter_floats,
+                   "hidden_size": getattr(model.config, "hidden_size", None),
+                   "num_hidden_layers": getattr(model.config, "num_hidden_layers", None),
+                   "tokens": a.max_steps * a.batch_size * a.grad_accum * a.block_size,
+                   "eval_loss": round(metrics["eval_loss"], 4), "ppl": round(ppl, 3), "bpc": bpc,
+                   "dataset": a.dataset, "block_size": a.block_size,
+                   "train_tok_per_s": tok_per_s, "peak_mib": peak_mib, "ckpt": ckpt_pt}
         with open(a.results, "a") as fh:
-            fh.write(json.dumps(row) + "\n"); fh.flush()
+            fh.write(json.dumps(row) + "\n")
+            fh.flush()
         print("RESULT_ROW " + json.dumps(row), flush=True)
 
 

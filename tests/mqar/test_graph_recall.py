@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 import torch
 
-BASE = dict(vocab_size=1024, num_examples=2000, input_seq_len=128)
+BASE = {"vocab_size": 1024, "num_examples": 2000, "input_seq_len": 128}
 
 
 def _episodes(**kw):
@@ -117,7 +117,7 @@ def test_the_stamp_measures_the_realized_union_and_not_the_target():
     with 8 episodes and with 4000 realize different edge counts, and both segments carry their own
     number. This is the failure mode the stamp exists for — a cell reading its demand off the knob
     would report the target graph it never actually presented."""
-    kw = dict(construction="clustered", demand=8, keys_per_class=8)
+    kw = {"construction": "clustered", "demand": 8, "keys_per_class": 8}
     small = _stamp(num_examples=8, **kw)
     full = _stamp(num_examples=4000, **kw)
     assert small["graph_edges"] < full["graph_edges"] == 8 * 7 // 2 * 64
@@ -125,7 +125,7 @@ def test_the_stamp_measures_the_realized_union_and_not_the_target():
 
 
 def test_reuse_demand_grows_with_the_sample_and_is_stamped_per_segment():
-    kw = dict(construction="reuse", demand=8, pool_size=128, zipf_a=1.5)
+    kw = {"construction": "reuse", "demand": 8, "pool_size": 128, "zipf_a": 1.5}
     assert _stamp(num_examples=50, **kw)["graph_demand_upper"] < \
            _stamp(num_examples=4000, **kw)["graph_demand_upper"]
 
@@ -142,11 +142,11 @@ def test_every_stamp_field_reaches_the_segment_slices():
 
 # =============================================================== 3. the retrieval contract
 @pytest.mark.parametrize("kw", [
-    dict(construction="complete", demand=8),
-    dict(construction="clustered", demand=8, keys_per_class=4),
-    dict(construction="overlap", demand=8, births=16, keys_per_class=2),
-    dict(construction="overlap", demand=8, births=16, keys_per_class=2, long_lived=2),
-    dict(construction="reuse", demand=8, pool_size=64, zipf_a=1.5),
+    {"construction": "complete", "demand": 8},
+    {"construction": "clustered", "demand": 8, "keys_per_class": 4},
+    {"construction": "overlap", "demand": 8, "births": 16, "keys_per_class": 2},
+    {"construction": "overlap", "demand": 8, "births": 16, "keys_per_class": 2, "long_lived": 2},
+    {"construction": "reuse", "demand": 8, "pool_size": 64, "zipf_a": 1.5},
 ])
 def test_every_written_key_is_queried_exactly_once_and_after_its_write(kw):
     """Recall on a pair that never conflicted tests nothing. Querying EVERY written key is what puts
@@ -164,8 +164,8 @@ def test_every_written_key_is_queried_exactly_once_and_after_its_write(kw):
 
 
 @pytest.mark.parametrize("kw", [
-    dict(construction="complete", demand=8),
-    dict(construction="overlap", demand=8, births=16, keys_per_class=2, long_lived=2),
+    {"construction": "complete", "demand": 8},
+    {"construction": "overlap", "demand": 8, "births": 16, "keys_per_class": 2, "long_lived": 2},
 ])
 def test_labels_sit_on_query_keys_and_nowhere_else(kw):
     from zoology.data.graph_recall import build_episodes, graph_recall
@@ -207,11 +207,11 @@ def test_the_mixed_lifetime_cell_writes_early_and_queries_at_the_end():
 
 
 @pytest.mark.parametrize("kw,reason", [
-    (dict(construction="overlap", demand=8, births=4), "births"),
-    (dict(construction="overlap", demand=8, long_lived=8), "long_lived"),
-    (dict(construction="complete", demand=64, input_seq_len=64), "event slots"),
-    (dict(construction="reuse", demand=8, pool_size=4), "pool_size"),
-    (dict(construction="nonesuch", demand=8), "construction"),
+    ({"construction": "overlap", "demand": 8, "births": 4}, "births"),
+    ({"construction": "overlap", "demand": 8, "long_lived": 8}, "long_lived"),
+    ({"construction": "complete", "demand": 64, "input_seq_len": 64}, "event slots"),
+    ({"construction": "reuse", "demand": 8, "pool_size": 4}, "pool_size"),
+    ({"construction": "nonesuch", "demand": 8}, "construction"),
 ])
 def test_unbuildable_cells_refuse_by_name(kw, reason):
     """Structural impossibilities raise HERE, by name, rather than asserting deep in the schedule —
@@ -246,6 +246,7 @@ def test_no_global_rng_reads_in_source():
     graph rather than grepping text, so a docstring naming the old bug cannot false-fail it."""
     import ast
     import inspect
+
     from zoology.data import graph_recall as mod
 
     banned = {("np", "random", "seed"), ("np", "random", "choice"), ("np", "random", "randint"),
@@ -352,7 +353,7 @@ def test_the_contract_reduces_on_both_sides():
     for split in ("train", "eval"):
         ep = _episodes(num_examples=100, construction="complete", demand=16, contract_fraction=0.25,
                        split=split)
-        covered = set(int(x) for x in ep.key_pool[:4])
+        covered = {int(x) for x in ep.key_pool[:4]}
         assert set(np.unique(ep.query_key)) == covered
 
 
@@ -362,11 +363,11 @@ def test_temporal_separation_is_asserted_on_every_construction():
     emitted arrays: every read trails the write it answers by at least `min_separation` event slots,
     and at most one item per episode (the last-written, which nothing can follow) is read with no
     other item's write in between."""
-    for kw in (dict(construction="complete", demand=8),
-               dict(construction="clustered", demand=8, keys_per_class=4),
-               dict(construction="overlap", demand=8, births=16, keys_per_class=2),
-               dict(construction="overlap", demand=8, births=16, long_lived=2),
-               dict(construction="reuse", demand=8, pool_size=64, zipf_a=1.5)):
+    for kw in ({"construction": "complete", "demand": 8},
+               {"construction": "clustered", "demand": 8, "keys_per_class": 4},
+               {"construction": "overlap", "demand": 8, "births": 16, "keys_per_class": 2},
+               {"construction": "overlap", "demand": 8, "births": 16, "long_lived": 2},
+               {"construction": "reuse", "demand": 8, "pool_size": 64, "zipf_a": 1.5}):
         for sep in (2, 4):
             ep = _episodes(num_examples=200, min_separation=sep, **kw)
             lut = np.full((len(ep.write_key), int(ep.write_key.max()) + 2), -1, dtype=np.int64)
@@ -394,9 +395,10 @@ def test_the_cue_permutation_is_frozen_per_cell_and_shared_by_train_and_eval():
     a = _episodes(num_examples=64, seed=1, construction="complete", demand=8, cue_permutation=True)
     b = _episodes(num_examples=64, seed=99, construction="complete", demand=8, cue_permutation=True,
                   split="eval")
+
     def cue_to_target(ep):
-        return {int(c): int(t) for row_c, row_t in zip(ep.query_key, ep.query_target_key)
-                for c, t in zip(row_c, row_t)}
+        return {int(c): int(t) for row_c, row_t in zip(ep.query_key, ep.query_target_key, strict=True)
+                for c, t in zip(row_c, row_t, strict=True)}
     assert cue_to_target(a) == cue_to_target(b)
     assert any(c != t for c, t in cue_to_target(a).items()), "pi is the identity"
     # a different frozen seed is a different map
@@ -437,12 +439,12 @@ def test_the_cue_permutation_is_refused_where_it_is_not_well_defined():
 
 # =============================================================== 5. the chi solver
 @pytest.mark.parametrize("kw,chi,method", [
-    (dict(construction="complete", demand=6), 6, "disjoint_cliques"),
-    (dict(construction="clustered", demand=6, keys_per_class=1), 6, "disjoint_cliques"),
-    (dict(construction="clustered", demand=6, keys_per_class=4), 6, "complete_multipartite"),
-    (dict(construction="overlap", demand=6, births=12, keys_per_class=1), 6, "chordal"),
-    (dict(construction="overlap", demand=6, births=12, keys_per_class=3), 6, "chordal_quotient"),
-    (dict(construction="overlap", demand=8, births=20, keys_per_class=2, long_lived=3), 8,
+    ({"construction": "complete", "demand": 6}, 6, "disjoint_cliques"),
+    ({"construction": "clustered", "demand": 6, "keys_per_class": 1}, 6, "disjoint_cliques"),
+    ({"construction": "clustered", "demand": 6, "keys_per_class": 4}, 6, "complete_multipartite"),
+    ({"construction": "overlap", "demand": 6, "births": 12, "keys_per_class": 1}, 6, "chordal"),
+    ({"construction": "overlap", "demand": 6, "births": 12, "keys_per_class": 3}, 6, "chordal_quotient"),
+    ({"construction": "overlap", "demand": 8, "births": 20, "keys_per_class": 2, "long_lived": 3}, 8,
      "chordal_quotient"),
 ])
 def test_solver_agrees_with_the_closed_form_and_says_which_argument_it_used(kw, chi, method):
@@ -461,6 +463,7 @@ def test_solver_is_exact_on_graphs_whose_chi_is_known_by_hand():
     """Independent of the generator entirely: the ladder's general rungs, on classical graphs.
     C5 needs 3 (odd hole), the Petersen graph needs 3, K_{3,3} needs 2."""
     from zoology.data.graph_chi import solve_chi
+
     def g(n, edges):
         a = np.zeros((n, n), dtype=bool)
         for u, v in edges:
@@ -488,7 +491,7 @@ def test_both_certificates_are_verified_not_trusted():
     assert _check_coloring(adj, np.array(res["coloring"])) == res["upper"]
     with pytest.raises(AssertionError, match="not a clique"):
         _check_clique(adj, [0, 1, 2])                      # 0 and 1 share a cluster: non-adjacent
-    bad = np.array(res["coloring"]); bad[:] = 0
+    bad = np.zeros_like(np.array(res["coloring"]))
     with pytest.raises(AssertionError, match="not proper"):
         _check_coloring(adj, bad)
 
@@ -502,11 +505,11 @@ def test_the_coverage_gate_catches_a_realized_demand_below_the_nominal_one():
     from zoology.data.graph_recall import demand_bounds
     ep = _episodes(num_examples=200, construction="overlap", demand=8, births=16)
     full = demand_bounds(ep.groups)
-    verify_construction("overlap", dict(demand=8), full)              # the real sample passes
+    verify_construction("overlap", {"demand": 8}, full)              # the real sample passes
     starved = demand_bounds(ep.groups[:2, :1, :3])                    # a partial window only
     assert starved["upper"] < 8
     with pytest.raises(DemandMismatch, match="coverage shortfall"):
-        verify_construction("overlap", dict(demand=8), starved)
+        verify_construction("overlap", {"demand": 8}, starved)
 
 
 def test_the_closed_form_demand_is_invariant_to_the_sample_size():
@@ -515,7 +518,7 @@ def test_the_closed_form_demand_is_invariant_to_the_sample_size():
     realized chi is the nominal one at any number of episodes and under-sampling shows up in the node
     and edge counts instead. An unstructured pool — `multiquery_ar`'s free draw from vocab/2 — would
     not have this property, which is exactly why this generator does not use one."""
-    kw = dict(construction="clustered", demand=6, keys_per_class=8)
+    kw = {"construction": "clustered", "demand": 6, "keys_per_class": 8}
     assert _stamp(num_examples=2, **kw)["graph_demand_upper"] == 6
     assert _stamp(num_examples=2000, **kw)["graph_demand_upper"] == 6
     assert _stamp(num_examples=2, **kw)["graph_edges"] < _stamp(num_examples=2000, **kw)["graph_edges"]
@@ -548,8 +551,10 @@ def test_predicted_N_is_stamped_for_every_construction():
 # =============================================================== 6. the grid around the generator
 def _spec():
     import os
+
     from rola_bench.mqar.build_configs import load_spec
-    here = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    here = os.path.join(repo, "rola_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "graph_grid.yaml"))
 
 
@@ -562,6 +567,7 @@ def test_every_tier_is_the_size_its_header_states(tier, cells):
     """The header's arithmetic is a schedule commitment (each tier is one overnight unit on the local
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""
     import os
+
     from rola_bench.mqar.build_configs import build_configs
     old = os.environ.get("GRID_TIERS")
     os.environ["GRID_TIERS"] = tier
@@ -616,8 +622,9 @@ def test_every_run_id_parses_for_the_analysis():
     """The analysis keys its rows off the run_id, so a template change that the parser does not know
     about would silently produce an empty headline table rather than an error."""
     import os
-    from rola_bench.mqar.build_configs import build_configs
+
     from rola_bench.mqar.analysis.graph import parse_run_id
+    from rola_bench.mqar.build_configs import build_configs
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     conds = {c["tag"] for c in _spec()["conditions"]}

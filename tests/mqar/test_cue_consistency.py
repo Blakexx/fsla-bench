@@ -23,17 +23,19 @@ CPU only. A visible GPU is needed only because pytest collection imports Triton.
 from __future__ import annotations
 
 import os
+from itertools import pairwise
 
 import numpy as np
 import pytest
 
-_EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_EXP_DIR = os.path.join(_REPO, "rola_bench", "mqar", "experiments")
 
 # A small, statistically clean instance: P = 4 keeps the plug-in entropy estimator's bias far below
 # the tolerance (16 address states over 80k samples), and kv = 4 keeps G <= P as the generator
 # requires. The knob semantics are P-independent; the arithmetic is not, which is why P is small here
 # and 64 in the grid.
-BASE = dict(vocab_size=200, input_seq_len=48, num_kv_pairs=4, key_digits=2, digit_vocab=4)
+BASE = {"vocab_size": 200, "input_seq_len": 48, "num_kv_pairs": 4, "key_digits": 2, "digit_vocab": 4}
 
 
 def _episodes(n=20_000, seed=0, **kw):
@@ -84,7 +86,7 @@ def test_knob_a_is_monotone_and_spans_full_agreement_to_none():
            for q in range(D + 1)]
     assert mis[0] == pytest.approx(0.0, abs=0.03)   # no cue at all
     assert mis[-1] == pytest.approx(1.0, abs=0.03)  # full agreement: the cue IS the address
-    assert all(a < b - 0.1 for a, b in zip(mis, mis[1:]))
+    assert all(a < b - 0.1 for a, b in pairwise(mis))
 
 
 # ============================================ 2. knob (b): consistency, and its ORTHOGONALITY to (a)
@@ -132,7 +134,7 @@ def test_only_the_shuffled_rung_permutes_the_write_side_slot_order(consistency, 
 def test_the_query_side_is_always_canonical_order():
     """The shuffle is write-side ONLY. If the query were permuted too, agreement would be restored
     per episode and the condition would measure nothing."""
-    from zoology.data.cue_consistency import cue_consistency, WILDCARD_TOKEN
+    from zoology.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
     ep = _episodes(n=200, cue_digits=1, slot_consistency="episode_shuffled")
     seg = cue_consistency(num_examples=200, seed=0, cue_digits=1,
                           slot_consistency="episode_shuffled", random_non_queries=False, **BASE)
@@ -182,7 +184,7 @@ def test_consensus_contract_makes_the_marginalization_harmless():
 def test_consensus_and_recency_have_identical_marginalization_width():
     """The pair is only a clean separation if the ONLY thing that differs is the values. Same q, same
     m, same measured cue<->address information."""
-    kw = dict(cue_digits=1, matches_per_cue=4)
+    kw = {"cue_digits": 1, "matches_per_cue": 4}
     a = _cue_address_information(_episodes(match_resolution="recency", **kw))
     b = _cue_address_information(_episodes(match_resolution="consensus", **kw))
     assert a[0] == pytest.approx(b[0], abs=0.03) and a[1] == pytest.approx(b[1], abs=0.05)
@@ -233,7 +235,7 @@ def test_tokens_decode_back_to_the_episode(q, m):
 
 @pytest.mark.parametrize("q", [2, 1, 0])
 def test_wildcard_marks_exactly_the_open_digits_and_occurs_nowhere_else(q):
-    from zoology.data.cue_consistency import cue_consistency, WILDCARD_TOKEN
+    from zoology.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
     D, kv = BASE["key_digits"], BASE["num_kv_pairs"]
     m = 1 if q else kv
     seg = cue_consistency(num_examples=300, seed=3, cue_digits=q, matches_per_cue=m,
@@ -267,15 +269,15 @@ def test_slices_report_the_condition():
 
 # ================================================================ 5. the structural refusals
 @pytest.mark.parametrize("kw,msg", [
-    (dict(matches_per_cue=3), "divide"),
-    (dict(cue_digits=2, matches_per_cue=2), "agreement MEANS"),
-    (dict(cue_digits=0, matches_per_cue=2), "EVERY stored item matches"),
-    (dict(cue_digits=3), "cue_digits"),
-    (dict(input_seq_len=18), "does not fit the episode"),
-    (dict(digit_vocab=2), "cue tuples are made distinct"),
-    (dict(digit_vocab=4000), "key half of the vocabulary"),
-    (dict(slot_consistency="sometimes"), "slot_consistency"),
-    (dict(match_resolution="oldest"), "match_resolution"),
+    ({"matches_per_cue": 3}, "divide"),
+    ({"cue_digits": 2, "matches_per_cue": 2}, "agreement MEANS"),
+    ({"cue_digits": 0, "matches_per_cue": 2}, "EVERY stored item matches"),
+    ({"cue_digits": 3}, "cue_digits"),
+    ({"input_seq_len": 18}, "does not fit the episode"),
+    ({"digit_vocab": 2}, "cue tuples are made distinct"),
+    ({"digit_vocab": 4000}, "key half of the vocabulary"),
+    ({"slot_consistency": "sometimes"}, "slot_consistency"),
+    ({"match_resolution": "oldest"}, "match_resolution"),
 ])
 def test_unrealizable_settings_refuse_by_name(kw, msg):
     from zoology.data.cue_consistency import build_episodes
@@ -382,7 +384,7 @@ def test_predictions_are_stated_in_the_header_and_marked():
 # =========================================================== 7. the axis must not leak into old specs
 @pytest.mark.parametrize("name", ["law_grid", "ood_recall", "canonical", "router_bias"])
 def test_specs_without_conditions_are_untouched_by_the_new_axis(name):
-    from rola_bench.mqar.build_configs import load_spec, _conditions
+    from rola_bench.mqar.build_configs import _conditions, load_spec
     spec = load_spec(os.path.join(_EXP_DIR, f"{name}.yaml"))
     assert _conditions(spec) == [(None, {})]
     assert "cond" not in str(spec)

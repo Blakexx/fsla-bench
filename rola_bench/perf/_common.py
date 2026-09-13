@@ -136,7 +136,7 @@ def write_csv(path, rows):
     fieldnames = []
     seen = set()
     for row in rows:
-        for key in row.keys():
+        for key in row:
             if key not in seen:
                 seen.add(key)
                 fieldnames.append(key)
