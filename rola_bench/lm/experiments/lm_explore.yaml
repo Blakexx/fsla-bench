@@ -2,7 +2,7 @@
 # multi-seed the winners). tinystories (fastest corpus). Covers: RoLA + attn references (in-run, same
 # conditions), GDN/GLA at the same half-KV recurrent-state target, and the RoLA head/d_v structure
 # sweep. For block_size=512 and hidden=256, bounded-state target = 131072 floats/layer.
-# launch.py lm lm_explore
+# rola_bench/fleet/__main__.py lm lm_explore
 arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv,
         rola-gla-kappa-asym, rola-gla-kappa-asym-conv, attn,
         gdn, gla,

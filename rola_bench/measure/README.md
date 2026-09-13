@@ -1,15 +1,15 @@
-# `rola_bench.suite` — rola checkouts measured by their own instruments, every result kept
+# `rola_bench.measure` — rola checkouts measured by their own instruments, every result kept
 
 The local measurement tier of rola-bench. A run takes the checkouts to measure, builds a graph of measurement nodes on
 them, runs what is not already stored, and keeps every result through `rola_results` at the location `suite/<module>`
 (rola's dev config names the rola-results checkout as `store.root`; `tools/dev.py init` makes it importable). Standard
-library and `rola_results` only: it runs from any rola venv or the dev container without fleet, zoology or transformers. Rented, citable runs stay on the fleet tier (`launch.py`, `rola_bench/perf/METHODOLOGY.md`);
+library and `rola_results` only: it runs from any rola venv or the dev container without fleet, zoology or transformers. Rented, citable runs stay on the fleet tier (`rola_bench/fleet/__main__.py`, `rola_bench/perf/METHODOLOGY.md`);
 this tier is the engineering gate.
 
-    python -m rola_bench.suite plan --target worktree:PATH --reference worktree:PATH,label:master,schedule:box/sparse-g32 --cells gate
-    python -m rola_bench.suite run  --target ... [--reference ...] [--modules carry,timing] [--cells all|gate|a,b]
+    python -m rola_bench.measure plan --target worktree:PATH --reference worktree:PATH,label:master,schedule:box/sparse-g32 --cells gate
+    python -m rola_bench.measure run  --target ... [--reference ...] [--modules carry,timing] [--cells all|gate|a,b]
                                     [--subjects all|a,b] [--repeat] [--force]
-    python -m rola_bench.suite show carry.phases
+    python -m rola_bench.measure show carry.phases
 
 ## Targets and arms
 
@@ -71,4 +71,4 @@ names a multi-call unit as a bench of its own (`PRE_COUNT_BENCHES`).
 
 ## Tests
 
-`python -m unittest rola_bench.suite.test_engine` checks the engine's contract on fake nodes, with no GPU.
+`python -m unittest rola_bench.measure.test_engine` checks the engine's contract on fake nodes, with no GPU.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """THE HEADLINE STATISTIC of the graph grid: do measured collapse thresholds track the PREDICTED chi?
 
-    python -m rola_bench.mqar.graph_analysis --config graph_grid [--criterion 0.5] [--json out.json]
+    python -m rola_bench.mqar.analysis.graph --config graph_grid [--criterion 0.5] [--json out.json]
 
 The grid sweeps `N` (addressable RoLA states per head) against a data distribution whose
 co-occurrence graph has a solved chromatic number `chi` (`zoology.data.graph_chi`). The theory says
@@ -17,7 +17,7 @@ supports the claim (it is a per-arm efficiency), a ratio that MOVES with the ite
 not.
 
 HOW THE PREDICTION IS OBTAINED. Not from the knob, and not from the run record: the run records
-carry only what `run_rla_sweep.parse_stdout` extracts, whose slice regex is written in
+carry only what `run.parse_stdout` extracts, whose slice regex is written in
 `num_kv_pairs`, and the generator's stdout stamp is absent whenever a segment came from the on-disk
 cache. So this module REBUILDS each condition's episodes from the spec's own protocol knobs, at the
 segment size the cell trained on, and solves them — the same code path, the same seed discipline,

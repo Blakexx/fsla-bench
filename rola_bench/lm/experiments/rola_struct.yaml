@@ -3,7 +3,7 @@
 # (131072 floats/layer) AND iso-PARAM.
 # Isolates "fewer heads + bigger d_v" vs "more heads". nh8/dv32 is the main run's rola-rla-kappa-asym
 # (compare to it; not re-run here). nh2/dv128 is the extreme (d_v=128 stresses the routed kernel).
-# launch.py lm rola_struct
+# rola_bench/fleet/__main__.py lm rola_struct
 arms:  [rola-rla-kappa-asym__nh16_dv16, rola-rla-kappa-asym__nh4_dv64, rola-rla-kappa-asym__nh2_dv128]
 seeds: [1337]
 backbone: {hidden: 256, layers: 6, max_pos: 2048}

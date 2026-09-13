@@ -1,6 +1,6 @@
 """Box-side LM runner (FLEET_RUN_CMD -> this). For each run_id in RUN_IDS ("<arm>_s<seed>"),
 train that arm via train_lm.py and let it append its result row to $FLEET_RESULTS; on a crash we
-append an {ok: False} row so the cell is recorded (not silently lost). Mirrors run_rla_sweep.py's
+append an {ok: False} row so the cell is recorded (not silently lost). Mirrors run.py's
 RUN_IDS contract for the MQAR fleet.
 
 Corpus / budget come from env (LM_DATASET / LM_MAX_STEPS / ...), defaulting to the canonical

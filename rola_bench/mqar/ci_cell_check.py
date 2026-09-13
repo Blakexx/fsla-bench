@@ -65,7 +65,7 @@ def family_of(cfg):
 def main():
     # The SAME work-list the dispatcher launches, so this gate cannot drift from it.
     # (Was `experiments.canonical_mqar_grid`, a module deleted when the specs became YAML.)
-    from rola_bench.mqar.run_rla_sweep import load_configs
+    from rola_bench.mqar.run import load_configs
     g_configs, _ = load_configs(os.environ.get("CI_CELL_CONFIG", "canonical"))
     fams = {}
     for c in g_configs:

@@ -3,7 +3,7 @@
 # every published `named_configs` builder pins it True, which until now was an UNTESTED pin. The
 # pre-V3 arm (`rola-rla-kappa-asym`) is retired; the ablation is re-run on the flagship wiring.
 #
-#   launch.py mqar router_bias
+#   rola_bench/fleet/__main__.py mqar router_bias
 #
 # Paired cells: identical preset, identical N, identical LR, `router_bias` False vs True, three
 # seeds. The pairing is what makes it an ablation — nothing else moves. Run on ARM 1 (the flagship

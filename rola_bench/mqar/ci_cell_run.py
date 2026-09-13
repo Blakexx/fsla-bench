@@ -11,7 +11,7 @@ import copy
 import sys
 
 from rola_bench.mqar.ci_cell_check import family_of
-from rola_bench.mqar.run_rla_sweep import run_one, load_configs
+from rola_bench.mqar.run import run_one, load_configs
 
 
 def _set_epochs(cfg, n):

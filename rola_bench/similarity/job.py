@@ -5,7 +5,7 @@ causal mask (see similarity/evaluator.py). Selection: per CELL (= kernel, nc-run
 best-accuracy run's checkpoint from the MQAR store and score that one (dedups the LR axis, ~5x
 cheaper). Each cell's .pt ships to the box via the payload channel. SSE has no faithful extractor.
 
-Results: `rola_results` at similarity/<config> (rola_bench.jobs). Launch: launch.py similarity main
+Results: `rola_results` at similarity/<config> (rola_bench.fleet.jobs). Launch: rola_bench/fleet/__main__.py similarity main
 """
 import glob
 import json
@@ -14,8 +14,8 @@ import re
 
 from rola_results import ROOT, Store, locations
 
-from rola_bench.jobs import make_job
-from rola_bench.spec import load
+from rola_bench.fleet.jobs import make_job
+from rola_bench.fleet.spec import load
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-",)                  # SSE has no faithful extractor
@@ -93,4 +93,4 @@ def sim_job(config="main"):
     fleet = dict(spec.get("fleet", {}))
     fleet["env"] = {**box_env, **fleet.get("env", {})}
     return make_job("similarity", config, lambda: _work_list(rungs),
-                    "python -u -m rola_bench.similarity.run_sim", fleet, payload_for=_payload_for)
+                    "python -u -m rola_bench.similarity.run", fleet, payload_for=_payload_for)

@@ -1,6 +1,6 @@
 # Small-scale LM — WikiText-103 (word-level, perplexity). ~30M backbone (hidden 256, 6 layers),
 # 15k steps, RoLA + matched-state GDN/GLA + attention. qk-norm on, z-loss off.
-# launch.py lm wikitext103
+# rola_bench/fleet/__main__.py lm wikitext103
 arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv, rola-rla-kappa-sym,
         rola-gla-kappa-asym, rola-gla-kappa-asym-conv, rola-gla-kappa-sym,
         gdn, gla, attn]

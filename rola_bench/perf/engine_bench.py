@@ -40,7 +40,7 @@ def _load_engine(worktree: str | None) -> str:
     `worktree=None` (unset `--worktree` and no `ROLA_ENGINE_WORKTREE`) is a NO-OP -- `fla_rola`
     resolves from the normal import path, i.e. however the current process/image already provides it
     (pip-installed on the fleet perf image, same as every other `rola_bench/perf/*.py` script). Local
-    ad hoc cross-engine comparisons pass `--worktree` explicitly; fleet dispatch (`launch.py perf
+    ad hoc cross-engine comparisons pass `--worktree` explicitly; fleet dispatch (`rola_bench/fleet/__main__.py perf
     <config>`) leaves it unset and lets the image's baked-in `fla_rola` resolve. Returns the resolved
     absolute path for the JSON provenance field, or `"<import>"` when unset."""
     if not worktree:

@@ -10,7 +10,7 @@ list before the kernel.
   the `engine_regression.yaml` internal bake-off when run locally for a quick check. NOT citable
   numbers — the box is shared, thermal/clock behavior is not controlled, and the GPU class doesn't
   match the paper's target hardware.
-- **A100 fleet (`launch.py perf <config>`, e.g. `paper_v1`)**: the CITABLE systems numbers. Fleet boxes
+- **A100 fleet (`rola_bench/fleet/__main__.py perf <config>`, e.g. `paper_v1`)**: the CITABLE systems numbers. Fleet boxes
   are rented SINGLE-TENANT (`fleet.offer_query`/`fleet.batch: 1` in every `experiments/*.yaml`) — no
   `flock` needed there (nothing else touches that GPU for the run's duration); `flock` is a LOCAL-ONLY
   concern (see below).
@@ -27,7 +27,7 @@ flock /tmp/rola_gpu.lock python -m rola_bench.perf.scaling [...]
 ```
 
 A concurrent second process on the same GPU corrupts EVERY number in the run (contention, not just
-noise) — there is no "close enough" here. `rola_bench.suites.perf --smoke` runs each script as its own
+noise) — there is no "close enough" here. `rola_bench.perf.smoke --smoke` runs each script as its own
 subprocess sequentially for the same reason (see the module docstring for why: a failed
 `torch.cuda.graph` capture can leave the CUDA context in a bad state for the rest of that *process*,
 so isolating each bench to its own process also contains that failure mode). On the A100 fleet, this

@@ -1,6 +1,6 @@
 """The engine's contract, on fake nodes: keys compose down the graph, complete keys do not run, a revert finds its old
 result, failures are kept and retried, dependents of a failure are blocked, repeats accumulate, force re-runs.
-`python -m unittest rola_bench.suite.test_engine`"""
+`python -m unittest rola_bench.measure.test_engine`"""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rola_results import Store
 
-from rola_bench.suite import engine
+from rola_bench.measure import engine
 
 
 class Graph:

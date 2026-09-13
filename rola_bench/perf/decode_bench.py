@@ -6,7 +6,7 @@ IQR, sentinel rows, state-MiB, round-robin scheduling): `_decode_layer_sample` (
 `rola-scratch/workflows/dag/dag_tasks/C9-decode-swap-graph.md`). This script does NOT reimplement a
 second timing discipline; it just builds one RoLA layer via `scaling.build_rola`, times ONE eager
 sample and ONE graphed sample through
-those same functions, and reports the pair as a JSON line — for ad hoc / `rola_bench.suites.perf`
+those same functions, and reports the pair as a JSON line — for ad hoc / `rola_bench.perf.smoke`
 use. For a real sweep (multiple nc/L/routing cells, round-robin, sentinels), use
 `scaling.py --benches decode` with `SCALE_DECODE_GRAPHED=1` (see METHODOLOGY.md / `paper_v1.yaml`).
 

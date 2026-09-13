@@ -4,7 +4,7 @@
 #   /home/blake/flash-linear-attention-rola-router-tiling @ da6bf45b
 #
 # Launch:
-#   python launch.py perf scaling_tiling_smoke --boxes 1 --batch 1
+#   python -m rola_bench.fleet perf scaling_tiling_smoke --boxes 1 --batch 1
 benches: [scaling-prefill]
 reps: 5
 fleet:

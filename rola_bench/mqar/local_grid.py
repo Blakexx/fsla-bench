@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """LOCAL overnight dispatcher for an MQAR-family grid — one tier, sequentially, on this box's card.
 
-    GRID_TIERS=decoupling python -m rola_bench.mqar.run_local_grid --config graph_grid --dry-run
+    GRID_TIERS=decoupling python -m rola_bench.mqar.local_grid --config graph_grid --dry-run
     GRID_TIERS=decoupling flock /tmp/rola_gpu.lock \
-        python -m rola_bench.mqar.run_local_grid --config graph_grid
+        python -m rola_bench.mqar.local_grid --config graph_grid
 
-`launch.py` is the FLEET orchestrator: it rents boxes and never trains locally. This is its local
+`rola_bench/fleet/__main__.py` is the FLEET orchestrator: it rents boxes and never trains locally. This is its local
 counterpart for a grid that is small enough to run on the developer card overnight
 ([[local-small-rented-big]]: local stays small BY DESIGN — tiers, gates, micro-probes; the big
 anchors and the publishable LM arms go to rented A100-class boxes). It reuses the fleet's own
 machinery rather than reimplementing it: the spec expands through `build_configs`, each cell trains
-through `run_rla_sweep.run_one` (the same subprocess, the same stdout parsing, the same result
+through `run.run_one` (the same subprocess, the same stdout parsing, the same result
 record), and resume is by `run_id`.
 
 THE THREE LOCAL-BOX RULES, all enforced here rather than remembered:
@@ -22,7 +22,7 @@ THE THREE LOCAL-BOX RULES, all enforced here rather than remembered:
     is checking for.)
   * MEMORY IS SHARED WITH AN INTERACTIVE SESSION. Every training subprocess runs under
     `torch.cuda.set_per_process_memory_fraction(--mem-fraction)`, default 0.65, applied inside the
-    child (`run_rla_sweep.run_one` reads `ROLA_GPU_MEM_FRACTION`). A cell that would have swallowed
+    child (`run.run_one` reads `ROLA_GPU_MEM_FRACTION`). A cell that would have swallowed
     the card OOMs itself instead of taking the session down with it.
   * ONE CELL AT A TIME. Cells are strictly sequential — never two training processes on the card.
 
@@ -33,7 +33,7 @@ rather than decorative. MEASURED on the 2026-08-02 smoke: measured/estimated in 
 the six conditions, i.e. it is a planning number good to ~15%, and the per-process cap above is what
 actually protects the box.
 
-WHEN THE TIER FINISHES, `rola_bench.mqar.graph_analysis` turns its rows into the headline statistic
+WHEN THE TIER FINISHES, `rola_bench.mqar.analysis.graph` turns its rows into the headline statistic
 (measured collapse threshold N* vs the solved chi of each condition's graph).
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ def _refuse_without_the_gpu_lock():
     sys.exit(
         f"REFUSING: nothing holds {GPU_LOCK}, so this was not launched under the lock. CUDA is "
         f"exclusive on this box. Re-run as:\n\n    GRID_TIERS=$TIER flock {GPU_LOCK} "
-        f"{sys.executable} -m rola_bench.mqar.run_local_grid --config <spec>\n\n"
+        f"{sys.executable} -m rola_bench.mqar.local_grid --config <spec>\n\n"
         "(use --dry-run to inspect the cell list without the lock).")
 
 
@@ -202,7 +202,7 @@ def main(argv=None):
                          "smallest N) through the real runner — the end-to-end pipeline gate")
     a = ap.parse_args(argv)
 
-    from rola_bench.mqar.run_rla_sweep import load_configs, run_one
+    from rola_bench.mqar.run import load_configs, run_one
 
     tier = os.environ.get("GRID_TIERS", "all")
     configs, envs = load_configs(a.config)
@@ -210,7 +210,7 @@ def main(argv=None):
         configs, envs = _smoke_cells(configs, envs)
     store, semantics = local_store(a.config)
     #: DONE FOR THIS CODE: a cell is complete when the current checkouts (this repository and the rola engine it
-    #: trains) have an ok sample, the local counterpart of the fleet's current image (`rola_bench.jobs`).
+    #: trains) have an ok sample, the local counterpart of the fleet's current image (`rola_bench.fleet.jobs`).
     done = {c.run_id for c in configs if Store.complete(store.get(key(semantics(c.run_id))))}
 
     pending = [(i, c, e) for i, (c, e) in enumerate(zip(configs, envs)) if c.run_id not in done]

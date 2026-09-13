@@ -3,18 +3,18 @@
 
 Launch knobs live WITH the experiment: a `fleet:` block in experiments/<config>.yaml, or a `FLEET`
 dict in a module-config (seed_confirm). Everything else (name, results dir, done_ids, run command)
-is derived from the config name by rola_bench.jobs.make_job.
+is derived from the config name by rola_bench.fleet.jobs.make_job.
 
-  launch.py mqar canonical        # tiers via fleet.env.GRID_TIERS
-  launch.py mqar normsym
-  launch.py mqar seed_confirm
+  rola_bench/fleet/__main__.py mqar canonical        # tiers via fleet.env.GRID_TIERS
+  rola_bench/fleet/__main__.py mqar normsym
+  rola_bench/fleet/__main__.py mqar seed_confirm
 """
 import importlib
 import os
 
-from rola_bench.jobs import make_job
+from rola_bench.fleet.jobs import make_job
 from rola_bench.mqar.build_configs import load_spec
-from rola_bench.mqar.run_rla_sweep import load_configs, _EXP_DIR
+from rola_bench.mqar.run import load_configs, _EXP_DIR
 
 
 def _fleet_knobs(config):
@@ -47,5 +47,5 @@ def _filtered_ids(config, tiers):
 def mqar_job(config):
     knobs = _fleet_knobs(config)
     tiers = knobs.get("env", {}).get("GRID_TIERS")
-    run_cmd = f"python run_rla_sweep.py --config {config} --results $FLEET_RESULTS"
+    run_cmd = f"python run.py --config {config} --results $FLEET_RESULTS"
     return make_job("mqar", config, lambda: _filtered_ids(config, tiers), run_cmd, knobs)

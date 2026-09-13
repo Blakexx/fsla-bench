@@ -4,7 +4,7 @@
 # defined by the retired `state_norm='kappa'` (mqar.instances.RETIRED_INSTANCES). The question the
 # spec asks is architecture-independent, so it survives with the V3 slate; the old rows do not.
 #
-#   launch.py mqar dmodel64
+#   rola_bench/fleet/__main__.py mqar dmodel64
 #
 # WHY IT IS WORTH KEEPING ALONGSIDE law_grid.yaml: the law grid holds the backbone fixed and moves
 # N and L. This spec moves the BACKBONE against a fixed large N — the "is routed state a substitute

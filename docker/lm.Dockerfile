@@ -3,7 +3,7 @@
 # Same pattern as mqar.Dockerfile but for the language-modeling benchmark: rola + fla-rola + the HF
 # stack + the vendored flame harness (in rola_bench/lm). zoology (MQAR baselines) is NOT installed.
 #
-# The box-side contract is wired: run_lm.py maps RUN_IDS ("<arm>_s<seed>") -> train_lm.py, which
+# The box-side contract is wired: run.py maps RUN_IDS ("<arm>_s<seed>") -> train_lm.py, which
 # appends {run_id, ok, params_m, state_floats, ppl, ...} to $FLEET_RESULTS + saves the ckpt dir.
 ARG FLEET_BASE_TAG=v1
 FROM blakeresearch/fleet-base:${FLEET_BASE_TAG}
@@ -35,8 +35,8 @@ import sys; sys.path.insert(0, '/opt/rola-bench/rola_bench/lm'); import arms, ru
 print('rola-bench lm image OK; torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'arms', len(arms.ARMS))"
 
 ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/lm \
-    FLEET_VERIFY_CMD="python -c 'import torch; assert torch.cuda.is_available(); import run_lm, arms; assert len(arms.ARMS)>=5; print(\"VERIFY OK\")'" \
-    FLEET_RUN_CMD="python run_lm.py"
+    FLEET_VERIFY_CMD="python -c 'import torch; assert torch.cuda.is_available(); import run, arms; assert len(arms.ARMS)>=5; print(\"VERIFY OK\")'" \
+    FLEET_RUN_CMD="python run.py"
 
 WORKDIR /opt/rola-bench/rola_bench/lm
 # CMD inherited from fleet-base: python -u -m fleet.box_server

@@ -1,7 +1,7 @@
 # THE LAW GRID — the small-scale two-factor design that tests the capacity theory's boundaries.
 # Built 2026-08-02 (Phase 1.4a). Expanded by rola_bench.mqar.build_configs; GRID_TIERS selects tiers.
 #
-#   launch.py mqar law_grid
+#   rola_bench/fleet/__main__.py mqar law_grid
 #
 # ------------------------------------------------------------------------------------------------
 # WHAT THIS GRID IS FOR

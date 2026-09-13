@@ -5,7 +5,7 @@
 # output directory.
 #
 # Launch after rebuilding the image:
-#   python launch.py perf profile_graph --boxes 1 --batch 1
+#   python -m rola_bench.fleet perf profile_graph --boxes 1 --batch 1
 benches: [profile-graph]
 
 profiles:

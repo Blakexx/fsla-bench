@@ -616,7 +616,7 @@ def test_every_run_id_parses_for_the_analysis():
     about would silently produce an empty headline table rather than an error."""
     import os
     from rola_bench.mqar.build_configs import build_configs
-    from rola_bench.mqar.graph_analysis import parse_run_id
+    from rola_bench.mqar.analysis.graph import parse_run_id
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     conds = {c["tag"] for c in _spec()["conditions"]}

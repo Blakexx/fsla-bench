@@ -1,9 +1,9 @@
 """Runner for RLA sweeps (full sweep and pilot share this runner).
 
 Usage:
-  python run_rla_sweep.py --config rla_sweep   # full 400-run sweep
-  python run_rla_sweep.py --config rla_pilot   # 6-run G2 pilot
-  python run_rla_sweep.py --config rla_sweep --shard 0/4   # one shard
+  python run.py --config rla_sweep   # full 400-run sweep
+  python run.py --config rla_pilot   # 6-run G2 pilot
+  python run.py --config rla_sweep --shard 0/4   # one shard
 
 Per-run JSONL fields:
   run_id, idx, ok, returncode, elapsed,

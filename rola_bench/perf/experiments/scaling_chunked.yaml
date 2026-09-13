@@ -4,7 +4,7 @@
 # swept over L x state fraction x d_qk x routing.
 #
 # Launch:
-#   python launch.py perf scaling_chunked --boxes 1
+#   python -m rola_bench.fleet perf scaling_chunked --boxes 1
 benches: [scaling-prefill]
 reps: 15
 fleet:

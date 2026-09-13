@@ -5,7 +5,7 @@ preserving the in-process round-robin, and appends one ndjson summary row per ru
 $FLEET_RESULTS — {"run_id", "ok", "gpu", <bench rows>}. The dispatcher's done_ids keys off that ok
 row; the full per-cell table lives inside it (and in the CSVs the benches also write for the paper).
 
-Mirrors mqar/run_rla_sweep.py's contract: never abort the batch on one cell's failure; write an
+Mirrors mqar/run.py's contract: never abort the batch on one cell's failure; write an
 ok=False row with the error so the dispatcher records it rather than silently dropping it.
 """
 import csv
@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
-from rola_bench.spec import load
+from rola_bench.fleet.spec import load
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 REPS = int(os.environ.get("PERF_REPS", "15"))
@@ -174,7 +174,7 @@ def run_engine_bench(out_dir, run_id):
     """One `engine_bench.py` cell (the cross-engine layer bake-off; see METHODOLOGY.md — this is the
     A100-fleet path, `--worktree` stays unset so `fla_rola` resolves from the image's pip install).
     Run as a SUBPROCESS (not imported in-process) so this cell's failure/state can't bleed into the
-    next run_id in the same box invocation (mirrors `rola_bench.suites.perf`'s reasoning)."""
+    next run_id in the same box invocation (mirrors `rola_bench.perf.smoke`'s reasoning)."""
     prefix = "perf-engine-bench-"
     cell = _cell_from_spec(run_id, prefix, "engine_cells")
     out_path = Path(out_dir) / "engine_bench.jsonl"

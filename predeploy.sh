@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Decoupled pre-deploy gate: run the per-family CI on a real GPU (local venv — NOT the docker build,
 # which has no GPU), and only build+push the image if every cell family builds + fwd+bwd. Tests
-# validate behavior on the code; the build is a separate artifact step. Run this before launch.py.
+# validate behavior on the code; the build is a separate artifact step. Run this before rola_bench/fleet/__main__.py.
 #
 #   ./predeploy.sh mqar        # CI (local GPU) -> build+push blakeresearch/rola-bench:v1
 set -euo pipefail
@@ -22,4 +22,4 @@ else
 fi
 echo "== CI passed (construction + end-to-end) -> building + pushing image =="
 bash "$HERE/docker/build.sh" "$TARGET" --push --prune
-echo "== predeploy OK: image built, pushed, local copy pruned. Safe to launch.py $TARGET =="
+echo "== predeploy OK: image built, pushed, local copy pruned. Safe to rola_bench/fleet/__main__.py $TARGET =="

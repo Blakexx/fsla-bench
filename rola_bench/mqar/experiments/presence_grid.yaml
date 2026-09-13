@@ -4,7 +4,7 @@
 # "THE PRESENCE-RECALL TASK" (user, ratified 2026-08-03).
 #
 #   GRID_TIERS=presence16 flock /tmp/rola_gpu.lock \
-#       python -m rola_bench.mqar.run_local_grid --config presence_grid     # add --dry-run first
+#       python -m rola_bench.mqar.local_grid --config presence_grid     # add --dry-run first
 #
 # *** NOT DISPATCHED. Training is PARKED until the CUDA engine is complete, including the native
 # *** backward ([[cuda-engine-first-kill-triton]]). This file is the instrument, ready to run; the
@@ -66,7 +66,7 @@
 # planted balance (`presence_positive_rate` and the worst per-position deviation
 # `presence_position_bias` are stamped per segment), so the best label-free predictor scores 0.5 and
 # a collapse threshold read at 0.5 would be the threshold of GUESSING.
-# `rola_bench.mqar.graph_analysis` therefore carries a per-task chance line and defaults this grid's
+# `rola_bench.mqar.analysis.graph` therefore carries a per-task chance line and defaults this grid's
 # criterion to 0.75 — halfway from chance to ceiling. An untrained model sits BELOW 0.5 (it must
 # first learn to answer inside the reserved label pair at all), so "off chance" here means ABOVE.
 #

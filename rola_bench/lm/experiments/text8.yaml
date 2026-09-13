@@ -1,7 +1,7 @@
 # Small-scale LM — text8 (char-level long-range; metric = bits-per-char, auto via is_char). ~30M
 # backbone (hidden 256, 6 layers), 15k steps, RoLA + matched-state GDN/GLA + attention.
 # qk-norm on, z-loss off. Bounded linear-attention arms match half of attention KV at block_size=2048,
-# hidden=256: target = 524288 floats/layer. launch.py lm text8
+# hidden=256: target = 524288 floats/layer. rola_bench/fleet/__main__.py lm text8
 arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv, rola-rla-kappa-sym,
         rola-gla-kappa-asym, rola-gla-kappa-asym-conv, rola-gla-kappa-sym, gdn, gla, attn]
 seeds: [1337, 2024, 11]

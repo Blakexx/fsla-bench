@@ -114,7 +114,7 @@ def test_arm_kinds_are_accepted_by_the_SCALE_ARMS_validator(monkeypatch):
 def test_named_arm_builds_the_registry_cell(kind):
     """The perf arm and the layer-path arm of one published name must be ONE cell."""
     from zoology.mixers.rola import RoLAMixer
-    from rola_bench.named_configs import NAMED_CONFIGS
+    from rola_bench.models.named_configs import NAMED_CONFIGS
     name, kwargs = scaling.resolve_named_arm(kind, nc=256)
     assert kwargs == dict(NAMED_CONFIGS[name].build_kwargs(256, True))
     mixer = RoLAMixer(d_model=scaling.DM, layer_idx=0, n_heads=C.H,

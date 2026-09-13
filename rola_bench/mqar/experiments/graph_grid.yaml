@@ -3,7 +3,7 @@
 # module docstring). Runs LOCALLY, one tier per night:
 #
 #   GRID_TIERS=decoupling flock /tmp/rola_gpu.lock \
-#       python -m rola_bench.mqar.run_local_grid --config graph_grid          # add --dry-run first
+#       python -m rola_bench.mqar.local_grid --config graph_grid          # add --dry-run first
 #
 # ------------------------------------------------------------------------------------------------
 # WHAT THIS GRID IS FOR

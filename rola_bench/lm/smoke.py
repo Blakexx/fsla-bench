@@ -15,14 +15,14 @@ through the HF `AutoModelForCausalLM` path like every other arm: `RoLAConfig`
 threaded through `rola_instance()`/`RoLABlock` into the RoLA layer kwargs
 (`fla_rola/models/rola/instances.py`, `modeling_rola.py`). Per-level heterogeneous activation support
 is required for the production cell and must execute end-to-end.
-`rola_bench.named_configs`/`construct()` (the LAYER-direct-construction surface used by the MQAR/perf
+`rola_bench.models.named_configs`/`construct()` (the LAYER-direct-construction surface used by the MQAR/perf
 suites) is unaffected by this change and still exists as an independent construction path.
 
-Real training runs go through the existing fleet machinery (`rola_bench/lm/run_lm.py` ->
+Real training runs go through the existing fleet machinery (`rola_bench/lm/run.py` ->
 `train_lm.py`) and land in `results/lm/<dataset>/*.json` (see the top-level README's suite table).
 
-    python -m rola_bench.suites.lm --smoke      # build every pinned arm config + one tiny fwd+bwd step
-    python -m rola_bench.suites.lm --list        # print the pinned arm list
+    python -m rola_bench.lm.smoke --smoke      # build every pinned arm config + one tiny fwd+bwd step
+    python -m rola_bench.lm.smoke --list        # print the pinned arm list
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def main(argv=None):
     if a.list:
         for arm in arms.ARMS:
             print(arm)
-        from rola_bench.named_configs import LM_SUITE_CONFIGS
+        from rola_bench.models.named_configs import LM_SUITE_CONFIGS
         print("(flagship layer configs, see docstring): " + " ".join(LM_SUITE_CONFIGS))
         return
 
@@ -74,7 +74,7 @@ def main(argv=None):
                 ok = False
             print(f"{'INFRA' if is_infra else 'FAIL '} arm {arm:24s} -> {type(e).__name__}: {e}")
 
-    from rola_bench.named_configs import construct, LM_SUITE_CONFIGS
+    from rola_bench.models.named_configs import construct, LM_SUITE_CONFIGS
     for name in LM_SUITE_CONFIGS:
         try:
             # head_v_dim=128 is the flagship value width (F1 re-pin, matched with GDN/GLA at

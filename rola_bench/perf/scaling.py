@@ -64,7 +64,7 @@ bolted onto RoLA's.
 Nor does an arm state a readout tile. `BC` is the operator's decision off its built arm matrix, so
 the sweep's topology axis no longer decides which cells are launchable.
 
-The NAMED-CONFIG arms are derived from `rola_bench.named_configs.PERF_SUITE_CONFIGS`, not hardcoded.
+The NAMED-CONFIG arms are derived from `rola_bench.models.named_configs.PERF_SUITE_CONFIGS`, not hardcoded.
 Hardcoding is precisely how this file silently rotted: it pinned `'RoLA-base'`, which the E1-E7
 migration retired, so `build_rola_named` KeyError'd and no test noticed.
 `test_perf_scaling_arms.py` is that missing gate.
@@ -371,7 +371,7 @@ def named_rola_arm_names() -> tuple[str, ...]:
     `("rola-base", "rola-base-rla")` outlived `RoLA-base`'s retirement by the E1-E7 migration and
     turned into a silent `KeyError` in the paper_v1 kernel harness, because nothing tested it.
     Deriving means a retirement can only ever remove an arm, never leave a dangling name."""
-    from rola_bench.named_configs import PERF_SUITE_CONFIGS
+    from rola_bench.models.named_configs import PERF_SUITE_CONFIGS
     return tuple(PERF_SUITE_CONFIGS)
 
 
@@ -391,7 +391,7 @@ def resolve_named_arm(kind, nc=256):
     `router_bias` / `use_short_conv`). Note `decay`, not `kernel`: the E1-E7 migration moved the
     builders onto the V3 layer's own vocabulary, and reading the removed `kernel` key is the second
     of the two bugs this file carried."""
-    from rola_bench.named_configs import NAMED_CONFIGS, RETIRED_CONFIGS
+    from rola_bench.models.named_configs import NAMED_CONFIGS, RETIRED_CONFIGS
     by_kind = {_named_arm_kind(n): n for n in named_rola_arm_names()}
     if kind not in by_kind:
         raise ValueError(
@@ -409,7 +409,7 @@ def resolve_named_arm(kind, nc=256):
 
 
 def build_rola_named(kind, nc=256):
-    """Build a flagship named-config RoLA layer (`rola_bench.named_configs`) as a scaling arm, at ITS
+    """Build a flagship named-config RoLA layer (`rola_bench.models.named_configs`) as a scaling arm, at ITS
     OWN fixed geometry (H=8, d_v=`PERF_NAMED_DV`, square topology) rather than the (d, nc) sweep
     axis -- same rationale as `_build_fla_baseline`: the flagship isn't parameterized by that axis.
 

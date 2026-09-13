@@ -2,7 +2,7 @@
 
 The level-split arm gives every level one sparse duty and one dense duty, opposite across levels
 (coarse sparse-write/dense-read, fine dense-write/sparse-read), each duty solving the EXACT
-entmax/softmax on its OWN projected logits. See `rola_bench.named_configs._levelsplit_kwargs`.
+entmax/softmax on its OWN projected logits. See `rola_bench.models.named_configs._levelsplit_kwargs`.
 
 Everything here runs on CPU in fp64 against the ENGINE's own canonical references
 (`rola.routing.reference.routing_factor_levels` and `rola.ops.naive.naive_rola`, reached through

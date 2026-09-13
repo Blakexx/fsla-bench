@@ -88,7 +88,7 @@ def plot_joint(row, src_path, out_dir):
     from the base64 blob IN the row (generic — no external files). Rows sorted by write marginal,
     cols by read marginal, so high-write/high-read sit top-left; LogNorm color. One panel per head."""
     from matplotlib.colors import LogNorm
-    from rola_bench.similarity.run_sim import _unb64_f16
+    from rola_bench.similarity.run import _unb64_f16
     v = _vectors(row)
     if not v or "joint_b64" not in v:
         return None
@@ -125,7 +125,7 @@ def plot_pmi(row, out_dir, mass_floor=1e-3):
     are independent per token; a bright diagonal => same-state recall; off-diagonal bands => handoffs.
     States below `mass_floor` on either marginal are masked (PMI is undefined/explosive there)."""
     from matplotlib.colors import TwoSlopeNorm
-    from rola_bench.similarity.run_sim import _unb64_f16
+    from rola_bench.similarity.run import _unb64_f16
     v = _vectors(row)
     if not v or "joint_b64" not in v:
         return None

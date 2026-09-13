@@ -108,11 +108,11 @@ ATTN_HEADS = _ATTN_NH                                           # head_dim _HID/
 # This uniform conv-off policy applies ONLY to the LEGACY comparison cells (ROLA_ARMS + the fla
 # baselines) below. The published-flagship arms (ROLA_BASE_ARMS, just below) are NOT part of that
 # iso-conv comparison — they carry their OWN canonical conv setting (ON) per the published
-# architecture (`rola_bench.named_configs`), independent of USE_SHORT_CONV.
+# architecture (`rola_bench.models.named_configs`), independent of USE_SHORT_CONV.
 USE_SHORT_CONV = False
 
 # --- published-flagship arms --------------------------------------------------------------------
-# The flagship cells (`rola_bench.named_configs`; RoLA-base / RoLA-base-global were retired by
+# The flagship cells (`rola_bench.models.named_configs`; RoLA-base / RoLA-base-global were retired by
 # campaign-prereqs E3, see RETIRED_LM_ARMS): router_bias=True,
 # two-level topology (levels_per_head=2; branching per the GEOMETRY block below), UNTIED, per-level
 # heterogeneous write (sparse@coarse level0, dense@fine level1), dense read at both levels, conv ON. These
@@ -237,7 +237,7 @@ ROLA_BASE_HYBRID_TIEDTOP_MIX = [
 ]
 
 # rola-base-levelsplit-global (ablation ARM 3, promoted to an LM arm 2026-08-02): the LEVEL-SPLIT
-# DUTY cell — see `rola_bench.named_configs._levelsplit_kwargs` for the full rationale. Each level
+# DUTY cell — see `rola_bench.models.named_configs._levelsplit_kwargs` for the full rationale. Each level
 # carries exactly ONE sparse duty and one dense duty, and the two levels carry OPPOSITE duties:
 # coarse commits narrowly and reads broadly, fine writes broadly and addresses narrowly. Both rows
 # are untied with at most one sparse side, so each resolves to `IndependentRouting` and every duty
@@ -362,7 +362,7 @@ ARMS = ROLA_ARMS + ROLA_BASE_ARMS + ("gdn", "gla", "attn")
 
 # NO `-raw` LM ARM EXISTS, and it is an ENGINE gap, not an omission here (2026-08-02). The
 # normalization axis's other end is registered on the LAYER path as `RoLA-base-rla-raw` /
-# `RoLA-base-levelsplit-raw` (`rola_bench.named_configs`), because `state_norm` cannot reach the
+# `RoLA-base-levelsplit-raw` (`rola_bench.models.named_configs`), because `state_norm` cannot reach the
 # layer through the HF path at all: `fla_rola.models.rola.configuration_rola.RoLAConfig` has no
 # `state_norm` field and `fla_rola.models.rola.instances.rola_instance` HARD-CODES
 # `state_norm='global'` for every instance in `ROLA_INSTANCES`. Passing it on `RoLAConfig` would be

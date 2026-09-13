@@ -13,7 +13,7 @@ a per-LEVEL field of `LevelRoutingConfig` applying to whichever side of that lev
 "duty" = one (side, level) pair.
 
 **THE SLATE — the three canonical wirings plus the map-family control.** These are the SAME cells
-`rola_bench.named_configs` publishes on the layer path; this module is their MQAR spelling (conv
+`rola_bench.models.named_configs` publishes on the layer path; this module is their MQAR spelling (conv
 OFF, and topology given as an explicit (D, b) so the grid can sweep N over non-square rungs, which
 `named_configs._square_topology` cannot). The two registries are gated against each other in
 `rola_bench/test_mqar_grid.py` — a divergence would mean the MQAR cell and the layer/perf cell

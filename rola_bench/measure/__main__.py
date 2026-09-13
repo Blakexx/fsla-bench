@@ -1,4 +1,4 @@
-"""`python -m rola_bench.suite run|plan|show` -- see rola_bench/suite/README.md."""
+"""`python -m rola_bench.measure run|plan|show` -- see rola_bench/measure/README.md."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ from .target import parse
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="python -m rola_bench.suite", description=__doc__)
+    ap = argparse.ArgumentParser(prog="python -m rola_bench.measure", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, help_ in (("run", "run every incomplete node"), ("plan", "list every node and whether it is complete")):
         p = sub.add_parser(name, help=help_)

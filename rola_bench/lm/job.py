@@ -1,18 +1,18 @@
 """LM benchmark job builder — iso-backbone RoLA-vs-attention, spec-driven on the global layer.
 
 `lm_job(config)` reads rola_bench/lm/experiments/<config>.yaml (arms × seeds + backbone/geometry/
-budget + fleet) and builds the fleet.Job via rola_bench.jobs.make_job. The spec's backbone/geometry/
-budget sections are flattened to the LM_* box env the runner (run_lm.py) + arms.py read, so the spec
+budget + fleet) and builds the fleet.Job via rola_bench.fleet.jobs.make_job. The spec's backbone/geometry/
+budget sections are flattened to the LM_* box env the runner (run.py) + arms.py read, so the spec
 file is the single source of truth. Results: `rola_results` at lm/<config> (cell = <arm>_s<seed>).
 LM keeps preemption-safe checkpoint resume (payload_for + pull_in_progress + no_kill).
 
-Launch: launch.py lm default
+Launch: rola_bench/fleet/__main__.py lm default
 """
 import os
 import re
 
-from rola_bench.jobs import make_job
-from rola_bench.spec import load, env_from
+from rola_bench.fleet.jobs import make_job
+from rola_bench.fleet.spec import load, env_from
 
 CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/e/rola/rola_data/lm_ckpts")
 
@@ -115,4 +115,4 @@ def lm_job(config="default"):
             return fh.read()
 
     return make_job("lm", config, lambda: [f"{a}_s{s}" for a in arms for s in seeds],
-                    "python run_lm.py", fleet, ckpt_dir=ckpt_dir, payload_for=_payload_for)
+                    "python run.py", fleet, ckpt_dir=ckpt_dir, payload_for=_payload_for)

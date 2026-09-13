@@ -15,7 +15,7 @@ This package currently owns only the reportable scaling benchmark path.
 The launched chunked-forward run uses:
 
 ```bash
-python launch.py perf scaling_chunked --boxes 1
+python -m rola_bench.fleet perf scaling_chunked --boxes 1
 ```
 
 Fleet axes are configured via `SCALE_LENS[_TYPE]`, `SCALE_NCS`, `SCALE_DQKS`,
@@ -51,7 +51,7 @@ PERF_B=2 python -m rola_bench.perf.profile_graph \
 Fleet diagnostic launch:
 
 ```bash
-python launch.py perf profile_graph --boxes 1 --batch 1
+python -m rola_bench.fleet perf profile_graph --boxes 1 --batch 1
 ```
 
 The fleet config's `profiles:` list owns the cells to profile. Each entry becomes a run id:
@@ -77,7 +77,7 @@ Outputs:
 For Triton kernel internals, use the separate deep config:
 
 ```bash
-python launch.py perf profile_graph_deep --boxes 1 --batch 1
+python -m rola_bench.fleet perf profile_graph_deep --boxes 1 --batch 1
 ```
 
 `deep_profile: ncu` runs Nsight Compute against a child profile run and imports the `.ncu-rep` details

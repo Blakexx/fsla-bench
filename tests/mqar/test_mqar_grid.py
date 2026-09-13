@@ -173,7 +173,7 @@ def test_mqar_presets_agree_with_the_named_config_registry():
     """The MQAR spelling and the layer/perf spelling of one published wiring must be the SAME cell.
     If these drift, an MQAR row and a perf row of the same arm are different experiments
     ([[matching-the-naive-antipattern]])."""
-    from rola_bench.named_configs import NAMED_CONFIGS
+    from rola_bench.models.named_configs import NAMED_CONFIGS
     from rola_bench.mqar.instances import rola_instance
     pairs = {
         "rola-arm1-densread-sparsewrite": "RoLA-base-rla",
@@ -311,7 +311,7 @@ def test_seed_floor_actually_bites():
 
 
 def test_retired_specs_refuse_by_name():
-    from rola_bench.mqar.run_rla_sweep import RETIRED_SPECS, load_configs
+    from rola_bench.mqar.run import RETIRED_SPECS, load_configs
     assert set(RETIRED_SPECS) == {"qknorm_ablation", "normsym"}
     for name in RETIRED_SPECS:
         assert not os.path.exists(os.path.join(_EXP_DIR, f"{name}.yaml"))

@@ -29,7 +29,7 @@ run_corpus() {  # name dataset config L nc batch seeds
     LM_MAX_POS=2048 LM_BLOCK_SIZE=$L LM_BATCH_SIZE=$bs LM_GRAD_ACCUM=1 LM_LR=3e-4 \
     LM_MAX_STEPS=15000 LM_SAVE_STEPS=1500 LM_GRAD_CKPT=0 LM_LIVE_PULL=900 \
     OFFER_QUERY="gpu_name=RTX_4090 num_gpus=1 rentable=true reliability>0.97 inet_down>500" \
-    $VENV launch.py lm --boxes 8 > "/tmp/lm_$name.log" 2>&1
+    $VENV rola_bench/fleet/__main__.py lm --boxes 8 > "/tmp/lm_$name.log" 2>&1
   echo "[driver $(date +%H:%M)] $name finished (exit $?)"
   while [ "$(nboxes)" != "0" ]; do sleep 30; done      # fully drained before next corpus
 }

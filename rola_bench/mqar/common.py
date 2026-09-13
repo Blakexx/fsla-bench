@@ -214,7 +214,7 @@ def make_graph_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len,
 #
 # The DEMAND OF A CELL IS READ OFF THE SEGMENT here too: `graph_demand_*` are stamped in the same
 # vocabulary as the graph protocol's, so one analysis path
-# (`rola_bench.mqar.graph_analysis --task presence`) reads both instruments.
+# (`rola_bench.mqar.analysis.graph --task presence`) reads both instruments.
 PRESENCE_KNOBS = ("demand", "keys_per_sequence", "positive_rate", "pi_seed", "min_separation")
 
 

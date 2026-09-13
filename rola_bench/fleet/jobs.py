@@ -68,7 +68,7 @@ def offer_query_for(spec_query, dialect):
         return DEFAULT_OFFER[dialect]
     except KeyError:
         raise ValueError(f"no default offer query for dialect {dialect!r}; "
-                         f"set one in rola_bench.jobs.DEFAULT_OFFER or in the spec") from None
+                         f"set one in rola_bench.fleet.jobs.DEFAULT_OFFER or in the spec") from None
 
 
 def fleet_store(bench, config, image, job):

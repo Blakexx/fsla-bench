@@ -2,7 +2,7 @@
 # scaling along its own natural axis, on the LITERATURE-STANDARD `ext` data protocol.
 # RE-PINNED 2026-08-02 (Phase 1.5) onto the V3 preset registry and the contender ladder.
 #
-#   launch.py mqar canonical
+#   rola_bench/fleet/__main__.py mqar canonical
 #
 # RELATIONSHIP TO law_grid.yaml: this spec is the literature-protocol comparison point, not the law
 # test. It holds the `ext` preset fixed — the same train-short/test-long ladder the MQAR baselines
@@ -51,5 +51,5 @@ tiers:
   # dimension is the per-head key width, and d_qk = d_model // num_heads for zoology's MHA).
   "attn":
     - {build: attn, head_dims: [2, 4, 8, 16, 32]}
-fleet:                                   # launch knobs (rola_bench.jobs.make_job)
+fleet:                                   # launch knobs (rola_bench.fleet.jobs.make_job)
   env: {GRID_TIERS: "rola"}              # which tier a box runs; manager queue matches

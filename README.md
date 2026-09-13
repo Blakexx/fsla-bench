@@ -15,21 +15,21 @@ An experiment is a `<bench> <config>` pair. The *config* is a declarative YAML c
 hyperparameters, and a `fleet:` block for dispatch knobs). There are no per-experiment Python scripts:
 the spec loader (`rola_bench/spec.py`) reads the YAML, each benchmark's `job.py` expands it into a
 work-list of cell ids and a box-side run command, and the global job factory (`rola_bench/jobs.py`,
-`make_job`) assembles a `fleet.Job` from those. `launch.py` looks the builder up by name and runs the
+`make_job`) assembles a `fleet.Job` from those. `rola_bench/fleet/__main__.py` looks the builder up by name and runs the
 dispatcher.
 
 ```bash
-python launch.py <bench> <config> [--boxes N] [--batch N]
+python -m rola_bench.fleet <bench> <config> [--boxes N] [--batch N]
 
-python launch.py mqar canonical --boxes 6     # the canonical matched-state MQAR grid
-python launch.py mqar normsym                 # any MQAR spec, by name
-python launch.py mqar seed_confirm            # seed-confirmation
-python launch.py perf default                 # kernel-efficiency e2e fwd/bwd
-python launch.py similarity main              # post-hoc routing/rank audit
-python launch.py lm   default                 # language modeling
+python -m rola_bench.fleet mqar canonical --boxes 6     # the canonical matched-state MQAR grid
+python -m rola_bench.fleet mqar normsym                 # any MQAR spec, by name
+python -m rola_bench.fleet mqar seed_confirm            # seed-confirmation
+python -m rola_bench.fleet perf default                 # kernel-efficiency e2e fwd/bwd
+python -m rola_bench.fleet similarity main              # post-hoc routing/rank audit
+python -m rola_bench.fleet lm   default                 # language modeling
 ```
 
-`launch.py` runs CPU-only (it hides the GPU): it builds job configs and HTTP-coordinates the boxes —
+`rola_bench/fleet/__main__.py` runs CPU-only (it hides the GPU): it builds job configs and HTTP-coordinates the boxes —
 **every training run and every citable benchmark runs on the rented GPUs.** The one local tier is the kernel
 measurement suite below: engineering gates on this box's GPU, never cited. The dispatcher reuses cells
 already complete in the result store, requeues a dead box's owed cells, and tears every box down on
@@ -45,7 +45,7 @@ drain.
 | **`similarity`** | **Routing audit** — post-hoc rank, sharpness, and state-usage of the trained attention matrices (best-per-cell checkpoints pulled from the MQAR store), to confirm routing genuinely spreads load across states. | `main.yaml` |
 
 Each benchmark dir carries its spec(s) in `experiments/`, a `job.py` (the `<bench>_job(config)` builder),
-a box-side runner (`run_rla_sweep.py` / `run_lm.py` / `run_perf.py` / `run_sim.py`), and CPU/smoke
+a box-side runner (`run.py` / `run.py` / `run.py` / `run.py`), and CPU/smoke
 verification helpers.
 
 ## Suite entry points (`rola_bench/suites/`)
@@ -56,11 +56,11 @@ system. Each declares its pinned config list + seeds + output schema, and suppor
 
 | Suite | Smoke command | Real results land in | Locked numbers |
 |---|---|---|---|
-| `rola_bench.suites.mqar` | `python -m rola_bench.suites.mqar --smoke` | `rola_results` at `mqar/<config>` (via `launch.py mqar <config>`) | `rola_bench/mqar/instances.py` (`ROLA_INSTANCES`) + `rola_bench.named_configs` (flagship) |
-| `rola_bench.suites.lm` | `python -m rola_bench.suites.lm --smoke` | `rola_results` at `lm/<config>` (via `launch.py lm <config>`) | `rola_bench/lm/arms.py` (`ARMS`) |
-| `rola_bench.suites.perf` | `flock /tmp/rola_gpu.lock python -m rola_bench.suites.perf --smoke` | `results/perf/*.csv` (`scaling.py`) + JSON lines (`engine_bench.py`/`decode_bench.py --out`) | `rola_bench.named_configs`; fleet configs `experiments/{paper_v1,engine_regression}.yaml` |
+| `rola_bench.mqar.smoke` | `python -m rola_bench.mqar.smoke --smoke` | `rola_results` at `mqar/<config>` (via `rola_bench/fleet/__main__.py mqar <config>`) | `rola_bench/mqar/instances.py` (`ROLA_INSTANCES`) + `rola_bench.models.named_configs` (flagship) |
+| `rola_bench.lm.smoke` | `python -m rola_bench.lm.smoke --smoke` | `rola_results` at `lm/<config>` (via `rola_bench/fleet/__main__.py lm <config>`) | `rola_bench/lm/arms.py` (`ARMS`) |
+| `rola_bench.perf.smoke` | `flock /tmp/rola_gpu.lock python -m rola_bench.perf.smoke --smoke` | `results/perf/*.csv` (`scaling.py`) + JSON lines (`engine_bench.py`/`decode_bench.py --out`) | `rola_bench.models.named_configs`; fleet configs `experiments/{paper_v1,engine_regression}.yaml` |
 
-### The flagship named configs (`rola_bench/named_configs.py`)
+### The flagship named configs (`rola_bench/models/named_configs.py`)
 
 **RoLA-base** is the pinned, published-flagship RoLA architecture the suites default to: square
 topology (`levels_per_head=2, states_per_level=sqrt(nc)`, nc=256), `router_bias=True`,
@@ -110,15 +110,15 @@ the latter is used by the flagship's heterogeneous sparse-coarse/dense-fine rout
 - **`METHODOLOGY.md`** — the measurement rules every perf script here follows (incl. which numbers are
   citable: local 3080Ti = engineering gates, A100 fleet = citable).
 
-## The local measurement suite (`rola_bench/suite/`)
+## The local measurement suite (`rola_bench/measure/`)
 
-`python -m rola_bench.suite run --target worktree:<rola checkout> [--reference worktree:<baseline>,label:master,...]`
+`python -m rola_bench.measure run --target worktree:<rola checkout> [--reference worktree:<baseline>,label:master,...]`
 measures rola checkouts with their own instruments (SASS, registers, phases, pipe counters, stall census, pipe
 timelines, interleaved timing sessions for every bench subject) as a graph of nodes keyed by what each result depends on
 (the binary, the instrument's code, the environment), runs only what is not stored, and keeps every result -- failures
 and repeated samples included -- in the measurements store (`rola-results`, rola's `store.root`). Relations between
 runs (a baseline, a ratio) are computed when the data is read. Standard library only; see
-[`rola_bench/suite/README.md`](rola_bench/suite/README.md).
+[`rola_bench/measure/README.md`](rola_bench/measure/README.md).
 
 ## Result store
 
@@ -126,7 +126,7 @@ Every result is stored through `rola_results` (the rola-results repository, the 
 `<bench>/<config>`. A fleet job plugs it into `fleet`'s `store_result` and `done_ids` (`rola_bench/jobs.py`): each
 pulled row is a sample of the record keyed by (bench, config, cell, image), stored once however often it is re-pulled,
 and a cell is done when the CURRENT image has an ok sample, so an image bump runs the grid again. The local MQAR grid
-stores beside it, keyed by its checkouts (`rola_bench/mqar/run_local_grid.py`). Every sample is kept, failures
+stores beside it, keyed by its checkouts (`rola_bench/mqar/local_grid.py`). Every sample is kept, failures
 included. `runtime/` and `fleet_ckpts` are operational state (gitignored). The per-cell JSON store that lived in
 `results/` until 2026-09-12 is archived outside the repository.
 

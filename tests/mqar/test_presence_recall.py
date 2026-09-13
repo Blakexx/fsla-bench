@@ -432,7 +432,7 @@ def test_every_run_id_parses_for_the_analysis():
     about would silently produce an empty headline table rather than an error."""
     import os
     from rola_bench.mqar.build_configs import build_configs
-    from rola_bench.mqar.graph_analysis import parse_run_id
+    from rola_bench.mqar.analysis.graph import parse_run_id
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     tags = {c["tag"] for c in _spec()["conditions"]}
@@ -468,7 +468,7 @@ def test_the_analysis_knows_this_task_and_its_chance_line():
     most of the task, so the criterion cannot be shared between them. The task is read off the
     spec's own `data.protocol.kind`, and a criterion at or below the chance line is refused —
     otherwise the reported crossing would be the threshold of GUESSING."""
-    from rola_bench.mqar.graph_analysis import TASKS, analyse, task_of
+    from rola_bench.mqar.analysis.graph import TASKS, analyse, task_of
     spec = _spec()
     task = task_of(spec)
     assert (task.chance, task.criterion) == (0.5, 0.75)
@@ -481,7 +481,7 @@ def test_the_analysis_resolves_the_demand_with_the_presence_generator():
     """`predicted_chi` REBUILDS each condition's episodes rather than reading a knob (the stamp is
     absent on a segment-cache hit), so it must dispatch to the generator the spec names — solving a
     presence condition with the graph-recall builder would raise or, worse, answer."""
-    from rola_bench.mqar.graph_analysis import predicted_chi
+    from rola_bench.mqar.analysis.graph import predicted_chi
     spec = _spec()
     conds = {c["tag"]: c for c in spec["conditions"]}
     for tag, L in (("presence-k16", 64), ("presence-k64", 256)):

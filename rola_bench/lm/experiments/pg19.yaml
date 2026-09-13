@@ -1,6 +1,6 @@
 # Small-scale LM — PG-19 (book-length long-range; streamed). ~30M backbone (hidden 256, 6 layers),
 # 15k steps, RoLA + matched-state GDN/GLA + attention. qk-norm on, z-loss off.
-# launch.py lm pg19
+# rola_bench/fleet/__main__.py lm pg19
 arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv, rola-rla-kappa-sym,
         rola-gla-kappa-asym, rola-gla-kappa-asym-conv, rola-gla-kappa-sym, gdn, gla, attn]
 seeds: [1337, 2024, 11]

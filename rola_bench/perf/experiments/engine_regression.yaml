@@ -12,7 +12,7 @@
 # is running), and you diff the two runs' results/perf/engine_regression/*.json externally.
 #
 # Launch (once per engine image):
-#   python launch.py perf engine_regression --boxes 1
+#   python -m rola_bench.fleet perf engine_regression --boxes 1
 
 benches: [engine-bench]
 reps: 20

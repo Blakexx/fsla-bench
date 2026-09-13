@@ -2,7 +2,7 @@
 
 Two DISTINCT things live under `rola_bench/perf/`, and this suite smoke-gates both:
 
-  * **paper_v1** (citable, A100 fleet only, `launch.py perf paper_v1`): FINAL RoLA vs REAL external
+  * **paper_v1** (citable, A100 fleet only, `rola_bench/fleet/__main__.py perf paper_v1`): FINAL RoLA vs REAL external
     implementations, layer-vs-layer via `scaling.py`'s mature harness — attn/SDPA, the flagship
     (`rola-base`/`rola-base-rla`, `scaling.build_rola_named`), and the canonical `fla_rola.layers`
     baselines (GLA/GatedDeltaNet/DeltaNet/GSA). train/prefill/decode(+graphed) x L-sweep. This suite's
@@ -10,7 +10,7 @@ Two DISTINCT things live under `rola_bench/perf/`, and this suite smoke-gates bo
     not a full `scaling.sweep()` (that's the fleet job's job).
   * **engine_regression** (engineering-only, NOT paper material): the internal CuTe-vs-Triton bake-off,
     `rola_bench.perf.engine_bench` at the flagship geometry — per
-    `rola_bench.named_configs.PERF_SUITE_CONFIGS` (`RoLA-base-rla`; the gla_scalar/kappa
+    `rola_bench.models.named_configs.PERF_SUITE_CONFIGS` (`RoLA-base-rla`; the gla_scalar/kappa
     `RoLA-base` and `RoLA-tied` cells were retired by campaign-prereqs E2/E3).
 
 Real (non-smoke) results land in `results/perf/` (CSVs from `scaling.py`) and as JSON lines from
@@ -18,7 +18,7 @@ Real (non-smoke) results land in `results/perf/` (CSVs from `scaling.py`) and as
 `rola_bench/perf/METHODOLOGY.md` for the measurement rules (local-vs-fleet, flock, warm-both-paths,
 median-N) and `experiments/{paper_v1,engine_regression}.yaml` for the pinned fleet configs.
 
-    flock /tmp/rola_gpu.lock python -m rola_bench.suites.perf --smoke
+    flock /tmp/rola_gpu.lock python -m rola_bench.perf.smoke --smoke
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _WORKTREE = "/home/blake/flash-linear-attention-rola-cuda-p0"
 
 
 def pinned_configs():
-    from rola_bench.named_configs import PERF_SUITE_CONFIGS
+    from rola_bench.models.named_configs import PERF_SUITE_CONFIGS
     return list(PERF_SUITE_CONFIGS)
 
 

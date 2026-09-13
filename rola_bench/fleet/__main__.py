@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Launch a RoLA benchmark on a fleet of rented GPUs.
 
-    python launch.py mqar canonical --boxes 6     # the canonical MQAR grid
-    python launch.py mqar normsym                 # any MQAR spec, by name
-    python launch.py mqar seed_confirm            # seed-confirmation
-    python launch.py lm   <config>                # other benchmarks (as they migrate)
+    python -m rola_bench.fleet mqar canonical --boxes 6     # the canonical MQAR grid
+    python -m rola_bench.fleet mqar normsym                 # any MQAR spec, by name
+    python -m rola_bench.fleet mqar seed_confirm            # seed-confirmation
+    python -m rola_bench.fleet lm   <config>                # other benchmarks (as they migrate)
 
 This is the suite's orchestration entrypoint. Each benchmark exposes a job BUILDER `f(config)->Job`
 (rola_bench.<bench>.job); we hand the built Job to the generic `fleet` Dispatcher, which owns

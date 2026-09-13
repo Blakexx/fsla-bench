@@ -4,7 +4,7 @@
 # selected kernel launches. Keep launch_count tiny unless investigating one kernel in detail.
 #
 # Launch after rebuilding the image:
-#   python launch.py perf profile_graph_deep --boxes 1 --batch 1
+#   python -m rola_bench.fleet perf profile_graph_deep --boxes 1 --batch 1
 benches: [profile-graph]
 
 profiles:

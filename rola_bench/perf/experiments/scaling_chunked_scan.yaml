@@ -4,7 +4,7 @@
 #   /home/blake/flash-linear-attention-rola-proto @ 37b96617
 #
 # Launch:
-#   python launch.py perf scaling_chunked_scan --boxes 1
+#   python -m rola_bench.fleet perf scaling_chunked_scan --boxes 1
 benches: [scaling-prefill]
 reps: 15
 fleet:

@@ -1,6 +1,6 @@
 # Small-scale LM — TinyStories. ~30M backbone (hidden 256, 6 layers), per-corpus L/nc/batch/seeds,
 # 15k steps, RoLA + matched-state GDN/GLA + attention. qk-norm on, z-loss off.
-# launch.py lm tinystories
+# rola_bench/fleet/__main__.py lm tinystories
 arms:  [rola-rla-kappa-asym, rola-rla-kappa-asym-conv, rola-rla-kappa-sym,
         rola-gla-kappa-asym, rola-gla-kappa-asym-conv, rola-gla-kappa-sym,
         gdn, gla, attn]

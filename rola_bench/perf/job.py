@@ -3,10 +3,10 @@
 `perf_job(config)` reads rola_bench/perf/experiments/<config>.yaml. Each bench entry maps to one
 scaling run_id (`perf-scaling-{train,prefill,decode}`), with layer arms interleaved round-robin
 inside the runner. Results: `rola_results` at perf/<config>. Launch:
-`launch.py perf scaling_chunked`.
+`rola_bench/fleet/__main__.py perf scaling_chunked`.
 """
-from rola_bench.jobs import make_job
-from rola_bench.spec import load, env_from
+from rola_bench.fleet.jobs import make_job
+from rola_bench.fleet.spec import load, env_from
 
 
 def perf_job(config="default"):
@@ -29,4 +29,4 @@ def perf_job(config="default"):
         return ids
 
     return make_job("perf", config, _work_list,
-                    "python -u -m rola_bench.perf.run_perf", fleet)
+                    "python -u -m rola_bench.perf.run", fleet)

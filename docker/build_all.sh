@@ -14,8 +14,8 @@
 # Requires the Docker daemon (start Docker Desktop on Windows first). After this finishes:
 #   cd /home/blake/rola-bench
 #   PY=/mnt/c/Users/Blake/Documents/VSCode/CLA/.venv/bin/python
-#   $PY launch.py perf --boxes 2      # kernel-efficiency on a clean cloud GPU
-#   $PY launch.py rank --boxes 8      # post-hoc rank over every checkpoint (ships .pt via payload)
+#   $PY rola_bench/fleet/__main__.py perf --boxes 2      # kernel-efficiency on a clean cloud GPU
+#   $PY rola_bench/fleet/__main__.py rank --boxes 8      # post-hoc rank over every checkpoint (ships .pt via payload)
 set -euo pipefail
 
 V="${IMG_VERSION:-v2}"
@@ -39,4 +39,4 @@ echo "==> [2/2] suite image blakeresearch/rola-bench:$V  (mqar+perf+rank)"
 IMG_VERSION="$V" bash "$RB/docker/build.sh" mqar --push
 
 echo "==> done. pushed fleet-base:$V + rola-bench:$V"
-echo "    launch:  python launch.py perf --boxes 2   |   python launch.py rank --boxes 8"
+echo "    launch:  python -m rola_bench.fleet perf --boxes 2   |   python -m rola_bench.fleet rank --boxes 8"
