@@ -94,9 +94,11 @@ def carry_nodes(t: Target, opt: Options, wanted: set[str]) -> list[Node]:
 
 
 def _timeline(t: Target, cell: str, dest: Path) -> None:
-    """pipe_timeline writes `<stem>.json` beside its capture; the capture itself is scratch."""
+    """pipe_timeline writes `<stem>.json` beside its capture; the capture itself is scratch, and the suite's record keeps
+    the JSON (`--no-record`: the tool stores nothing of its own)."""
     with tempfile.TemporaryDirectory(prefix="rola_suite_tl_") as tmp:
-        rc, text = sh([t.python, "tools/pipe_timeline.py", "--cell", cell, "--out", f"{tmp}/tl"], t.worktree, 3600)
+        rc, text = sh([t.python, "tools/pipe_timeline.py", "--cell", cell, "--out", f"{tmp}/tl", "--no-record"], t.worktree,
+                      3600)
         out = Path(tmp) / "tl.json"
         if not out.exists():
             raise RuntimeError(f"pipe_timeline exited {rc} without output:\n{text[-1500:]}")
