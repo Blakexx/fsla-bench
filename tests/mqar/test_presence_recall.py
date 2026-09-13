@@ -338,7 +338,7 @@ def test_gen_version_is_in_the_cache_key():
 def _spec():
     import os
     from rola_bench.mqar.build_configs import load_spec
-    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "presence_grid.yaml"))
 
 

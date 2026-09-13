@@ -43,9 +43,9 @@ def _instantiate(kernel_cfg, d_model):
 def _readback(name: str, module) -> tuple[int | None, int]:
     """(content, overhead) from the CONSTRUCTED module's own realized dimensions."""
     if name.endswith("RoLAMixer"):
-        stats = module.get_stats()
-        content = stats["n_heads"] * stats["num_chunks"] * stats["d_v"]
-        return content, stats["state_floats"] - content
+        from rola_bench.models.rola import state_floats
+
+        return state_floats(module)
     if name.endswith("LinearAttention"):        # vanilla-LA rung: H * k_head * v_head
         return module.key_dim * module.value_dim // module.num_heads, 0
     if name.endswith("GatedLinearAttention"):

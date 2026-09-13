@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-_EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
+_EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
 _SPECS = ("law_grid", "separation", "ood_recall", "canonical", "dmodel64",
           "cue_consistency", "graph_grid", "presence_grid")
 #: `router_bias` is PARKED by the standalone repoint and is deliberately NOT in `_SPECS`: its whole

@@ -4,12 +4,10 @@ One generator owns all the grid LOGIC (cell builders, the baseline shape/state-m
 naming); an experiment is just a YAML spec declaring the axes (backbone, data, lrs/seeds, and an
 `arms` list grouped into tiers).
 
-**REBUILT 2026-08-02 (Phase 1.3), against the V3 preset registry and the two-factor grid design.**
-What changed, and why each change is structural rather than cosmetic:
+The grid's axes:
 
-  * the `routed` arm builder speaks `rola_bench.mqar.instances.rola_instance(name, nc, ...)` — no
-    `d_qk`, no `kernel`, no `kernel_kwargs`. Those axes were deleted by the V3 architecture and the
-    presets keyed on them retired (`instances.RETIRED_INSTANCES`).
+  * the `routed` arm builds a RoLA cell (`rola_bench.models.rola`): a wiring at each state count, as zoology's mixer
+    over fla_rola.
   * **`seq_lens` is a first-class axis, crossed with `ncs`.** `L` used to be baked into the data
     preset, so `alpha_cap = N/L` was derivable post-hoc and sweepable never. Crossing them is what
     lets a spec walk `alpha_cap` through 1 from BOTH directions at fixed everything-else, which is
@@ -17,13 +15,10 @@ What changed, and why each change is structural rather than cosmetic:
   * **L-extrapolation is an axis, not a by-product**: `data.protocol.test_seq_lens` may contain
     lengths greater than the cell's train length, and those slices are reported separately.
   * **the addressing-entropy ladder `S = sum_l b_l`** is expressible: a routed arm may carry an
-    explicit `states_per_level` list (mixed radix), which `rola_instance` validates against `nc`
-    (audit §4.1 item 3).
+    explicit `states_per_level` list (mixed radix), which must multiply to `nc` (audit §4.1 item 3).
   * **the attention `d_qk` ladder** is expressible: `{build: attn, head_dims: [...]}` sweeps the
     per-head key width, which for zoology's MHA is `d_model / num_heads` — the one place `d_qk`
     legitimately survives the V3 migration, on the attention baseline only (audit §4.1 item 4).
-  * `sse_ladder` is GONE (`canonical_baselines.RETIRED_METHODS['sse']`: routing-family
-    reimplementations are excluded from the baseline set by ruling).
 
 Spec schema (see experiments/*.yaml):
   project_name: str
@@ -48,8 +43,8 @@ Spec schema (see experiments/*.yaml):
                               # `common.make_graph_data` / `common.make_presence_data`.
   tiers: {"<id>": [arm, ...]} # selected by the GRID_TIERS env (default all)
   arm kinds:
-    {build: routed, instance, tag, n_heads?, d_v?, states_per_level?, state_norm?, decay?,
-     router_bias?, kwargs?, lrs?, ncs?, seq_lens?, conditions?, run_id?}
+    {build: routed, instance, tag, n_heads?, d_v?, states_per_level?, decay?, router_bias?, lrs?, ncs?,
+     seq_lens?, conditions?, run_id?}      # instance: a wiring; decay: null or a rola decay source dict
         run_id template vars: {tag} {nc} {st} {lr:.0e} {seed} {d_model} {L} {alpha_cap} {cond}
         default: "grid-routed-{tag}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
     {build: baselines, methods: [..], shapes: [..]}
@@ -64,7 +59,8 @@ from rola_bench.mqar import common as C
 from rola_bench.mqar.experiments import canonical_baselines as _cb
 from rola_bench.mqar import realized_state
 from rola_bench.mqar.experiments.canonical_baselines import baseline_cell
-from rola_bench.mqar.instances import PresetRungUnavailable, rola_instance
+from rola_bench.models import rola as cells
+from rola_bench.mqar import MQAR_GEOM
 
 _ROUTED_RUNID = "grid-routed-{tag}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
 _BASELINE_RUNID = "grid-{method}-{shape}-nc{nc}_L{L}_st{st}_lr{lr:.0e}_s{seed}"
@@ -73,12 +69,9 @@ _ATTN_RUNID = "grid-mha-dqk{d_qk}_L{L}_lr{lr:.0e}_s{seed}"
 #: Minimum seeds for a published cell — see the check in `build_configs`.
 MIN_SEEDS = 3
 
-#: Retirement ledger for arm BUILDERS (not presets — those live in `instances.RETIRED_INSTANCES`).
-RETIRED_BUILDERS = {
-    "sse_ladder": "SSE is a routing-family method; the contender ladder admits one occupant per "
-                  "TRANSITION-STRUCTURE rung and no routing-family reimplementations "
-                  "(canonical_baselines.RETIRED_METHODS['sse']).",
-}
+#: The fields a routed arm may carry; any other is refused rather than silently ignored.
+ROUTED_FIELDS = frozenset({"build", "instance", "tag", "n_heads", "d_v", "states_per_level", "decay", "router_bias",
+                           "lrs", "ncs", "seq_lens", "conditions", "run_id"})
 
 
 def _conditions(spec):
@@ -277,11 +270,11 @@ def build_configs(spec):
     # --- arm builders (run_id formats are load-bearing: they key the result rows) ---
     def routed(arm):
         rid = arm.get("run_id", _ROUTED_RUNID)
-        extra = dict(arm.get("kwargs", {}))       # forwarded verbatim to the mixer (V3 kwargs only)
-        preset_kw = {k: arm[k] for k in ("n_heads", "d_v", "states_per_level", "state_norm",
-                                         "decay", "router_bias", "decay_target_leaf_rate",
-                                         "decay_inclusion_tick")
-                     if k in arm}
+        unknown = sorted(set(arm) - ROUTED_FIELDS)
+        if unknown:
+            raise ValueError(f"routed arm {arm.get('tag')!r} carries field(s) {unknown} that are not a RoLA cell's; "
+                             f"expected a subset of {sorted(ROUTED_FIELDS)}")
+        n_heads, d_v = arm.get("n_heads", MQAR_GEOM["n_heads"]), arm.get("d_v", MQAR_GEOM["d_v"])
         a_lrs, a_ncs, a_lens = _axes(arm)
         a_conds = _arm_conds(arm)
         dropped = []
@@ -289,15 +282,15 @@ def build_configs(spec):
             for L in a_lens:
                 for nc in a_ncs:
                     try:
-                        kw = rola_instance(arm["instance"], nc, **preset_kw)
-                    except PresetRungUnavailable as e:
+                        cell = cells.cell(arm["instance"], nc, widths=arm.get("states_per_level"),
+                                          decay=arm.get("decay"), router_bias=arm.get("router_bias", True))
+                    except cells.NoSpelling as e:
                         # Structural, not a failure: a D=2 wiring has no spelling at N=2. Reported
                         # exactly like a baseline's kernel ceiling — an omitted cell with a reason.
                         if seed == seeds[0] and L == a_lens[0] and ctag == a_conds[0][0]:
                             dropped.append(f"{arm['tag']}/nc{nc}: {e}")
                         continue
-                    kw.update(extra)
-                    kernel = dict(name="zoology.mixers.rola.RoLAMixer", kwargs=kw)
+                    kernel = cells.mixer_config(cell, n_heads=n_heads, d_v=d_v)
                     st = realized_st(kernel)
                     for lr in a_lrs:
                         add(kernel, _fmt(rid, ctag, tag=arm["tag"], nc=nc, st=st, lr=lr, seed=seed,
@@ -373,8 +366,6 @@ def build_configs(spec):
     for t in chosen:                       # preserve declaration order (== run order)
         for arm in tiers[t]:
             kind = arm["build"]
-            if kind in RETIRED_BUILDERS:
-                raise ValueError(f"arm builder {kind!r} is RETIRED: {RETIRED_BUILDERS[kind]}")
             if kind not in builders:
                 raise ValueError(f"unknown arm builder {kind!r}; expected one of {sorted(builders)}")
             builders[kind](arm)

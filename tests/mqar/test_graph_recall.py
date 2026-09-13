@@ -549,7 +549,7 @@ def test_predicted_N_is_stamped_for_every_construction():
 def _spec():
     import os
     from rola_bench.mqar.build_configs import load_spec
-    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "graph_grid.yaml"))
 
 

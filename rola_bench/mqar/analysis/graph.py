@@ -56,8 +56,8 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-REPO = Path(__file__).resolve().parents[2]
-_EXP_DIR = Path(__file__).resolve().parent / "experiments"
+REPO = Path(__file__).resolve().parents[3]
+_EXP_DIR = Path(__file__).resolve().parents[1] / "experiments"
 
 
 class Task(NamedTuple):

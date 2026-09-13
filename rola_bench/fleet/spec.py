@@ -13,7 +13,7 @@ import yaml
 
 
 def experiments_dir(bench):
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), bench, "experiments")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), bench, "experiments")
 
 
 def load(bench, config):

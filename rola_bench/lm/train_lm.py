@@ -1,25 +1,21 @@
 """Single-GPU RoLA LM training via the canonical HF Trainer + datasets (run_clm recipe):
 load corpus -> GPT-2 BPE tokenize -> group into block_size -> Trainer (loop/optim/sched/
-ckpt/eval are HF's, not hand-rolled). RoLA is an AutoModel-registered HF model (rola_hf),
-so it plugs straight in; the saved checkpoint runs in lm-evaluation-harness as-is.
+ckpt/eval are HF's, not hand-rolled). Every arm is an fla_rola HF model (`arms`), so the saved
+checkpoint runs in lm-evaluation-harness as-is.
 
-  python train_lm.py --rola_instance rola-rla-asym --hidden_size 512 --num_hidden_layers 12 \
-     --num_states 16 --d_v 16 --num_heads 8 --max_steps 20000
+  python train_lm.py --arm rola-base-rla --max_steps 20000
 
 For SCALED multi-GPU FineWeb pretraining use flame (torchtitan) instead; this is the cheap
 single-GPU path (WikiText-103 first).
 """
-import argparse, math, os, json, time, tarfile, tempfile
+import argparse, math, os, json, tarfile, tempfile
 from itertools import chain
 import torch
 from transformers.trainer_utils import get_last_checkpoint
 from transformers import TrainerCallback
-from rola_bench import engine as _engine
-_engine.register_hf_models()   # registers RoLA with HF AutoClasses
-from rola_bench.engine import RoLAConfig
-import arms  # iso-backbone registry (RoLA/GDN/GLA/attention)
+import arms  # iso-backbone registry (RoLA/GDN/GLA/attention); importing it registers fla_rola's HF models
 from datasets import load_dataset
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments,
+from transformers import (AutoTokenizer, Trainer, TrainingArguments,
                           DataCollatorForLanguageModeling, default_data_collator)
 
 
@@ -115,10 +111,8 @@ def _ckpt_config_matches(ck, cfg):
         cj = json.load(open(os.path.join(ck, "config.json")))
     except Exception:
         return False
-    # RoLAConfig (#config-refactor 2026-07-06) exposes levels_per_head/states_per_level, not
-    # states_per_head -- check those instead (still guards the same regime-collision gotcha).
-    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "levels_per_head",
-              "states_per_level", "d_v", "router_bias"):
+    for k in ("model_type", "hidden_size", "num_hidden_layers", "vocab_size", "levels", "head_v_dim", "decay",
+              "router_bias"):
         want = getattr(cfg, k, None)
         got = cj.get(k, False if k == "router_bias" else None)
         if want is not None and got is not None and got != want:
@@ -161,52 +155,13 @@ def _restore_resume(run_id, out_dir, cfg):
     return None
 
 
-def _strict_rola_config(**kw):
-    """`RoLAConfig(**kw)`, but an unknown kwarg RAISES instead of being silently absorbed.
-
-    Finding F3 (2026-08-02): HF's `PretrainedConfig` swallows any keyword it does not recognize and
-    stores it on the config object, so `RoLAConfig(d_qk=16)` was accepted, serialized into every
-    checkpoint's `config.json`, and had no effect whatsoever — a dead knob that looked live for as
-    long as anyone cared to read the call site. The dead `d_qk` is deleted; this guard is what stops
-    the next one. Validated against `RoLAConfig.__init__`'s OWN signature (never a hand-maintained
-    field list, which would rot the same way), minus its `**kwargs` catch-all; the backbone fields
-    HF itself defines (`vocab_size`, `bos_token_id`, ...) are all named parameters there.
-    """
-    import inspect
-    params = inspect.signature(RoLAConfig.__init__).parameters
-    known = {n for n, p in params.items()
-             if n != 'self' and p.kind is not inspect.Parameter.VAR_KEYWORD}
-    unknown = sorted(set(kw) - known)
-    if unknown:
-        raise TypeError(
-            f"RoLAConfig got unknown kwarg(s) {unknown}; HF would ABSORB them silently and they "
-            f"would do nothing (finding F3). Known RoLAConfig fields: {sorted(known)}")
-    return RoLAConfig(**kw)
-
-
 def main():
     p = argparse.ArgumentParser()
-    # --arm selects from the 5-arm iso-backbone registry (arms.ARMS): the canonical RoLA-vs-attention
-    # LM comparison. When set, it OVERRIDES the legacy --rola_instance/geometry flags below (those
-    # remain for ad-hoc single-RoLA runs). Fleet contract: --arm + --results + --ckpt_dir.
-    # No choices=: structure-suffix arms ("rola-...__nhX_dvY") are valid but dynamic, so arm_config
-    # does the validation (and raises loud on a genuinely unknown arm) — a fixed choices list rejected them.
-    p.add_argument("--arm", default=None,
-                   help="registry arm (RoLA kappa variants, optional asym -conv arms, gdn, gla, attn, or <base>__nhX_dvY)")
+    # Fleet contract: --arm + --results + --ckpt_dir.
+    p.add_argument("--arm", required=True, choices=arms.ARMS, help="an arm of the iso-backbone registry (arms.ARMS)")
     p.add_argument("--seed", type=int, default=1337)
     p.add_argument("--results", default=None, help="fleet result ndjson to append {run_id, ok, ...}")
     p.add_argument("--ckpt_dir", default=os.environ.get("FLEET_CKPT_DIR"), help="dir to save_pretrained into")
-    p.add_argument("--rola_instance", default="rola-rla-asym")
-    p.add_argument("--hidden_size", type=int, default=512)
-    p.add_argument("--num_hidden_layers", type=int, default=12)
-    p.add_argument("--num_heads", type=int, default=8)
-    p.add_argument("--num_states", type=int, default=16)
-    # --d_qk DELETED 2026-08-02 (finding F3): the V3 layer owns no Q/K surface, `RoLAConfig` has no
-    # `d_qk` field, and HF configs absorb unknown kwargs SILENTLY — so the flag was accepted, stored
-    # on the config, and did nothing at all. `_strict_rola_config` below now makes any such kwarg
-    # raise instead of being absorbed. An argparse flag that is gone is a loud failure; a kwarg that
-    # is absorbed is not.
-    p.add_argument("--d_v", type=int, default=16)
     p.add_argument("--dataset", default="wikitext")
     p.add_argument("--dataset_config", default="wikitext-103-raw-v1")
     p.add_argument("--block_size", type=int, default=1024)
@@ -225,8 +180,7 @@ def main():
                    help="slice train to N docs (calibration / token-budgeted runs)")
     a = p.parse_args()
     torch.manual_seed(a.seed)
-    # run_id: arm path -> "<arm>_s<seed>" (fleet work-item id); legacy path -> the old descriptive id.
-    run_id = f"{a.arm}_s{a.seed}" if a.arm else f"{a.rola_instance}-d{a.hidden_size}L{a.num_hidden_layers}"
+    run_id = f"{a.arm}_s{a.seed}"                    # the fleet work-item id
     out = a.out_dir or (os.path.join(a.ckpt_dir, run_id) if a.ckpt_dir else f"lm_runs/{run_id}")
 
     # text8 is CHAR-level (27-symbol vocab, no GPT-2 BPE): pre-grouped LM blocks, default collator,
@@ -240,42 +194,18 @@ def main():
         tok = AutoTokenizer.from_pretrained("gpt2"); tok.pad_token = tok.eos_token
         vocab_sz = len(tok); eos_id = tok.eos_token_id
         ds = build_dataset(a.dataset, a.dataset_config, a.block_size, tok, a.num_proc, a.max_train_samples)
-    if a.arm:                                            # iso-backbone registry arm (the LM comparison)
-        model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
-        state_floats = arms.recurrent_state_floats(a.arm)
-        state_overhead_floats = arms.recurrent_state_overhead_floats(a.arm)
-        static_decay_parameter_floats = arms.static_decay_parameter_floats(a.arm)
-    else:                                                # legacy single-RoLA run
-        # --num_states (nc) -> flat (levels_per_head=1, states_per_level=nc); RoLAConfig has no
-        # states_per_head kwarg anymore (#config-refactor 2026-07-06). No d_qk (F1/F3: the V3 layer
-        # owns no Q/K surface, and the state formula that used it was wrong by exactly that factor).
-        cfg = _strict_rola_config(rola_instance=a.rola_instance, levels_per_head=1,
-                                  states_per_level=a.num_states,
-                                  d_v=a.d_v, num_heads=a.num_heads, hidden_size=a.hidden_size,
-                                  num_hidden_layers=a.num_hidden_layers, vocab_size=vocab_sz,
-                                  bos_token_id=eos_id, eos_token_id=eos_id)
-        model = AutoModelForCausalLM.from_config(cfg)
-        state_floats = state_overhead_floats = None      # filled from the built model, just below
-        static_decay_parameter_floats = 0
-    # THE REALIZED STATE (finding F1): read back off the model's own first mixer, which is what this
-    # module's docstring always claimed happened and what makes `state_floats` in a result row an
-    # OBSERVATION rather than a restatement of the registry. When both exist they must agree, and a
-    # disagreement is loud: a silent mismatch between the registry the baselines were sized against
-    # and the object that trained is precisely the failure F1 recorded (a 16x one, undetected across
-    # every published LM row).
+    model = arms.build_arm(a.arm, vocab_size=vocab_sz, bos_token_id=eos_id, eos_token_id=eos_id)
+    #: THE REALIZED STATE: the registry's number for the arm's geometry and the built model's own must agree, or the
+    #: matched-state comparison is against a model that did not train.
+    state_floats, state_overhead_floats = arms.recurrent_state_floats(a.arm)
     realized_state, realized_overhead = arms.realized_state_floats_from_model(model)
-    if realized_state is not None:
-        if state_floats is not None and realized_state != state_floats:
-            raise RuntimeError(
-                f"arm {a.arm!r}: registry says state_floats={state_floats} but the BUILT model "
-                f"realizes {realized_state}. The matched-state comparison is only as good as this "
-                "equality — fix the geometry, do not report either number.")
-        state_floats = realized_state
-        if state_overhead_floats is None:
-            state_overhead_floats = realized_overhead
+    if realized_state is not None and (realized_state, realized_overhead) != (state_floats, state_overhead_floats):
+        raise RuntimeError(f"arm {a.arm!r}: the registry says state {state_floats}+{state_overhead_floats} but the "
+                           f"built model realizes {realized_state}+{realized_overhead}")
+    decay_parameter_floats = arms.decay_parameter_floats(model)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] {run_id} {n_params/1e6:.1f}M params  state/layer={state_floats} "
-          f"state-overhead/layer={state_overhead_floats} static-decay-params={static_decay_parameter_floats}",
+          f"state-overhead/layer={state_overhead_floats} decay-params={decay_parameter_floats}",
           flush=True)
 
     # transformers 5.x expects each module's _tied_weights_keys to be a dict {tied: source}; fla's
@@ -349,14 +279,9 @@ def main():
             print(f"[ckpt-sync] WARN final tar failed: {e!r}", flush=True)
 
     if a.results:   # fleet result row — recall-downstream eval is a separate post-hoc pass over the ckpt
-        row = dict(run_id=run_id, ok=True, arm=a.arm or a.rola_instance, seed=a.seed,
+        row = dict(run_id=run_id, ok=True, arm=a.arm, seed=a.seed,
                    params_m=round(n_params / 1e6, 2), state_floats=state_floats,
-                   state_overhead_floats=state_overhead_floats,
-                   # everything the BUILT layer counts as state beyond the matched content axis
-                   # (denominator sidecar + the short-conv cache when conv is on) — see
-                   # arms.realized_state_floats_from_model.
-                   realized_state_overhead_floats=realized_overhead,
-                   static_decay_parameter_floats=static_decay_parameter_floats,
+                   state_overhead_floats=state_overhead_floats, decay_parameter_floats=decay_parameter_floats,
                    hidden_size=getattr(model.config, "hidden_size", None),
                    num_hidden_layers=getattr(model.config, "num_hidden_layers", None),
                    tokens=a.max_steps * a.batch_size * a.grad_accum * a.block_size,

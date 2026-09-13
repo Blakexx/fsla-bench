@@ -1,14 +1,14 @@
-"""Runner for RLA sweeps (full sweep and pilot share this runner).
+"""The MQAR runner: one zoology training subprocess per cell of an experiment spec, one result row per cell.
 
 Usage:
-  python run.py --config rla_sweep   # full 400-run sweep
-  python run.py --config rla_pilot   # 6-run G2 pilot
-  python run.py --config rla_sweep --shard 0/4   # one shard
+  python run.py --config canonical               # every cell of experiments/canonical.yaml
+  python run.py --config canonical --shard 0/4   # one shard
 
 Per-run JSONL fields:
   run_id, idx, ok, returncode, elapsed,
   max_acc, grok_ep, epochs_run,
-  state_floats (read from STATE_FLOATS_JSON — actual instantiated state, NOT formula),
+  state_floats, state_content_floats, mixer (the cell's recurrent state read off its mixer built on CPU, and
+  that mixer's config: never a formula),
   n_params (total trainable, parsed from Zoology stdout if present),
   slice_accs (per-difficulty kv accuracy from slice_keys=["num_kv_pairs"]),
   valid_acc_curve, env, stderr_tail.
@@ -23,35 +23,11 @@ PYTHON = sys.executable
 _EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "experiments")
 
 
-#: RETIRED experiment specs (Phase 1.5, 2026-08-02). A spec whose AXIS was deleted by the V3
-#: architecture cannot be re-pinned — re-pointing it at a live knob would publish a different
-#: experiment under a name that already has result rows attached to it. Same contract as
-#: `named_configs.RETIRED_CONFIGS` and `instances.RETIRED_INSTANCES`: refuse by name, with the reason.
-RETIRED_SPECS = {
-    "qknorm_ablation":
-        "its ENTIRE axis was `qk_norm=True` vs False. V3 deleted the Q/K surface (ROLA_V3_SPEC.md "
-        "§1.2) — there is no q_norm/k_norm module on the layer, so the ablation has no subject. No "
-        "successor: the question does not exist in the V3 architecture.",
-    "normsym":
-        "swept 3 normalizations (global / per_state / kappa) x tied/untied. Two of the three "
-        "normalizations are retired vocabulary (campaign-prereqs E2: the live set is {'raw', "
-        "'global'}, and kappa's motivation dissolved with "
-        "[[rola-self-normalizing-dead-leaves-inert]]), so the surviving 1x2 cell is not a norm "
-        "sweep. SUCCESSOR: the tied/untied half lives on as the coupling-independence presets "
-        "'rola-arm1-tied' / 'rola-d1-dense-tied' (mqar.instances), runnable inside law_grid.yaml; "
-        "the normalization half is a registry axis on the layer path "
-        "(named_configs 'RoLA-base-rla-raw' / 'RoLA-base-levelsplit-raw') and is not yet an MQAR "
-        "spec — recorded as an open gap, not silently dropped.",
-}
-
-
 def load_configs(name):
     """Load (configs, configs_envs) for an experiment. `name` is a declarative spec — a basename
     resolving to experiments/<name>.yaml (or a path), expanded by the generic generator
     (rola_bench.mqar.build_configs). A bare name with no matching .yaml falls back to importing a
     legacy experiment module (back-compat)."""
-    if name in RETIRED_SPECS:
-        raise ValueError(f"MQAR spec {name!r} is RETIRED: {RETIRED_SPECS[name]}")
     spec = name if name.endswith((".yaml", ".yml")) else os.path.join(_EXP_DIR, f"{name}.yaml")
     if os.path.exists(spec):
         from rola_bench.mqar.build_configs import build_configs, load_spec
@@ -78,6 +54,17 @@ def _decode_json_at(text, start):
     parse warning and `state_floats = None` on every routed row, i.e. the capacity coordinate
     missing from exactly the arms the grid is about."""
     return _JSON_DECODER.raw_decode(text, start)[0]
+
+
+def cell_state(cfg) -> dict:
+    """The cell's realized recurrent state per layer and its mixer's config: the mixer the grid built (the hybrid's
+    second module, `common.wrap_hybrid`) constructed on CPU and read back (`realized_state`)."""
+    from rola_bench.mqar import realized_state
+
+    kernel = cfg.model.sequence_mixer.kwargs["configs"][1]
+    content, overhead = realized_state.state_floats(kernel, cfg.model.d_model)
+    total = None if content is None else content + overhead
+    return {"state_floats": total, "state_content_floats": content, "mixer": kernel}
 
 
 def parse_stdout(stdout):
@@ -132,21 +119,6 @@ def parse_stdout(stdout):
     best_overall = best_ep["overall"] if best_ep else 0.0
     final_overall = epoch_curve[-1]["overall"] if epoch_curve else 0.0
     best_ep_idx = best_ep["epoch"] if best_ep else None
-
-    # RoLA STATE_FLOATS_JSON — one per kernel layer. Capture all & sum n_heads ×
-    # num_chunks × per_entry from each. For state-axis we use the per-layer
-    # state (all kernel layers are identical), so just take the first.
-    state_records = []
-    for m in re.finditer(r'STATE_FLOATS_JSON ', stdout):
-        try:
-            state_records.append(_decode_json_at(stdout, m.end()))
-        except Exception as e:
-            print(f"WARN: STATE_FLOATS_JSON parse failed: {e}", flush=True)
-    state_floats = state_records[0]['state_floats'] if state_records else None
-    state_per_layer = [r['state_floats'] for r in state_records] if state_records else []
-    # Resolved RoLA config from the actual instantiation (self-documenting provenance: kernel /
-    # state_norm / qk_norm / tie_routers / dims) — so a cell isn't decoded from the run_id tag alone.
-    rola_config = state_records[0].get('config') if state_records else None
 
     # MODEL_STATS_JSON line emitted by zoology/logger.py.
     n_params = None
@@ -260,8 +232,6 @@ def parse_stdout(stdout):
         final_overall=final_overall,
         best_overall=best_overall,
         best_ep_idx=best_ep_idx,
-        state_floats=state_floats, state_per_layer=state_per_layer,
-        rola_config=rola_config,
         model_state_total=model_state_total,
         n_params=n_params,
         fwd_flops=fwd_flops,
@@ -316,7 +286,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         env["BEST_CKPT_PATH"] = f"{ckpt_dir}/{run_id}.pt"
     env["WANDB_MODE"] = "offline"
     # Disable wandb's stdout interception so our FLOPS_JSON / MODEL_STATS_JSON
-    # / STATE_FLOATS_JSON lines reliably reach the subprocess's captured stdout.
+    # lines reliably reach the subprocess's captured stdout.
     # Without this, wandb's console-capture eats some of our prints (notably
     # FLOPS_JSON), leaving the runner unable to parse FLOPs.
     env["WANDB_CONSOLE"] = "off"
@@ -325,7 +295,6 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         if k.startswith("MQAR_ROUTER_STD") or k.startswith("MQAR_CURR"):
             del env[k]
     env.update(env_overrides)
-    env["ROLA_PRINT_STATE_JSON"] = "1"
 
     t0 = time.time()
     proc = None
@@ -345,7 +314,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         # Popen + tee: stream subprocess stdout to parent's stdout in real time
         # (so Cloud Logging / local terminal see Lightning progress, epoch
         # metrics, etc. as they happen) AND buffer for post-hoc parsing of
-        # FLOPS_JSON, STATE_FLOATS_JSON, MODEL_STATS_JSON, valid/accuracy lines.
+        # FLOPS_JSON, MODEL_STATS_JSON, valid/accuracy lines.
         proc = subprocess.Popen(
             [PYTHON, "-m", "zoology.launch", str(tmp_path)],
             cwd=str(ZOO), env=env,
@@ -373,7 +342,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         return {
             "run_id": run_id, "idx": idx, "ok": ok, "elapsed": elapsed,
             "returncode": proc.returncode, "env": env_overrides,
-            **parsed,
+            **cell_state(cfg), **parsed,
             "stderr_tail": full_stdout[-2000:] if not ok else "",
         }
     except subprocess.TimeoutExpired:
@@ -381,7 +350,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         # (a timed-out run that reached epoch 30 still has citable best-checkpoint metrics).
         parsed = parse_stdout("".join(buffer)) if buffer else {}
         return {"run_id": run_id, "idx": idx, "ok": False, "elapsed": 12000, "error": "timeout",
-                "env": env_overrides, **parsed}
+                "env": env_overrides, **cell_state(cfg), **parsed}
     finally:
         signal.signal(signal.SIGTERM, old_handler)
         try:

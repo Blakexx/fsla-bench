@@ -27,7 +27,7 @@ import os
 import numpy as np
 import pytest
 
-_EXP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mqar", "experiments")
+_EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar", "experiments")
 
 # A small, statistically clean instance: P = 4 keeps the plug-in entropy estimator's bias far below
 # the tolerance (16 address states over 80k samples), and kv = 4 keeps G <= P as the generator

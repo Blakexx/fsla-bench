@@ -10,12 +10,9 @@ canonical occupant per TRANSITION-STRUCTURE rung, and nothing else:
   | gated delta rule         | `g(I - b k k^T) S + b k v^T` (state-dependent erasure) | `gdn` (FLA `GatedDeltaNet`) |
   | attention                | unbounded KV cache                      | `attn` (the MHA oracle, in `build_configs`) |
 
-RETIRED from the ladder, with reasons (`RETIRED_METHODS`): `hedgehog` and `based` occupy the
-vanilla-LA rung ALREADY held by `rla` — they differ only in the feature map phi, which is a
-map-family axis, not a transition-structure rung, and RoLA's own map-family control is the D1-dense
-preset (`mqar.instances.rola-d1-dense`). `sse_ladder` is a ROUTING-family reimplementation and the
-ruling excludes those outright: a second routed method is not a baseline for the routed method, it
-is an unratified competitor implementation whose cells nobody here can defend.
+One occupant per rung: a method differing from an occupant only in its feature map (hedgehog, Based) is a map-family
+axis, not a rung, and RoLA's own map-family control is the D1-dense wiring; a routing-family method is a competitor,
+not a baseline.
 
 Every surviving baseline is the method's OWN published implementation, sharing ZERO code with RoLA.
 No routing, no virtual heads, no shared feature-map or normalization scaffold.
@@ -48,7 +45,7 @@ state (not the nominal target) is the matched-state x-coordinate in the table.
 """
 import math
 
-from rola_bench.mqar.instances import MQAR_GEOM, content_state_floats
+from rola_bench.mqar import MQAR_GEOM
 
 #: The HELD value width for the `wide` and `heads` shapes. Pinned to RoLA's own `d_v` at the MQAR
 #: geometry so "wide" means "same value width as RoLA, wider keys" rather than "a different value
@@ -64,9 +61,8 @@ MAX_BASELINE_HEADS = 64
 MAX_GDN_HEAD_DIM = 256
 BASE_H = MQAR_GEOM["n_heads"]
 #: The matched-state reference: RoLA's CONTENT recurrent floats at the pinned MQAR geometry.
-#: Derived from `instances.MQAR_GEOM`, never a literal — a geometry re-pin moves the baselines with
-#: it, which is the property the pre-V3 `624*nc` constant did not have. `st` in every run_id.
-REF = lambda nc: int(content_state_floats(nc))
+#: Derived from `common.MQAR_GEOM`, never a literal: H * N * d_v, so a geometry re-pin moves the baselines with it.
+REF = lambda nc: MQAR_GEOM["n_heads"] * int(nc) * MQAR_GEOM["d_v"]
 
 
 def _gla(d_k_total, d_v_total, num_heads):
@@ -110,8 +106,6 @@ def baseline_cell(method, shape, nc):
     STRUCTURAL EXIT (the method's own kernel/memory bound is reached at this rung — GDN's
     `head_dim` cap, the `heads` shape's activation bound). `build_configs` logs every omission.
     """
-    if method in RETIRED_METHODS:
-        raise ValueError(f"MQAR baseline method {method!r} is RETIRED: {RETIRED_METHODS[method]}")
     S = REF(nc)
     H = BASE_H
     if method == "rla":                                   # vanilla LA rung, elu feature map
@@ -149,25 +143,3 @@ def baseline_cell(method, shape, nc):
 METHODS = ["rla", "gla", "gdn"]
 SHAPES = ["wide", "square", "heads"]
 NCS = [2, 4, 8, 16, 32, 64, 128, 256]
-
-#: Retirement ledger for the contender set (ruling 2026-08-02: one occupant per transition-structure
-#: rung; no routing-family reimplementations). `baseline_cell` refuses these by name so a stale spec
-#: fails loudly instead of quietly running a different comparison.
-RETIRED_METHODS: dict[str, str] = {
-    "hedgehog":
-        "occupies the VANILLA-LA rung, which `rla` already holds. It differs from `rla` only in the "
-        "feature map phi (softmax([x,-x]) vs elu) — a map-family axis, not a transition-structure "
-        "rung. RoLA's own map-family control is the D1-dense preset "
-        "(mqar.instances.'rola-d1-dense'), so the comparison the hedgehog arm was making is now made "
-        "inside the RoLA family at matched geometry.",
-    "based":
-        "also the vanilla-LA rung (taylor_exp feature map), and additionally it has no independent "
-        "value width — its single head sees the full d_model, so `square`/`heads` were undefined and "
-        "its state ladder was never shape-matched to the others. Retired for the same rung-collision "
-        "reason as hedgehog.",
-    "sse":
-        "a ROUTING-family method. The ruling excludes routing-family reimplementations from the "
-        "baseline set outright: a second routed method is not a control for the routed method under "
-        "test, and its cells would be an unratified third-party implementation this repo cannot "
-        "defend at publication. The `sse_ladder` arm builder retires with it.",
-}

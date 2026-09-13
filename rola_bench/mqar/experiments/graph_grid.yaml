@@ -283,13 +283,13 @@ tiers:
   # so the arm tag is the only thing that differs in the run_id. The third rung (a time clock) has no
   # V3 spelling — see PREDICTED-4.
   "decay":
-    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1-mass, decay: leaf_mass,
+    - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1-mass, decay: {source: learned},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
-    - {build: routed, instance: rola-arm2-union, tag: arm2-mass, decay: leaf_mass,
+    - {build: routed, instance: rola-arm2-union, tag: arm2-mass, decay: {source: learned},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
-    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3-mass, decay: leaf_mass,
+    - {build: routed, instance: rola-arm3-levelsplit, tag: arm3-mass, decay: {source: learned},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
-    - {build: routed, instance: rola-d1-dense, tag: d1-mass, decay: leaf_mass,
+    - {build: routed, instance: rola-d1-dense, tag: d1-mass, decay: {source: learned},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
   # T5 — THE NATURAL-DISTRIBUTION PROXY. The ladder brackets the MEASURED demand (~125), not the
   # item count (16) — which is the whole prediction.
