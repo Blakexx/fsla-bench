@@ -1,6 +1,6 @@
 """Single-GPU RoLA LM training via the canonical HF Trainer + datasets (run_clm recipe):
 load corpus -> GPT-2 BPE tokenize -> group into block_size -> Trainer (loop/optim/sched/
-ckpt/eval are HF's, not hand-rolled). Every arm is an fla_rola HF model (`arms`), so the saved
+ckpt/eval are HF's, not hand-rolled). Every arm is an fla HF model (`arms`), so the saved
 checkpoint runs in lm-evaluation-harness as-is.
 
   python train_lm.py --arm rola-base-rla --max_steps 20000
@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 from itertools import chain
 
-import arms  # iso-backbone registry (RoLA/GDN/GLA/attention); importing it registers fla_rola's HF models
+import arms  # iso-backbone registry (RoLA/GDN/GLA/attention); importing it registers fla's HF models
 import torch
 from datasets import load_dataset
 from transformers import (

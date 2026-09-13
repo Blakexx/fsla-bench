@@ -1,8 +1,8 @@
 """The scaling benchmark: RoLA's layers against attention and the FLA baselines, layer against layer, over L.
 
 Arms (`SCALE_ARMS`): `attn` (causal SDPA attention, the O(L^2) reference with a growing KV cache), the FLA baseline
-layers from fla_rola's fork (`gla`, `gdn`, `deltanet`, `gsa`, each at its canonical geometry), and the named RoLA cells
-(`rola_bench.models.rola.NAMED`), each built through fla_rola at N states per head and value width d_v. Every arm is its
+layers from fla's (`gla`, `gdn`, `deltanet`, `gsa`, each at its canonical geometry), and the named RoLA cells
+(`rola_bench.models.rola.NAMED`), each built through fla at N states per head and value width d_v. Every arm is its
 canonical `nn.Module` at d_model = DM, timed as `module(x)`.
 
 Axes:
@@ -123,14 +123,14 @@ class _CausalMHA(torch.nn.Module):
 
 
 def build_baseline(kind):
-    import fla_rola.layers as layers
+    import fla.layers as layers
 
     return getattr(layers, BASELINE_CLASSES[kind])(hidden_size=DM, use_short_conv=False, layer_idx=0,
                                                   **BASELINE_GEOM[kind]).to(C.DEV, C.DT)
 
 
 def build_rola(kind, n, dv):
-    """A named RoLA cell at N states per head (uniform widths) and value width d_v, as an fla_rola layer."""
+    """A named RoLA cell at N states per head (uniform widths) and value width d_v, as an fla layer."""
     return cells.layer(cells.named(kind, n), hidden_size=DM, num_heads=C.H, head_v_dim=dv).to(C.DEV, C.DT)
 
 
@@ -242,7 +242,7 @@ def _prepare(bench, L, n, dv, spec):
 
 def _decode_cache_sample(module, L, graphed=False):
     """One decode step into a state seeded by a bounded prefill, through FLA's cache contract."""
-    from fla_rola.models.utils import Cache
+    from fla.models.utils import Cache
 
     module.eval()
     x_pre = torch.randn(C.B, min(max(1, L), SEED_PREFILL), DM, device=C.DEV, dtype=C.DT)

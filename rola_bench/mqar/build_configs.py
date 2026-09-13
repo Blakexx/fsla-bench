@@ -7,7 +7,7 @@ naming); an experiment is just a YAML spec declaring the axes (backbone, data, l
 The grid's axes:
 
   * the `routed` arm builds a RoLA cell (`rola_bench.models.rola`): a wiring at each state count, as zoology's mixer
-    over fla_rola.
+    over fla.
   * **`seq_lens` is a first-class axis, crossed with `ncs`.** `L` used to be baked into the data
     preset, so `alpha_cap = N/L` was derivable post-hoc and sweepable never. Crossing them is what
     lets a spec walk `alpha_cap` through 1 from BOTH directions at fixed everything-else, which is

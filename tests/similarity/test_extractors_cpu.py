@@ -2,8 +2,8 @@
 
 Builds a tiny REAL instance of each baseline layer and runs its extractor, asserting the
 returned M is [B,H,L,L], finite, and respects the feature-dim rank bound — for BOTH causal
-settings (unmasked rank-law object + the literal causal operator). No GPU kernels are invoked:
-the extractors use only the layers' projections + feature maps, so this runs on CPU.
+settings (unmasked rank-law object + the literal causal operator). Every extractor but GLA's uses only the layers'
+projections + feature maps and runs on CPU; GLA's runs its Triton kernel and needs CUDA.
 
 Run: pytest tests/similarity/test_extractors_cpu.py
 """
@@ -15,13 +15,13 @@ from rola_bench.similarity import evaluator as E
 B, L, DM, H = 2, 8, 32, 2
 
 
-def _eval_x():
+def _eval_x(device="cpu"):
     torch.manual_seed(0)
-    return torch.randn(B, L, DM)
+    return torch.randn(B, L, DM, device=device)
 
 
-def _check(layer, build_extractor, dbound):
-    x = _eval_x()
+def _check(layer, build_extractor, dbound, device="cpu"):
+    x = _eval_x(device)
     last = None
     for causal in (False, True):
         M = build_extractor(causal=causal)(layer.eval(), x)
@@ -35,7 +35,7 @@ def _check(layer, build_extractor, dbound):
 
 @pytest.mark.parametrize("fmap", ["elu", "hedgehog"])
 def test_fla_linear_attn_extractor(fmap):
-    from fla_rola.layers import LinearAttention
+    from fla.layers import LinearAttention
     la = LinearAttention(hidden_size=DM, expand_k=1.0, expand_v=1.0, num_heads=H,
                          feature_map=fmap, do_feature_map_norm=True)
     dbound = la.head_k_dim * (2 if fmap == "hedgehog" else 1)
@@ -47,10 +47,12 @@ def test_softmax_attention_extractor():
     _check(MHA(d_model=DM, num_heads=H), lambda causal: E.build_softmax_attention_extractor(causal=causal), L)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="GLA's extractor runs fla's Triton kernel")
 def test_gla_extractor():
+    """The one extractor here that runs a kernel (chunk_gla on identity values), so it runs on CUDA."""
     from zoology.mixers.gla import GatedLinearAttention
-    gla = GatedLinearAttention(d_model=DM, expand_k=1.0, expand_v=1.0, num_heads=H, use_short_conv=False)
-    _check(gla, lambda causal: E.build_gla_extractor(causal=causal), gla.head_k_dim)
+    gla = GatedLinearAttention(d_model=DM, expand_k=1.0, expand_v=1.0, num_heads=H, use_short_conv=False).cuda()
+    _check(gla, lambda causal: E.build_gla_extractor(causal=causal), gla.head_k_dim, device="cuda")
 
 
 def test_based_extractor():

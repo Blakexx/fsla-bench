@@ -4,7 +4,7 @@
     python -m rola_bench.mqar.smoke            # build and run them
 
 Each cell is the MQAR geometry (`rola_bench.mqar.MQAR_GEOM`) at the smallest state count every wiring spells (N = 16),
-built through `rola_bench.models.rola` as zoology's mixer over fla_rola. What rola refuses, the smoke reports as a
+built through `rola_bench.models.rola` as zoology's mixer over fla. What rola refuses, the smoke reports as a
 failure with rola's own error. Real runs are `rola_bench.mqar.run` over `experiments/*.yaml`.
 """
 from __future__ import annotations

@@ -44,8 +44,8 @@ def test_softmax_equiv_cpu():
 @pytest.mark.parametrize("fmap,norm", [("elu", False), ("elu", True), ("hedgehog", True)])
 def test_fla_linear_equiv_gpu(fmap, norm):
     """M @ v must equal chunk_linear_attn(phi(q), phi(k), v) — our M is the kernel's operator."""
-    from fla_rola.layers import LinearAttention
-    from fla_rola.ops.linear_attn import chunk_linear_attn
+    from fla.layers import LinearAttention
+    from fla.ops.linear_attn import chunk_linear_attn
     torch.manual_seed(0)
     dev = "cuda"
     la = LinearAttention(hidden_size=DM, expand_k=1.0, expand_v=1.0, num_heads=H,
@@ -70,8 +70,8 @@ def test_gdn_equiv_gpu():
     SAME q/k/beta/g — proving the recovered M is the delta-rule operator (output linear in v)."""
     import torch.nn.functional as F
     from einops import rearrange
-    from fla_rola.layers import GatedDeltaNet
-    from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
+    from fla.layers import GatedDeltaNet
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     torch.manual_seed(0)
     dev = "cuda"
     gdn = GatedDeltaNet(hidden_size=DM, num_heads=H, head_dim=DM // H, use_short_conv=False).to(dev).eval()
@@ -95,10 +95,11 @@ def test_gdn_equiv_gpu():
 
 @gpu
 def test_gla_equiv_gpu():
-    """GLA content gram (undecayed; decay is rank-preserving, omitted): M@v must equal
-    chunk_linear_attn(q,k,v) — GLA with φ=identity and no gate IS unnormalized linear attn."""
+    """GLA's recovered operator: M @ v must equal chunk_gla(q, k, v, g) on the same projections and the same log-decay
+    the layer computes -- the extractor runs that kernel on identity values, so this is its linearity check."""
+    import torch.nn.functional as F
     from einops import rearrange
-    from fla_rola.ops.linear_attn import chunk_linear_attn
+    from fla.ops.gla import chunk_gla
     from zoology.mixers.gla import GatedLinearAttention
     torch.manual_seed(0)
     dev = "cuda"
@@ -109,11 +110,12 @@ def test_gla_equiv_gpu():
     k = rearrange(gla.k_proj(x), "... (h d) -> ... h d", d=gla.head_k_dim)
     if gla.feature_map_fn is not None:
         q, k = gla.feature_map_fn(q), gla.feature_map_fn(k)
+    gk = F.logsigmoid(rearrange(gla.gk_proj(x), "... (h d) -> ... h d", d=gla.head_k_dim)) / gla.gate_logit_normalizer
     v = torch.randn(B, L, H, gla.head_v_dim, device=dev)
-    o_ref, _ = chunk_linear_attn(q, k, v, scale=1.0, normalize=False, output_final_state=False)
+    o_ref, _ = chunk_gla(q, k, v, g=gk, output_final_state=False)
     M = E.build_gla_extractor(causal=True)(gla, x)
     rel = (_apply(M.float(), v.float()) - o_ref.float()).abs().max() / (o_ref.float().abs().max() + 1e-9)
-    assert rel < 2e-2, f"GLA M@v vs chunk_linear_attn: rel {rel:.2e}"
+    assert rel < 2e-2, f"GLA M@v vs chunk_gla: rel {rel:.2e}"
 
 
 def test_based_equiv_cpu():

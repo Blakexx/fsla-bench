@@ -1,6 +1,6 @@
 """The fleet's boot gate (FLEET_VERIFY_CMD): a rented box proves its GPU runs RoLA before it takes work.
 
-One small RoLA layer (fla_rola over rola) runs a forward and backward pass on the box's device, so a host with a broken
+One small RoLA layer (fla over rola) runs a forward and backward pass on the box's device, so a host with a broken
 GPU, driver or extension fails here and is blocked instead of failing every cell of a batch. Prints "VERIFY OK", the
 token the box server reads. While rola refuses a pass (its kernel rebuilt, its backward not yet built), every box
 fails this gate with rola's own error: a fleet cannot train RoLA until rola can.

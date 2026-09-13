@@ -1,5 +1,5 @@
 """The RoLA arms registry (`rola_bench.models.rola`): every build of a cell is the same layer, built only through
-fla_rola, and its state is read back off that layer. CPU only."""
+fla, and its state is read back off that layer. CPU only."""
 from __future__ import annotations
 
 import pytest
@@ -14,7 +14,7 @@ def _params(module):
 
 @pytest.mark.parametrize("wiring", sorted(cells.WIRINGS))
 def test_the_mixer_and_the_bare_layer_are_the_same_layer(wiring):
-    """zoology's mixer config and the bare fla_rola layer build bit-identical parameters from one cell."""
+    """zoology's mixer config and the bare fla layer build bit-identical parameters from one cell."""
     from zoology.mixers.rola import RoLAMixer
 
     c = cells.cell(wiring, 64)

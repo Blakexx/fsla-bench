@@ -34,7 +34,7 @@ BASE_TAG="${FLEET_BASE_TAG:-$BASE_DEFAULT}"
 
 # The package sources are this machine's checkouts, named in the environment (no defaults: a checkout lives wherever
 # the machine keeps it).
-FLA="${ROLA_FLA_SRC:?set ROLA_FLA_SRC to the fla-rola checkout}"
+FLA="${ROLA_FLA_SRC:?set ROLA_FLA_SRC to the fla fork checkout (branch rola)}"
 ZOO="${ROLA_ZOO_SRC:?set ROLA_ZOO_SRC to the zoology checkout}"
 RB="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -43,8 +43,8 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 RS=(rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' --exclude='build')
 
-echo "staging fla-rola (fork)…"
-"${RS[@]}" "$FLA/" "$STAGE/fla-rola/"
+echo "staging fla (the fork's rola branch)…"
+"${RS[@]}" "$FLA/" "$STAGE/fla/"
 
 if [ "$WITH_ZOO" = 1 ]; then
   echo "staging zoology (MQAR baselines package + packaging)…"

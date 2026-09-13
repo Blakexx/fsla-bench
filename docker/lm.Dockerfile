@@ -1,6 +1,6 @@
 # rola-bench LM image — FROM the project-agnostic fleet base.
 #
-# Same pattern as mqar.Dockerfile but for the language-modeling benchmark: fla-rola + the HF stack. zoology (the MQAR
+# Same pattern as mqar.Dockerfile but for the language-modeling benchmark: fla (the fork) + the HF stack. zoology (the MQAR
 # baselines) is not installed.
 #
 # The box-side contract: run.py maps RUN_IDS ("<arm>_s<seed>") to train_lm.py, which appends {run_id, ok, params_m,
@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PYTHONUNBUFFERED=
     WANDB_MODE=offline WANDB_CONSOLE=off
 
 # LM stack: HF + canonical FLA (the rola_hf model imports fla.layers) + datasets/eval.
-RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
+RUN pip install --no-cache-dir \
         transformers accelerate datasets evaluate einops pydantic numpy tqdm wandb rich pyyaml scipy lm-eval
 # flash-attn: ONLY the softmax-attention CEILING arm (fla.layers.Attention) needs it; the 4
 # bounded arms (RoLA x3, GDN) do not. Try a prebuilt wheel first; fall back to a source build
@@ -21,15 +21,15 @@ RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
 RUN pip install --no-cache-dir flash-attn --no-build-isolation || \
     echo "WARN: flash-attn not installed — the attn ceiling arm will be unavailable on this image"
 
-COPY fla-rola   /opt/fla-rola
+COPY fla        /opt/fla
 COPY rola-bench /opt/rola-bench
 # --no-build-isolation: build against the image's torch (some setup.py's import torch at build).
-RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
+RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
 # Verify the box-side path only (run.py -> train_lm.py -> arms.py and their dependencies, flash-attn for the attn arm),
 # from the directory the box runs in. Not rola_bench.lm.job: that is dispatcher-side and builds a fleet.Job.
-RUN cd /opt/rola-bench/rola_bench/lm && python -c "import torch, fla.layers, fla_rola, fleet, flash_attn, arms, run; \
+RUN cd /opt/rola-bench/rola_bench/lm && python -c "import torch, fla.layers, fleet, flash_attn, arms, run; \
 print('rola-bench lm image OK; torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'arms', len(arms.ARMS))"
 
 ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/lm \

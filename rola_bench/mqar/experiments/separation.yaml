@@ -23,7 +23,7 @@
 #
 #   * the D1 DENSE CONTROL — **absent from the diagonal, and its absence is a RESULT.** An
 #     unfactorized router is one softmax over N logits, and the V3 engine caps a routing level at
-#     `MAX_BRANCH_WIDTH = 256` (`fla_rola/ops/rola/routing/topology.py`). So above N = 256 the
+#     `MAX_BRANCH_WIDTH = 256` (its routing topology). So above N = 256 the
 #     monolithic control has no spelling at all, while every factorized wiring still does. That is
 #     the structural argument for factorization stated as a buildability fact rather than a curve,
 #     and `build_configs` prints the omission with the engine's own number every time this spec

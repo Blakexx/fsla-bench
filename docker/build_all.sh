@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command to build and push the fleet base and the rola-bench image (no GPU required: a pure build).
 #
-#   FLEET_SRC=<fleet checkout> ROLA_FLA_SRC=<fla-rola checkout> ROLA_ZOO_SRC=<zoology checkout> bash docker/build_all.sh
+#   FLEET_SRC=<fleet checkout> ROLA_FLA_SRC=<fla fork checkout> ROLA_ZOO_SRC=<zoology checkout> bash docker/build_all.sh
 #
 # Builds, in order:
 #   1. blakeresearch/fleet-base:$IMG_VERSION  -- the fleet base (context: the fleet checkout).

@@ -2,7 +2,7 @@
 # d_model 512 (`rola_bench/perf/README.md` has the protocol: round-robin arms, medians and IQRs, isolated memory
 # passes, UNBUILT/OOM/ERR rows).
 # Arms: causal SDPA attention (the growing-KV ceiling), the named RoLA cell rola-base-rla (`rola_bench.models.rola`,
-# built through fla_rola), and fla_rola's GLA and GatedDeltaNet layers at their canonical geometry; DeltaNet and GSA
+# built through fla), and fla's GLA and GatedDeltaNet layers at their canonical geometry; DeltaNet and GSA
 # are arms `scaling.py` also builds. Mamba2 is not an arm: it needs an SSM-shaped state cache the decode bench does
 # not build.
 #

@@ -2,8 +2,8 @@
 
 `scaling.py` times RoLA's layers against attention and the FLA baselines, layer against layer at d_model 512:
 
-- **arms** (`SCALE_ARMS`): `attn` (causal SDPA, a growing KV cache), `gla`, `gdn`, `deltanet`, `gsa` (fla_rola's
-  layers at their canonical geometry), and the named RoLA cells of `rola_bench.models.rola` built through fla_rola;
+- **arms** (`SCALE_ARMS`): `attn` (causal SDPA, a growing KV cache), `gla`, `gdn`, `deltanet`, `gsa` (fla's
+  layers at their canonical geometry), and the named RoLA cells of `rola_bench.models.rola` built through fla;
 - **axes**: sequence length `L` (`SCALE_LENS[_TRAIN|_PREFILL|_DECODE]`), RoLA's states per head `N` (`SCALE_NS`) and
   value width `d_v` (`SCALE_DVS`); a cell is kept while RoLA's state, read off the built layer, is under attention's
   KV cache;

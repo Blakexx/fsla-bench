@@ -1,5 +1,5 @@
 """Evaluate a RoLA (or any AutoModel) checkpoint with lm-evaluation-harness (paper-grade eval).
-Every arm is an fla_rola HF model, registered with the auto-classes on import, so lm_eval's HFLM loads it directly.
+Every arm is an fla HF model, registered with the auto-classes on import, so lm_eval's HFLM loads it directly.
 
   python eval_lm.py --pretrained <run>                       # GENERAL zero-shot + held-out ppl
   python eval_lm.py --pretrained <run> --recall              # + SWDE/FDA/SQUAD recall suite
@@ -13,7 +13,7 @@ tasks (swde, fda, squad_completion).
 import argparse
 import json
 
-import fla_rola.models  # noqa: F401 -- registers fla_rola's architectures so HFLM can load them
+import fla.models  # noqa: F401 -- registers fla's architectures so HFLM can load them
 from lm_eval import simple_evaluate
 from lm_eval.models.huggingface import HFLM
 

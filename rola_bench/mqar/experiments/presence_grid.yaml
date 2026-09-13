@@ -169,7 +169,7 @@
 #   writes). Added 2026-08-03 with the `presence_decay16` tier. Two clocks share one dial surface
 #   and differ ONLY in the exponent read off the stored write: `leaf_mass` ticks a touched leaf in
 #   proportion to its deposited mass (`keep = (1-rate)^c`, tiny leak -> tiny decay), while
-#   `inclusion_gated` (ORACLE-ONLY instrument, `fla_rola.ops.rola.routing.types.InclusionGatedDecay`)
+#   `inclusion_gated` (ORACLE-ONLY instrument of the V3 engine, deleted with it)
 #   ticks every leaf in the write's stored support by the fixed constant `tick`
 #   (`keep = (1-rate)^(tick * 1[c>0])`). THE MATCHING RULE: an exact point write's stored leaf mass
 #   is c in {0,1}, so at the default tick = 1.0 the clocks coincide BIT-FOR-BIT on point writes

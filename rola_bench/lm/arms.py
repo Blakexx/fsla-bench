@@ -1,6 +1,6 @@
 """LM arms: the architectures of the LM comparison on one shared backbone, so only the token mixer differs.
 
-Every arm is an fla_rola HF model -- RoLA (fla_rola's RoLA over rola), GatedDeltaNet, GLA and the transformer -- with
+Every arm is an fla HF model -- RoLA (fla's RoLA over rola), GatedDeltaNet, GLA and the transformer -- with
 identical backbone fields (hidden size, depth, SwiGLU MLP ratio, RMSNorm, untied embeddings). The bounded-state arms
 are matched on recurrent state at the textbook head shape, d_k = d_v = 128 at H = 8 on hidden 512:
 
@@ -17,8 +17,8 @@ from __future__ import annotations
 import math
 import os
 
-import fla_rola.models  # noqa: F401 -- registers fla_rola's architectures with the HF auto-classes
-from fla_rola.models import GatedDeltaNetConfig, GLAConfig, RoLAConfig, TransformerConfig
+import fla.models  # noqa: F401 -- registers fla's architectures with the HF auto-classes
+from fla.models import GatedDeltaNetConfig, GLAConfig, RoLAConfig, TransformerConfig
 from transformers import AutoModelForCausalLM
 
 from rola_bench.models import rola as cells
@@ -93,7 +93,7 @@ def recurrent_state_floats(arm: str, g: dict = GEOMETRY) -> tuple[int | None, in
 
 def realized_state_floats_from_model(model) -> tuple[int | None, int | None]:
     """(content, overhead) per layer read off a built model's first RoLA layer; (None, None) for a model without one."""
-    from fla_rola.layers.rola import RoLA
+    from fla.layers.rola import RoLA
 
     layer = next((m for m in model.modules() if isinstance(m, RoLA)), None)
     return (None, None) if layer is None else cells.state_floats(layer)
@@ -101,7 +101,7 @@ def realized_state_floats_from_model(model) -> tuple[int | None, int | None]:
 
 def decay_parameter_floats(model) -> int:
     """The decay source's own parameters per layer, read off a built model's first RoLA layer (0 without decay)."""
-    from fla_rola.layers.rola import RoLA
+    from fla.layers.rola import RoLA
 
     layer = next((m for m in model.modules() if isinstance(m, RoLA)), None)
     decay = None if layer is None else layer.layer.decay

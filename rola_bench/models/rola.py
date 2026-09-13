@@ -1,10 +1,10 @@
-"""THE ROLA ARMS: every RoLA cell rola-bench measures, as plain data, built only through fla_rola.
+"""THE ROLA ARMS: every RoLA cell rola-bench measures, as plain data, built only through fla.
 
 A WIRING names the duties each routing level carries, outermost level first: a row per level with each duty's density
 (`read`/`write` in {'dense', 'sparse'}), whether the duties share a projection (`tied`), and the entmax order of a
 sparse duty (`alpha`). A CELL is a wiring at a state count N: every level's width (the uniform factorization b**D = N
 unless widths are given), the recurrence's decay source, and the router pins. Every bench builds a cell one way --
-`mixer_config` for zoology's MQAR model, `layer` for a bare fla_rola layer, `config_kwargs` for fla_rola's RoLAConfig --
+`mixer_config` for zoology's MQAR model, `layer` for a bare fla layer, `config_kwargs` for fla's RoLAConfig --
 and reads a built cell's state back off the layer (`state_floats`), never from a formula.
 
 What rola refuses (a configuration outside its built envelope, prefill while its kernel is rebuilt, training before its
@@ -88,7 +88,7 @@ class Cell:
         return math.prod(self.widths)
 
     def config_kwargs(self) -> dict:
-        """fla_rola.layers.RoLA's (and RoLAConfig's) routing arguments."""
+        """fla.layers.RoLA's (and RoLAConfig's) routing arguments."""
         return {"levels": [dict(level) for level in self.levels], "decay": self.decay, "router_bias": self.router_bias,
                 "gain_bias_init": self.gain_bias_init}
 
@@ -112,15 +112,15 @@ def named(name: str, n: int, *, widths=None) -> Cell:
 
 
 def layer(c: Cell, *, hidden_size: int, num_heads: int, head_v_dim: int, layer_idx: int = 0):
-    """The cell as a bare fla_rola RoLA layer."""
-    from fla_rola.layers.rola import RoLA
+    """The cell as a bare fla RoLA layer."""
+    from fla.layers.rola import RoLA
 
     return RoLA(hidden_size=hidden_size, num_heads=num_heads, head_v_dim=head_v_dim, layer_idx=layer_idx,
                 **c.config_kwargs())
 
 
 def mixer_config(c: Cell, *, n_heads: int, d_v: int) -> dict:
-    """The cell as zoology's sequence-mixer config (`zoology.mixers.rola.RoLAMixer` over fla_rola)."""
+    """The cell as zoology's sequence-mixer config (`zoology.mixers.rola.RoLAMixer` over fla)."""
     kwargs = c.config_kwargs()
     return {"name": "zoology.mixers.rola.RoLAMixer", "kwargs": {"n_heads": n_heads, "d_v": d_v, **kwargs}}
 

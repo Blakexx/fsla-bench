@@ -89,7 +89,7 @@
 #   TIME-PROXY clock alongside the write-mass one, and this cell is exactly what separates them (a
 #   time clock erodes the long-lived items, a write-mass clock does not). rola's decay slot feeds a
 #   write-conditioned clock only (`rola/routing/decay.py`: a source that decayed on time "would be a
-#   different recurrence, and it is vetoed as one"), and fla_rola's decay sources are `constant` and
+#   different recurrence, and it is vetoed as one"), and fla's decay sources are `constant` and
 #   `learned`, both rates on that clock. So the cell is built and run at the rungs that exist, and the
 #   comparison it was designed for has no spelling. Not substituted, not silently dropped.
 #

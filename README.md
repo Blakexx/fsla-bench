@@ -5,22 +5,22 @@ performance, the similarity audit) are declarative specs that the generic [`flee
 package runs on rented GPUs. The measurement suite measures rola checkouts with their own instruments on this machine.
 Every result goes through `rola_results`.
 
-rola-bench is a library consumer like any other. It builds RoLA only through fla-rola, whose RoLA layer and HF model
+rola-bench is a library consumer like any other. It builds RoLA only through fla (our fork of it), whose RoLA layer and HF model
 are a thin wrapper over rola. It never reaches into rola's kernels:
 
 ```
-rola-bench ──▶ fla-rola      the RoLA layer and HF model (over rola), and the FLA baseline layers
-           ──▶ zoology       MQAR's model, data and baselines; its RoLAMixer wraps fla-rola
+rola-bench ──▶ fla           the fork's rola branch: the RoLA layer and HF model (over rola), and the baseline layers
+           ──▶ zoology       MQAR's model, data and baselines; its RoLAMixer wraps fla's RoLA
            ──▶ fleet         GPU orchestration
            ──▶ rola-results  the result store
-           ──▶ rola          (through fla-rola; the measurement suite measures rola checkouts directly)
+           ──▶ rola          (through fla; the measurement suite measures rola checkouts directly)
 ```
 
 ## Layout
 
 ```
 rola_bench/
-  models/rola.py        the RoLA arms: wirings, cells, named cells, built through fla_rola; state read off the layer
+  models/rola.py        the RoLA arms: wirings, cells, named cells, built through fla; state read off the layer
   fleet/                python -m rola_bench.fleet (the launcher), jobs.py (Job factory + result sink),
                         spec.py (spec loader), verify.py (the box boot gate)
   mqar/                 job.py, run.py (box side), smoke.py, build_configs.py, local_grid.py (this machine's card),
@@ -42,7 +42,7 @@ source (`None`, or `{source: constant | learned, ...}`) and the router pins. The
 `rola-arm1-densread-sparsewrite`, `rola-arm2-union`, `rola-arm3-levelsplit` and the one-level control `rola-d1-dense`.
 The LM and perf benches select the named cells (`rola-base-rla`, `rola-base-massdecay-global`, ...).
 
-Every bench builds a cell one way: `mixer_config` for zoology, `layer` for a bare fla_rola layer, or `config_kwargs`
+Every bench builds a cell one way: `mixer_config` for zoology, `layer` for a bare fla layer, or `config_kwargs`
 for `RoLAConfig`. It reads a built cell's state back off the layer (`state_floats`), never from a formula. Whatever
 rola refuses, every build refuses with rola's own error. Today that is prefill while its kernel is rebuilt and
 training before its native backward, so every RoLA arm of every bench fails until rola builds those passes. The
@@ -138,6 +138,6 @@ over `rola_bench` and `tests`, and the measurement engine's contract tests.
 
 Both build `FROM blakeresearch/fleet-base` and set `FLEET_RUN_CMD` and `FLEET_VERIFY_CMD`
 (`python -m rola_bench.fleet.verify`). `docker/build.sh <mqar|lm> [--push] [--prune]` stages clean sources from the
-checkouts named by `ROLA_FLA_SRC` and `ROLA_ZOO_SRC`. The images do not install rola yet, and fla_rola does not import
+checkouts named by `ROLA_FLA_SRC` and `ROLA_ZOO_SRC`. The images do not install rola yet, and fla does not import
 without it, so no current image builds. The fleet base's torch is a CUDA 12.8 build, and rola's manifests are
 ratified under CUDA 12.4.

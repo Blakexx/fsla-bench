@@ -1,7 +1,7 @@
 # rola-bench MQAR image — FROM the project-agnostic fleet base.
 #
 # The base provides torch + the `fleet` package + box_server (the container entrypoint). Here we add
-# the research stack (rola, fla-rola, zoology) + the suite package (rola_bench), and tell box_server
+# the research stack (rola, fla from the fork, zoology) + the suite package (rola_bench), and tell box_server
 # how to run/verify a batch via FLEET_RUN_CMD / FLEET_VERIFY_CMD. Sources are staged clean by
 # build.sh — only runtime code, no .git/CLAUDE.md/data/results (publication-safe).
 ARG FLEET_BASE_TAG=v2
@@ -11,21 +11,21 @@ ENV DEBIAN_FRONTEND=noninteractive PIP_ROOT_USER_ACTION=ignore PYTHONUNBUFFERED=
     WANDB_MODE=offline WANDB_CONSOLE=off
 
 # Research stack: canonical FLA (fla.ops + fla.layers) + the libs the MQAR sweep imports.
-RUN pip install --no-cache-dir fla-core==0.4.2 flash-linear-attention==0.4.2 \
+RUN pip install --no-cache-dir \
         transformers opt_einsum einops pydantic pandas numpy tqdm wandb rich pyyaml scipy datasets
 
 # Clean package sources (staged by build.sh; rola_bench/lm excluded for this image) — install no-deps.
-COPY fla-rola   /opt/fla-rola
+COPY fla        /opt/fla
 COPY zoology    /opt/zoology
 COPY rola-bench /opt/rola-bench
 # --no-build-isolation: use the image's torch (zoology's setup.py imports torch at build time;
 # build isolation would give it a torch-less env -> ModuleNotFoundError).
-RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
+RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/zoology \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
 # Build-time gate: the whole dependency graph imports cleanly (no path hacks).
-RUN python -c "import torch, fla.ops.simple_gla, fla.layers, fla_rola, zoology, fleet; \
+RUN python -c "import torch, fla.ops.simple_gla, fla.layers, zoology, fleet; \
 import rola_bench.mqar.job; from fla.layers import LinearAttention, GatedDeltaNet; \
 print('rola-bench mqar image OK; torch', torch.__version__)"
 
