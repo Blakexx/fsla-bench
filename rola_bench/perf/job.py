@@ -1,32 +1,21 @@
-"""Scaling perf job builder, spec-driven on the global layer.
+"""The perf job builder: each bench of an experiment spec is one scaling run_id (`perf-scaling-{train,prefill,decode}`),
+its arms interleaved inside the box-side runner (`rola_bench.perf.run`). Results: `rola_results` at perf/<config>.
 
-`perf_job(config)` reads rola_bench/perf/experiments/<config>.yaml. Each bench entry maps to one
-scaling run_id (`perf-scaling-{train,prefill,decode}`), with layer arms interleaved round-robin
-inside the runner. Results: `rola_results` at perf/<config>. Launch:
-`rola_bench/fleet/__main__.py perf scaling_chunked`.
+    python -m rola_bench.fleet perf paper_v1
 """
 from rola_bench.fleet.jobs import make_job
-from rola_bench.fleet.spec import load, env_from
+from rola_bench.fleet.spec import env_from, load
+
+BENCHES = ("scaling-train", "scaling-prefill", "scaling-decode")
 
 
-def perf_job(config="default"):
+def perf_job(config="paper_v1"):
     spec = load("perf", config)
-    benches = spec["benches"]
-    knobs = {k: spec[k] for k in ("reps",) if k in spec}
-    box_env = env_from("PERF", knobs)
+    unknown = sorted(set(spec["benches"]) - set(BENCHES))
+    if unknown:
+        raise ValueError(f"perf spec {config!r} names bench(es) {unknown}; expected a subset of {BENCHES}")
     fleet = dict(spec.get("fleet", {}))
-    fleet["env"] = {"PERF_CONFIG": config, **box_env, **fleet.get("env", {})}
-
-    def _work_list():
-        ids = []
-        for bench in benches:
-            if bench == "profile-graph":
-                ids.extend(f"perf-profile-graph-{p['name']}" for p in spec.get("profiles", []))
-            elif bench == "engine-bench":
-                ids.extend(f"perf-engine-bench-{c['name']}" for c in spec.get("engine_cells", []))
-            else:
-                ids.append(f"perf-{bench}")
-        return ids
-
-    return make_job("perf", config, _work_list,
+    fleet["env"] = {"PERF_CONFIG": config, **env_from("PERF", {k: spec[k] for k in ("reps",) if k in spec}),
+                    **fleet.get("env", {})}
+    return make_job("perf", config, lambda: [f"perf-{bench}" for bench in spec["benches"]],
                     "python -u -m rola_bench.perf.run", fleet)

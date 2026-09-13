@@ -15,8 +15,8 @@ model's FINAL attention matrix M — the operator in `O = M @ V`, with the model
 normalization applied. This single rule encompasses every architecture and needs no
 rank-invariance argument:
   - softmax attention            -> M = softmax(scores)            (already normalized)
-  - unnormalized linear attn     -> M = phi(Q) phi(K)ᵀ ∘ (read writeᵀ)   (no division)
-  - normalized linear attn / RoLA-> M = row-normalized of the above (the denominator division)
+  - unnormalized linear attn     -> M = phi(Q) phi(K)ᵀ                   (no division)
+  - normalized linear attn       -> M = row-normalized of the above (the denominator division)
 The metric core SVDs whatever M the extractor returns. See `to_final_attention` for the
 normalize/causal handling shared by the linear-attention family.
 
@@ -26,8 +26,6 @@ METRIC PROVENANCE — mirrored EXACTLY from rola.py (commit 8f7b918, the referen
   `_rank_stats`            rola.py lines 311-338   -> rank_stats() / _rank_stats_from_sv()
   `_effective_attention_rank` rola.py lines 342-401 -> the per-slice SVD loop + spectrum
        (the per-(seq,head) loop @ 374-381, _rank_stats call @ 382, spectrum @ 385-400)
-  RoLA effective weight W  rola.py line 376         -> _rola_attn_from_features()
-       `W = (q[bi,:,hi] @ k[bi,:,hi].T) * (r[bi,:,hi] @ w[bi,:,hi].T)`
 
 The numerical definitions below are copied verbatim from those lines (not reinvented):
   - numerical rank at tol t:  #{ sigma > t * sigma_max }            (rola.py:330)
@@ -38,13 +36,11 @@ The UNMASKED W is the measured object (rola.py:353-360); the causal mask only in
 rank and carries no rank signal, so it is off by default here too.
 --------------------------------------------------------------------------------------
 
-Import-light: torch only. No training stack, no rola.py runtime dependency for the core
-metrics. The RoLA adapter (build_rola_attention_extractor) imports rola lazily, only when
-you actually use it, so the metric core stays usable without rola installed.
+Import-light: torch only. No training stack. RoLA has no extractor here: the V2 one rebuilt a Q/K
+forward the architecture no longer has, and the V3 effective matrix (from the route factors) is carded.
 """
 from __future__ import annotations
 
-import math
 from typing import Callable, Optional, Sequence
 
 import torch
@@ -212,33 +208,6 @@ def rank_stats(
     return out
 
 
-# ======================================================================================
-# RoLA effective-weight assembly — mirrors rola.py:376.
-# ======================================================================================
-def rola_attn_from_features(
-    qf: torch.Tensor,
-    kf: torch.Tensor,
-    read_gates: torch.Tensor,
-    write_gates: torch.Tensor,
-) -> torch.Tensor:
-    """Assemble the per-head RoLA effective weight W = (phi(Q) phi(K)^T) ∘ (read write^T).
-
-    Inputs are the model-layout tensors EXACTLY as `_effective_attention_rank` receives
-    them (rola.py:363): qf,kf:[B,L,H,d_qk]  read_gates,write_gates:[B,L,H,nc]. The Hadamard
-    product is rola.py:376:
-        W = (q[bi,:,hi] @ k[bi,:,hi].T) * (r[bi,:,hi] @ w[bi,:,hi].T)   # [L,L]
-    Returns the full [B,H,L,L] stack (this evaluator's metric core loops the SVD itself, so
-    we hand it the batched tensor rather than rola.py's pre-looped list).
-
-    NOTE: pass the SAME tensors the inline probe would see — i.e. qf/kf AFTER the feature
-    map (elu+1 / hedgehog / ...), and read_gates AFTER any kappa/per_state rescaling. The
-    RoLA adapter below does exactly that.
-    """
-    G = torch.einsum("blhd,bmhd->bhlm", qf, kf)       # (phi(Q) phi(K)^T) per head
-    R = torch.einsum("blhc,bmhc->bhlm", read_gates, write_gates)  # (read write^T) per head
-    return G * R                                       # Hadamard — rola.py:376
-
-
 def to_final_attention(
     W: torch.Tensor,
     normalize: bool,
@@ -378,57 +347,6 @@ def _load_state_dict(path: str, map_location: str, state_dict_key: Optional[str]
     raise TypeError(f"checkpoint {path!r} loaded as {type(obj)}, not a dict; pass state_dict_key=...")
 
 
-# ======================================================================================
-# Per-model attention adapter for RoLA.
-# ======================================================================================
-def build_rola_attention_extractor(
-    layer_index: int = 0,
-    normalize: Optional[bool] = None,
-    causal: bool = False,
-) -> Callable:
-    """Return an `attention_extractor(model, eval_batch) -> M[B,H,L,L]` for a RoLA model, where
-    M is the FINAL attention matrix (see `to_final_attention`).
-
-    Genericity boundary: the driver is model-agnostic; THIS function knows RoLA's
-    internals. It reproduces, OUTSIDE the kernel forward, exactly the pipeline that feeds
-    rola.py's inline probe (rola.py:669-693 for RLA / 800-822 for GLA, then 758 / 891):
-
-        q,k,v   = w_q(x), w_k(x), w_v(x)         (+ optional short conv)   rola.py:1069-1080
-        qf,kf   = kernel._feature_map(q,k)        (elu+1 / hedgehog / ...)  rola.py:663-667
-        w_g,r_g = mixer._route(x)                 (softmax read/write)      rola.py:1055-1061
-        [kappa/per_state] rescale read_gates by the per-state denominator   rola.py:672-693
-        W       = (qf phi-gram) ∘ (read write^T)                            rola.py:376
-
-    The probe measures the UN-DECAYED gram for GLA too (rola.py:879-882: the scalar decay is
-    a rank-preserving two-sided diagonal rescale), so this extractor does NOT apply decay —
-    matching the reference.
-
-    `model` may be a bare RoLA mixer, or any module exposing the target RoLA mixer; we
-    locate the `layer_index`-th submodule that quacks like a RoLA mixer (has w_q / kernel /
-    write_router). `eval_batch` may be token ids [B,L] (we embed via a discovered embedding
-    when the model isn't a bare mixer) OR a ready hidden-state tensor [B,L,d_model].
-    """
-    def extractor(model: torch.nn.Module, eval_batch) -> torch.Tensor:
-        mixer = _find_rola_mixer(model, layer_index)
-        x = _to_hidden_states(model, mixer, eval_batch)   # [B,L,d_model] on model's device/dtype
-        qf, kf, read_gates, write_gates = _rola_features(mixer, x)
-        W = rola_attn_from_features(qf, kf, read_gates, write_gates)
-        # FINAL matrix: row-normalize iff the kernel normalizes (state_norm != 'raw'); the
-        # additive RLA kernel always normalizes (global/per_state/kappa), GLA normalizes unless
-        # 'raw'. Override with `normalize=`. Decay is omitted (rank-preserving diagonal rescale).
-        norm = normalize
-        if norm is None:
-            norm = getattr(mixer, "state_norm", "global") != "raw"
-        return to_final_attention(W, normalize=norm, causal=causal)
-
-    return extractor
-
-
-# ======================================================================================
-# Baseline adapters — each returns the model's FINAL attention matrix M[B,H,L,L], computed
-# from THAT layer's OWN projections / feature maps / normalization (faithful, not guessed).
-# All share the `(layer_index, causal)` contract and route through `to_final_attention`.
-# ======================================================================================
 def _find_layer(model: torch.nn.Module, layer_index: int, predicate, what: str) -> torch.nn.Module:
     """Locate the `layer_index`-th submodule satisfying `predicate` (or `model` itself). Fails loud."""
     if predicate(model):
@@ -632,68 +550,6 @@ def build_gdn_extractor(layer_index: int = 0, causal: bool = True) -> Callable:
         return o.permute(0, 2, 1, 3).contiguous()      # [B,L,H,L] -> [B,H,L,L] = M (causal delta operator)
 
     return extractor
-
-
-def _rola_features(mixer: torch.nn.Module, x: torch.Tensor):
-    """Replicate the front half of RoLA.forward + the kernel's feature-map / gate-rescale,
-    returning (qf, kf, read_gates, write_gates) in [B,L,H,*] — the exact 4 tensors the
-    inline probe SVDs (rola.py:758 / 891)."""
-    import torch.nn.functional as F
-
-    B, L, _ = x.shape
-    H = mixer.num_heads
-    # The canonical fla_rola.layers.RoLA ships rla + gla_scalar only (both shared-gram). It exposes
-    # `kernel` as a string ('rla' | 'gla_scalar'), the feature map as `_feature_map`, the routing as
-    # `_route`, and (when present) `w_g` / `w_kappa` / `state_norm` at the top level.
-    if getattr(mixer, "use_short_conv", False):
-        raise NotImplementedError("RoLA feature extraction assumes use_short_conv=False (analysis regime)")
-
-    q = mixer.q_proj(x).view(B, L, H, mixer.proj_qk)
-    k = mixer.k_proj(x).view(B, L, H, mixer.proj_qk)
-    v = mixer.v_proj(x).view(B, L, H, mixer.head_v_dim)
-
-    write_gates, read_gates = mixer._route(x)
-    qf, kf = mixer._feature_map(q, k)
-
-    # kappa / per_state rescale the read gates by the per-state denominator BEFORE the combine, and
-    # the probe SVDs the rescaled gates. Reproduce on the torch (non-Triton) path — CPU-safe, exact.
-    # The scalar-GLA kernel uses the DECAYED per-state mass (needs ld); RLA uses the undecayed den.
-    state_norm = getattr(mixer, "state_norm", "global")
-    if state_norm in ("kappa", "per_state"):
-        if mixer.kernel == "gla_scalar":                      # decayed mass
-            from rola_bench.similarity.dens import _rola_gla_perstate_den
-            ld = mixer._log_decay(x, write_gates)
-            d = _rola_gla_perstate_den(qf, kf, write_gates, ld)
-        else:                                                 # RLA — undecayed
-            from rola_bench.similarity.dens import _rola_perstate_den
-            d = _rola_perstate_den(qf, kf, write_gates)
-        if state_norm == "kappa":
-            kap = torch.sigmoid(mixer.w_kappa(x)).view(B, L, H, 1)
-            read_gates = read_gates * (d + 1e-5).pow(-kap)
-        else:
-            read_gates = read_gates / (d + 1e-5)
-    return qf, kf, read_gates, write_gates
-
-
-def _find_rola_mixer(model: torch.nn.Module, layer_index: int) -> torch.nn.Module:
-    """Locate the target RoLA mixer. A bare mixer is returned directly; otherwise the
-    `layer_index`-th submodule that looks like a RoLA mixer (has q_proj + write_router +
-    states_per_head) is returned. Fails loud if none / not enough found."""
-    if _is_rola_mixer(model):
-        return model
-    mixers = [m for m in model.modules() if _is_rola_mixer(m)]
-    if not mixers:
-        raise ValueError(
-            "no RoLA mixer found in the model (looking for a submodule with "
-            "q_proj + write_router + states_per_head). Pass a bare mixer or a model containing one."
-        )
-    if layer_index >= len(mixers):
-        raise IndexError(f"layer_index={layer_index} but only {len(mixers)} RoLA mixer(s) found")
-    return mixers[layer_index]
-
-
-def _is_rola_mixer(m: torch.nn.Module) -> bool:
-    return all(hasattr(m, a) for a in ("q_proj", "k_proj", "write_router", "_route", "states_per_head"))
 
 
 def _model_dim(mixer: torch.nn.Module) -> int:

@@ -18,7 +18,7 @@ from rola_bench.fleet.jobs import make_job
 from rola_bench.fleet.spec import load
 
 CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
-_NO_EXTRACTOR_PREFIXES = ("grid-sse-",)                  # SSE has no faithful extractor
+_NO_EXTRACTOR_PREFIXES = ("grid-sse-", "grid-routed-")  # SSE and RoLA have no faithful extractor (RoLA's is carded)
 
 
 def _has_extractor(run_id):

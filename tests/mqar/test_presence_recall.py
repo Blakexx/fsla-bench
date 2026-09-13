@@ -342,8 +342,8 @@ def _spec():
     return load_spec(os.path.join(here, "presence_grid.yaml"))
 
 
-@pytest.mark.parametrize("tier,cells", [("presence16", 24), ("presence64", 24),
-                                        ("attn_capacity", 20)])
+@pytest.mark.parametrize("tier,cells", [("presence16", 48), ("presence64", 48),
+                                        ("attn_capacity", 60), ("presence_decay16", 36)])
 def test_every_tier_is_the_size_its_header_states(tier, cells):
     """The header's arithmetic is a schedule commitment (each tier is an overnight unit on the local
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""
@@ -363,14 +363,16 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_colum
     in this file is about them; a stray `baselines` arm would silently triple a tier. Attention is
     admitted in EXACTLY ONE tier — on a capacity tier it would be read as a contender on the N
     ladder, which it cannot be (its state is a growing KV cache)."""
-    from rola_bench.mqar.instances import CANONICAL_WIRINGS
+    from rola_bench.models.rola import CANONICAL_WIRINGS
     for tier, arms in _spec()["tiers"].items():
         kinds = {a["build"] for a in arms}
         if tier.startswith("attn"):
             assert kinds == {"attn"}
             continue
         assert kinds == {"routed"}, f"{tier} carries a non-routed arm"
-        assert {a["instance"] for a in arms} == set(CANONICAL_WIRINGS), f"{tier} is not the slate"
+        #: the decay column carries the three structured wirings only (d1's dense write would decay everything every step)
+        slate = set(CANONICAL_WIRINGS) - ({"rola-d1-dense"} if "decay" in tier else set())
+        assert {a["instance"] for a in arms} == slate, f"{tier} is not the slate"
 
 
 def test_the_N_ladders_are_pointed_at_the_solved_demand():

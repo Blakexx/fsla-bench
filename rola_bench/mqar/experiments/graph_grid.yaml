@@ -129,12 +129,12 @@
 # =============================================================================
 #
 # CELL COUNT — 302 training runs, tiered into overnight units. Arithmetic, per tier:
-#   decoupling  4 arms x 3 ncs x 2 conditions x 1 lr x 2 seeds = 48
-#   resize      4 arms x 5 ncs x 1 condition  x 1 lr x 2 seeds = 40
+#   decoupling  4 arms x 3 ncs x 2 conditions x 1 lr x 2 seeds = 48, less the 3 D=2 wirings at N=32 (12)  = 36
+#   resize      4 arms x 5 ncs x 1 condition  x 1 lr x 2 seeds = 40, less D=2 at N=32 and N=128 (12)  = 28
 #   overlap     4 arms x 2 ncs x 2 conditions x 1 lr x 2 seeds = 32
 #   decay       4 arms x 2 ncs x 2 conditions x 1 lr x 2 seeds = 32   (the same arms at leaf_mass)
-#   reuse       4 arms x 4 ncs x 1 condition  x 1 lr x 2 seeds = 32
-#   contract    4 arms x 3 ncs x 2 conditions x 1 lr x 2 seeds = 48
+#   reuse       4 arms x 4 ncs x 1 condition  x 1 lr x 2 seeds = 32, less D=2 at N=32 and N=128 (12)  = 20
+#   contract    4 arms x 3 ncs x 2 conditions x 1 lr x 2 seeds = 48, less the 3 D=2 wirings at N=32 (12)  = 36
 #   attn_reference                  5 conditions x 1 lr x 2 seeds = 10   (the instrument floor)
 #   attn_capacity  (4 d_qk x 2 conds + 3 d_qk x 2 conds) x 1 lr x 2 seeds = 28   (the 2nd axis)
 #   cue_map     4 arms x 2 ncs x 2 conditions x 1 lr x 2 seeds = 32

@@ -6,8 +6,8 @@ generic V means M *is* the operator — faithfulness proven, not asserted.
 Softmax is CPU-exact (we replicate the exact SelfAttention formula). The linear-attention family
 runs the real (Triton) kernels, so those tests require CUDA and are skipped on CPU.
 
-Run:  pytest rola_bench/rank/test_equivalence.py            # softmax (CPU) always
-      pytest rola_bench/rank/test_equivalence.py -m gpu     # + kernel equivalence (needs CUDA)
+Run:  pytest tests/similarity/test_equivalence.py            # softmax (CPU) always
+      pytest tests/similarity/test_equivalence.py -m gpu     # + kernel equivalence (needs CUDA)
 """
 import pytest
 import torch
@@ -22,43 +22,6 @@ gpu = pytest.mark.skipif(not CUDA, reason="needs CUDA (runs the real Triton kern
 def _apply(M, v):
     """O[b,i,h,d] = sum_j M[b,h,i,j] v[b,j,h,d] — apply the attention matrix to values."""
     return torch.einsum("bhij,bjhd->bihd", M, v)
-
-
-def test_rola_equiv_cpu():
-    """FLAGSHIP: M @ v must equal the RoLA kernel's own (eager, CPU) normalized readout.
-    Proves the reconstructed final matrix IS the operator RoLA applies. state_norm='global'
-    (the standard normalized combine) → causal + normalize."""
-    try:
-        from rola_bench.engine import RoLA
-        from rola_bench.engine import chunk_rola
-    except Exception as e:
-        pytest.skip(f"fla_rola not importable: {e}")
-    torch.manual_seed(0)
-    d_model, d_qk, d_v, nc = DM, 8, 8, 4
-    # states_per_head=nc (flat) -> levels_per_head=1, states_per_level=nc; tie_routers=False ->
-    # dense/dense broadcast level config (#config-refactor, rola_compat helper).
-    from rola_bench.engine import LevelRoutingConfig
-    from rola_bench.rola_compat import level_routing_config_from_tie_routers
-    mixer = RoLA(hidden_size=d_model, head_k_dim=d_qk, head_v_dim=d_v, levels_per_head=1, states_per_level=nc,
-                 num_heads=H, kernel="rla", phi="elu", state_norm="global",
-                 level_routing_configs=LevelRoutingConfig(
-                     **level_routing_config_from_tie_routers(False))).eval()
-    x = torch.randn(B, L, d_model)
-    # raw q/k/v + routing exactly as RoLA.forward feeds the kernel (use_short_conv off)
-    q = mixer.q_proj(x).view(B, L, H, mixer.proj_qk)
-    k = mixer.k_proj(x).view(B, L, H, mixer.proj_qk)
-    v = mixer.v_proj(x).view(B, L, H, mixer.head_v_dim)
-    write_gates, read_gates = mixer._route(x)
-    qf, kf = mixer._feature_map(q, k)
-    # the canonical normalized readout, via the same op the layer calls (CPU eager path)
-    o_ref = chunk_rola(qf, kf, v, r=read_gates, w=write_gates, g=None, norm="global", scale=1.0)
-    M = build_rola_attention_extractor(causal=True)(mixer, x)
-    o_ours = _apply(M.to(v.dtype), v)
-    rel = (o_ours - o_ref).abs().max() / (o_ref.abs().max() + 1e-9)
-    assert rel < 1e-4, f"RoLA M@v vs eager readout: rel {rel:.2e}"
-
-
-from rola_bench.similarity.evaluator import build_rola_attention_extractor  # noqa: E402
 
 
 def test_softmax_equiv_cpu():
@@ -81,8 +44,8 @@ def test_softmax_equiv_cpu():
 @pytest.mark.parametrize("fmap,norm", [("elu", False), ("elu", True), ("hedgehog", True)])
 def test_fla_linear_equiv_gpu(fmap, norm):
     """M @ v must equal chunk_linear_attn(phi(q), phi(k), v) — our M is the kernel's operator."""
-    from rola_bench.engine import LinearAttention
-    from rola_bench.engine import chunk_linear_attn
+    from fla_rola.layers import LinearAttention
+    from fla_rola.ops.linear_attn import chunk_linear_attn
     torch.manual_seed(0)
     dev = "cuda"
     la = LinearAttention(hidden_size=DM, expand_k=1.0, expand_v=1.0, num_heads=H,
@@ -106,8 +69,8 @@ def test_gdn_equiv_gpu():
     """GDN probe: M (= kernel output at v=identity) must satisfy M@v_rand == kernel(v_rand) for the
     SAME q/k/beta/g — proving the recovered M is the delta-rule operator (output linear in v)."""
     import torch.nn.functional as F
-    from rola_bench.engine import GatedDeltaNet
-    from rola_bench.engine import chunk_gated_delta_rule
+    from fla_rola.layers import GatedDeltaNet
+    from fla_rola.ops.gated_delta_rule import chunk_gated_delta_rule
     from einops import rearrange
     torch.manual_seed(0)
     dev = "cuda"
@@ -135,7 +98,7 @@ def test_gla_equiv_gpu():
     """GLA content gram (undecayed; decay is rank-preserving, omitted): M@v must equal
     chunk_linear_attn(q,k,v) — GLA with φ=identity and no gate IS unnormalized linear attn."""
     from zoology.mixers.gla import GatedLinearAttention
-    from rola_bench.engine import chunk_linear_attn
+    from fla_rola.ops.linear_attn import chunk_linear_attn
     from einops import rearrange
     torch.manual_seed(0)
     dev = "cuda"

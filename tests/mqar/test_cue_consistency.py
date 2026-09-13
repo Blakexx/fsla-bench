@@ -362,7 +362,7 @@ def test_the_harmless_aliasing_control_matches_a_harmful_cell_exactly():
 
 
 def test_slate_is_the_three_wirings_plus_d1_plus_the_four_contenders():
-    from rola_bench.mqar.instances import CANONICAL_WIRINGS
+    from rola_bench.models.rola import CANONICAL_WIRINGS
     spec = _spec()
     routed = [a["instance"] for a in spec["tiers"]["knobs"] if a["build"] == "routed"]
     assert set(routed) == set(CANONICAL_WIRINGS)

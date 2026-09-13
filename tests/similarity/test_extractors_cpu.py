@@ -5,7 +5,7 @@ returned M is [B,H,L,L], finite, and respects the feature-dim rank bound — for
 settings (unmasked rank-law object + the literal causal operator). No GPU kernels are invoked:
 the extractors use only the layers' projections + feature maps, so this runs on CPU.
 
-Run: pytest rola_bench/rank/test_extractors_cpu.py
+Run: pytest tests/similarity/test_extractors_cpu.py
 """
 import pytest
 import torch
@@ -35,7 +35,7 @@ def _check(layer, build_extractor, dbound):
 
 @pytest.mark.parametrize("fmap", ["elu", "hedgehog"])
 def test_fla_linear_attn_extractor(fmap):
-    from rola_bench.engine import LinearAttention
+    from fla_rola.layers import LinearAttention
     la = LinearAttention(hidden_size=DM, expand_k=1.0, expand_v=1.0, num_heads=H,
                          feature_map=fmap, do_feature_map_norm=True)
     dbound = la.head_k_dim * (2 if fmap == "hedgehog" else 1)

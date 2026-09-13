@@ -230,13 +230,14 @@
 #   addition, costed when scheduled; recorded now so the prediction predates the measurement.
 # =============================================================================
 #
-# CELL COUNT — 312 training runs in four tiers AT STAGE 1: the 3-rate LR bracket multiplies every
+# CELL COUNT — 192 training runs in four tiers AT STAGE 1: the 3-rate LR bracket multiplies every
 # tier x3, and the multiplier is carried honestly (stage 2 re-runs WINNERS only, so the sweep is
-# paid once, here). Arithmetic, per tier:
-#   presence16        4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
-#   presence64        4 arms x 3 ncs x 1 condition x 3 lrs x 2 seeds          = 72
+# paid once, here). Arithmetic, per tier, on the squares ladders (amendment 2026-08-15):
+#   presence16        4 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 48
+#   presence64        4 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 48
 #   attn_capacity     (4 d_qk at k16 + 3 at k32 + 3 at k64) x 3 lrs x 2 seeds = 60
-#   presence_decay16  3 arms x 2 clocks x 3 ncs x 1 condition x 3 lrs x 2 seeds = 108
+#   presence_decay16  3 arms x 1 clock x 2 ncs x 1 condition x 3 lrs x 2 seeds = 36  (the learned leaf-mass clock;
+#                     the inclusion-gated clock is deleted with rola's)
 # (decay-OFF rows for the contrast are presence16's own arm1/arm2/arm3 cells — same condition, same
 # ladder, same bracket — so the off column is READ, not re-run.)
 # At the original single pinned rate this was 24 + 24 + 20 = 68, inside the brief's ~40-60 plus the

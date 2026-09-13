@@ -27,10 +27,9 @@ fleet:
   batch: 1
   per_batch_timeout: 10800
   env:
-    SCALE_ARMS: "attn,rola-base,rola-base-rla,gla,gdn"
+    SCALE_ARMS: "attn,rola-base-rla,gla,gdn"
     SCALE_DECODE_GRAPHED: "1"
-    SCALE_NCS: "256"
-    SCALE_DQKS: "16"
-    SCALE_ROUTINGS: "square"
+    SCALE_NS: "256"
+    SCALE_DVS: "64"
     SCALE_PREFLIGHT_ARMS: "1"
     PERF_B: "2"

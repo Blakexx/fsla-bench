@@ -11,13 +11,10 @@ ok=False row with the error so the dispatcher records it rather than silently dr
 import csv
 import json
 import os
-import subprocess
 import sys
 import traceback
 from pathlib import Path
-from types import SimpleNamespace
 
-from rola_bench.fleet.spec import load
 
 RESULTS = os.environ.get("FLEET_RESULTS", "/workspace/res.jsonl")
 REPS = int(os.environ.get("PERF_REPS", "15"))
@@ -38,153 +35,21 @@ def _read_csv(path):
 
 
 def run_scaling(out_dir, which):
-    """One bench-TYPE of the RoLA-vs-attn scaling sweep (which ∈ {train,prefill,decode}). Split per
-    type so each is an independent fleet run_id (perf-scaling-<type>) — you can launch just one (e.g.
-    scaling-decode) by listing only it in the spec's `benches`. Axes from SCALE_* env."""
+    """One bench type of the scaling sweep (`which` in train, prefill, decode) as its own run_id, the axes from the
+    box environment (SCALE_*)."""
+    from rola_bench.perf import _common as C
     from rola_bench.perf import scaling as sc
-    import rola_bench.perf._common as C
+
     C.REPS = REPS
-    # Per-bench-type FRONTIER ceilings — it's a timing bench (not training), so L can go far past any
-    # trainable length. decode reaches 1M (RoLA flat vs attn's linear-growing KV — the headline win
-    # plot); prefill to 128k (attn O(L^2) blowup vs RoLA O(L)); training caps at 64k (backward +
-    # nb_tile is memory-bound beyond that — graceful OOM sentinels handle overflow). Override with
-    # SCALE_LENS_<TYPE> or a blanket SCALE_LENS.
-    _DEFAULT_LENS = {"train": "1024,4096,16384,65536",
-                     "prefill": "1024,4096,16384,65536,131072",
-                     "decode": "1024,4096,16384,65536,262144,1048576"}
-    lens_env = (os.environ.get(f"SCALE_LENS_{which.upper()}")
-                or os.environ.get("SCALE_LENS") or _DEFAULT_LENS[which])
-    lens = [int(v) for v in lens_env.split(",") if v.strip()]
-    ncs = [int(v) for v in os.environ.get("SCALE_NCS", "16,64,256,1024").split(",") if v.strip()]
-    dqks = [int(v) for v in os.environ.get("SCALE_DQKS", "16,64,128").split(",") if v.strip()]
-    routings = [r for r in os.environ.get("SCALE_ROUTINGS", "flat,square,tree").split(",") if r.strip()]
-    rows = []
-    sc.sweep([which], lens, ncs, dqks, rows, routings=routings)
+    default_lens = {"train": "1024,4096,16384,65536", "prefill": "1024,4096,16384,65536,131072",
+                    "decode": "1024,4096,16384,65536,262144,1048576"}
+    ints = lambda v: [int(x) for x in v.split(",") if x.strip()]  # noqa: E731
+    lens = ints(os.environ.get(f"SCALE_LENS_{which.upper()}") or os.environ.get("SCALE_LENS") or default_lens[which])
+    rows = sc.sweep([which], lens, ints(os.environ.get("SCALE_NS", "64,256,1024")),
+                    ints(os.environ.get("SCALE_DVS", "64")), [])
     if rows:
         C.write_csv(Path(out_dir) / f"scaling_{which}.csv", rows)
     return {"scaling": rows, "bench": which}
-
-
-def _env_bool(name, default=False):
-    v = os.environ.get(name)
-    if v is None:
-        return default
-    return v not in ("0", "", "false", "False", "no", "No")
-
-
-def _as_bool(v):
-    if isinstance(v, bool):
-        return v
-    return str(v) not in ("0", "", "false", "False", "no", "No")
-
-
-def _profile_from_env():
-    return {
-        "arm": os.environ.get("PROFILE_ARM", "rola"),
-        "L": int(os.environ.get("PROFILE_L", "65536")),
-        "batch": int(os.environ.get("PROFILE_B", os.environ.get("PERF_B", "2"))),
-        "d_qk": int(os.environ.get("PROFILE_DQK", "16")),
-        "nc": int(os.environ.get("PROFILE_NC", "64")),
-        "routing": os.environ.get("PROFILE_ROUTING", "square"),
-        "warmup": int(os.environ.get("PROFILE_WARMUP", "2")),
-        "reps": int(os.environ.get("PROFILE_REPS", "1")),
-        "seed": int(os.environ.get("PROFILE_SEED", "0")),
-        "torch_profiler": _env_bool("PROFILE_TORCH_PROFILER", False),
-        "with_stack": _env_bool("PROFILE_WITH_STACK", False),
-        "top": int(os.environ.get("PROFILE_TOP", "30")),
-    }
-
-
-def _profile_from_spec(run_id):
-    prefix = "perf-profile-graph-"
-    if not run_id.startswith(prefix):
-        return _profile_from_env()
-    config = os.environ.get("PERF_CONFIG", "profile_graph")
-    name = run_id[len(prefix):]
-    spec = load("perf", config)
-    for profile in spec.get("profiles", []):
-        if profile.get("name") == name:
-            return profile
-    raise KeyError(f"profile {name!r} not found in perf config {config!r}")
-
-
-def run_profile_graph(out_dir, run_id="perf-profile-graph"):
-    """One diagnostic graph profile on the box GPU.
-
-    Axes normally come from the perf YAML's `profiles:` list. PROFILE_* env vars remain as an ad hoc
-    fallback for local/manual runs.
-    """
-    from rola_bench.perf import profile_graph as pg
-    profile = _profile_from_spec(run_id)
-    args = SimpleNamespace(
-        arm=profile.get("arm", "rola"),
-        L=int(profile.get("L", 65536)),
-        batch=int(profile.get("batch", os.environ.get("PERF_B", "2"))),
-        d_qk=int(profile.get("d_qk", profile.get("dqk", 16))),
-        nc=int(profile.get("nc", 64)),
-        routing=profile.get("routing", "square"),
-        warmup=int(profile.get("warmup", 2)),
-        reps=int(profile.get("reps", 1)),
-        seed=int(profile.get("seed", 0)),
-        torch_profiler=_as_bool(profile.get("torch_profiler", False)),
-        with_stack=_as_bool(profile.get("with_stack", False)),
-        top=int(profile.get("top", 30)),
-        deep_profile=profile.get("deep_profile", os.environ.get("ROLA_DEEP_PROFILE", "none")),
-        deep_kernel_name=profile.get("deep_kernel_name", os.environ.get("ROLA_DEEP_KERNEL", "_kappa_fwd_chunk")),
-        deep_launch_skip=int(profile.get("deep_launch_skip", os.environ.get("ROLA_DEEP_LAUNCH_SKIP", 16))),
-        deep_launch_count=int(profile.get("deep_launch_count", os.environ.get("ROLA_DEEP_LAUNCH_COUNT", 1))),
-        deep_ncu_set=profile.get("deep_ncu_set", os.environ.get("ROLA_DEEP_NCU_SET", "full")),
-        deep_warmup=int(profile.get("deep_warmup", os.environ.get("ROLA_DEEP_WARMUP", 1))),
-        deep_timeout=int(profile.get("deep_timeout", os.environ.get("ROLA_DEEP_TIMEOUT", 900))),
-        deep_child=False,
-        out=Path(out_dir) / "profile_graph",
-    )
-    return {"bench": "profile-graph", "profile": profile, "profile_graph": pg.run(args)}
-
-
-def _cell_from_spec(run_id, prefix, key):
-    """Look up the named cell dict (`engine_cells`, currently the only consumer) from the perf YAML, mirroring
-    `_profile_from_spec`'s per-name lookup pattern."""
-    config = os.environ.get("PERF_CONFIG", "paper_v1")
-    name = run_id[len(prefix):]
-    spec = load("perf", config)
-    for cell in spec.get(key, []):
-        if cell.get("name") == name:
-            return cell
-    raise KeyError(f"{key} cell {name!r} not found in perf config {config!r}")
-
-
-def _cell_argv(cell):
-    """{key: value} -> CLI flags for engine_bench.py / decode_bench.py. `True` -> bare flag (store_true),
-    `False`/`None` -> omitted, everything else -> `--key value`. `name` is metadata, not a CLI flag."""
-    argv = []
-    for k, v in cell.items():
-        if k == "name" or v is None:
-            continue
-        flag = f"--{k}"
-        if isinstance(v, bool):
-            if v:
-                argv.append(flag)
-        else:
-            argv += [flag, str(v)]
-    return argv
-
-
-def run_engine_bench(out_dir, run_id):
-    """One `engine_bench.py` cell (the cross-engine layer bake-off; see METHODOLOGY.md — this is the
-    A100-fleet path, `--worktree` stays unset so `fla_rola` resolves from the image's pip install).
-    Run as a SUBPROCESS (not imported in-process) so this cell's failure/state can't bleed into the
-    next run_id in the same box invocation (mirrors `rola_bench.perf.smoke`'s reasoning)."""
-    prefix = "perf-engine-bench-"
-    cell = _cell_from_spec(run_id, prefix, "engine_cells")
-    out_path = Path(out_dir) / "engine_bench.jsonl"
-    argv = [sys.executable, "-u", "-m", "rola_bench.perf.engine_bench",
-            *_cell_argv(cell), "--reps", str(REPS), "--out", str(out_path)]
-    r = subprocess.run(argv, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"engine_bench cell {cell.get('name')!r} rc={r.returncode}: {r.stderr[-4000:]}")
-    row = json.loads(r.stdout.strip().splitlines()[-1])
-    return {"bench": "engine-bench", "cell": cell, "engine_bench": row}
 
 
 BENCHES = {
@@ -230,10 +95,6 @@ def main():
             print(f"[perf] {rid} FAILED: cuda unavailable ({cuda_err})", flush=True)
             continue
         fn = BENCHES.get(rid)
-        if fn is None and rid.startswith("perf-profile-graph"):
-            fn = lambda o, _rid=rid: run_profile_graph(o, _rid)
-        if fn is None and rid.startswith("perf-engine-bench-"):
-            fn = lambda o, _rid=rid: run_engine_bench(o, _rid)
         if fn is None:
             _append({"run_id": rid, "ok": False, "gpu": gpu, "error": "unknown perf bench id"})
             print(f"[perf] unknown bench {rid!r}", flush=True)

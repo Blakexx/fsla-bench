@@ -553,8 +553,9 @@ def _spec():
     return load_spec(os.path.join(here, "graph_grid.yaml"))
 
 
-@pytest.mark.parametrize("tier,cells", [("decoupling", 48), ("resize", 40), ("overlap", 32),
-                                        ("decay", 32), ("reuse", 32), ("contract", 48),
+#: the header's sizes net of the rungs a D=2 wiring has no uniform spelling at (N = 32 and N = 128: squares only)
+@pytest.mark.parametrize("tier,cells", [("decoupling", 36), ("resize", 28), ("overlap", 32),
+                                        ("decay", 32), ("reuse", 20), ("contract", 36),
                                         ("cue_map", 32), ("attn_reference", 10),
                                         ("attn_capacity", 28)])
 def test_every_tier_is_the_size_its_header_states(tier, cells):
@@ -576,7 +577,7 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_refer
     no claim in this file is about them; a stray `baselines` arm would silently triple a tier. The
     attention arm is admitted in EXACTLY ONE tier, as the instrument floor — if it ever appeared on a
     capacity tier it would be read as a contender on the N ladder, which it cannot be."""
-    from rola_bench.mqar.instances import CANONICAL_WIRINGS
+    from rola_bench.models.rola import CANONICAL_WIRINGS
     for tier, arms in _spec()["tiers"].items():
         kinds = {a["build"] for a in arms}
         if tier.startswith("attn"):
