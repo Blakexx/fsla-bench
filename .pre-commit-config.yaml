@@ -1,0 +1,16 @@
+# rola-bench's commit gate. Scoped to the measurement suite (`rola_bench/suite/`), the part of this repository written
+# to rola's standards: ruff with rola's rule set, and the engine's contract tests (no GPU).
+repos:
+  - repo: local
+    hooks:
+      - id: suite-ruff
+        name: ruff (rola_bench/suite)
+        language: system
+        entry: ruff check --select E,F,UP,B,SIM,I,C4 --line-length 127 --target-version py310
+        files: ^rola_bench/suite/.*\.py$
+      - id: suite-engine-contract
+        name: suite engine contract (python -m unittest rola_bench.suite.test_engine)
+        language: system
+        entry: python3 -m unittest rola_bench.suite.test_engine
+        pass_filenames: false
+        files: ^rola_bench/suite/

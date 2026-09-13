@@ -30,7 +30,8 @@ python launch.py lm   default                 # language modeling
 ```
 
 `launch.py` runs CPU-only (it hides the GPU): it builds job configs and HTTP-coordinates the boxes —
-**all training and benchmarking runs on the rented GPUs, never locally.** The dispatcher reuses cells
+**every training run and every citable benchmark runs on the rented GPUs.** The one local tier is the kernel
+measurement suite below: engineering gates on this box's GPU, never cited. The dispatcher reuses cells
 already complete in the result store, requeues a dead box's owed cells, and tears every box down on
 drain.
 
@@ -108,6 +109,16 @@ the latter is used by the flagship's heterogeneous sparse-coarse/dense-fine rout
   script does not reimplement a second timing discipline.
 - **`METHODOLOGY.md`** — the measurement rules every perf script here follows (incl. which numbers are
   citable: local 3080Ti = engineering gates, A100 fleet = citable).
+
+## The local measurement suite (`rola_bench/suite/`)
+
+`python -m rola_bench.suite run --target worktree:<rola checkout> [--reference worktree:<baseline>,label:master,...]`
+measures rola checkouts with their own instruments (SASS, registers, phases, pipe counters, stall census, pipe
+timelines, interleaved timing sessions for every bench subject) as a graph of nodes keyed by what each result depends on
+(the binary, the instrument's code, the environment), runs only what is not stored, and keeps every result -- failures
+and repeated samples included -- in the measurements store (`rola-results`, rola's `store.root`). Relations between
+runs (a baseline, a ratio) are computed when the data is read. Standard library only; see
+[`rola_bench/suite/README.md`](rola_bench/suite/README.md).
 
 ## Result store
 
