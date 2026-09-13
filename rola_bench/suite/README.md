@@ -60,11 +60,13 @@ delta between commits.
 | `carry.counters` | carry cell | `tools/pipe_counters.py` | the profiler's pipe and resource counters, launch totals |
 | `carry.census` | carry cell | `tools/stall_census.py` | stall samples by component and reason, phase and wavefront census |
 | `carry.timeline` | carry cell | `tools/pipe_timeline.py` | the pipes' PM-sampled series over one launch |
-| `timing.session` | subject @ cell | `tools/probe_cells.py` | every arm's round medians, clock, stamps, session id |
+| `timing.session` | subject @ cell [@ calls=N] | `tools/probe_cells.py` | every arm's round medians, clock, stamps, session id |
 
 `--cells gate` is the kernel's first four gate cells (`GATE_CELLS`). Timing covers every subject of the target's bench
-roster on every cell `bench.subjects.applicable` admits for it; `--cells` narrows the carry cells, a layer subject
-takes every layer cell it applies to.
+roster, at every call count it declares (`bench.subjects.Subject.calls`: the sequence as N carried calls), on every cell
+`bench.subjects.applicable` admits for it; `--cells` narrows the carry cells, a layer subject takes every layer cell it
+applies to. Each arm runs the unit as its own checkout spells it (`target.Lane`): a reference from before the call count
+names a multi-call unit as a bench of its own (`PRE_COUNT_BENCHES`).
 
 ## Tests
 

@@ -12,17 +12,18 @@ with its declared role -- and ratios between arms are the reader's.
     carry.counters    the profiler's pipe and resource counters, one launch (per carry cell)
     carry.census      every stall sample by component, reason, source line (per carry cell)
     carry.timeline    the pipes over one launch, PM sampling               (per carry cell)
-    timing.session    every arm's interleaved launch times for a subject   (per subject x cell it applies to)
+    timing.session    every arm's interleaved launch times for a subject   (per subject x call count x cell it applies to)
 """
 from __future__ import annotations
 
 import json
 import tempfile
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from .engine import Node
-from .target import Target, binary_key, cells, environment_key, instrument, instrument_key, sh, subjects
+from .target import Lane, Target, binary_key, cells, environment_key, instrument, instrument_key, sh, subjects
 
 #: the carry cells the kernel's gate reads first; `--cells gate` selects them
 GATE_CELLS = ("nl64k-alt-k4", "flagship-dense", "flagship-alt-k4", "flagship-cohort-k4")
@@ -103,50 +104,60 @@ def _timeline(t: Target, cell: str, dest: Path) -> None:
 
 
 def timing_nodes(t: Target, opt: Options, wanted: set[str]) -> list[Node]:
-    """One interleaved session per subject and cell: the target (role `subject`) and every reference (role `reference`),
-    each through its own checkout's probe worker, timed in one invocation under the clock lock."""
+    """One interleaved session per unit (a subject at a call count) and cell: the target (role `subject`) and every
+    reference (role `reference`), each through its own checkout's probe worker and its own spelling of the unit, timed in
+    one invocation under the clock lock."""
     if "timing.session" not in wanted:
         return []
     arms = [("subject", t)] + [("reference", r) for r in opt.references]
     roster = subjects(t)
-    chosen = list(roster) if opt.subjects == "all" else opt.subjects.split(",")
+    names = sorted({subject for subject, _calls in roster})
+    chosen = names if opt.subjects == "all" else opt.subjects.split(",")
     nodes = []
     for subject in chosen:
-        if subject not in roster:
-            raise SystemExit(f"{subject} is not a bench subject of {t.label}: {sorted(roster)}")
-        applies = tuple(roster[subject])
-        carry = set(applies) <= set(cells(t, "carry"))
-        for cell in _select(applies, opt.cells) if carry else list(applies):
-            identity = {"arms": [{"role": role, "binary": binary_key(a),
-                                  "instrument": instrument_key(a, "tools/probe_cells.py",
-                                                               ("benchmarks/cells/carry_cells.json",)),
-                                  "schedule": a.schedule_for(cell) if "carry" in subject else None} for role, a in arms],
-                        "environment": environment_key(t),
-                        "params": {"reps": opt.reps, "warmup": opt.warmup, "rounds": opt.rounds}}
-            meta = {"arms": [{"role": role, **_meta(a)} for role, a in arms]}
-            nodes.append(Node("timing.session", f"{subject}@{cell}", identity,
-                              lambda _deps, dest, s=subject, c=cell: _session(t, arms, s, c, opt, dest),
-                              repeatable=True, meta=meta))
+        if subject not in names:
+            raise SystemExit(f"{subject} is not a bench subject of {t.label}: {names}")
+        for calls in sorted(n for s, n in roster if s == subject):
+            applies = roster[subject, calls].cells
+            carry = set(applies) <= set(cells(t, "carry"))
+            for cell in _select(applies, opt.cells) if carry else list(applies):
+                lanes = [(role, a, subjects(a).get((subject, calls))) for role, a in arms]
+                identity = {"arms": [{"role": role, "binary": binary_key(a),
+                                      "instrument": instrument_key(a, "tools/probe_cells.py",
+                                                                   ("benchmarks/cells/carry_cells.json",)),
+                                      "schedule": a.schedule_for(cell) if "carry" in subject else None,
+                                      "lane": [lane.bench, lane.calls] if lane else None} for role, a, lane in lanes],
+                            "environment": environment_key(t),
+                            "params": {"reps": opt.reps, "warmup": opt.warmup, "rounds": opt.rounds}}
+                meta = {"arms": [{"role": role, **_meta(a)} for role, a in arms]}
+                unit = f"{subject}@{cell}" + (f"@calls={calls}" if calls != 1 else "")
+                nodes.append(Node("timing.session", unit, identity, partial(_session, t, lanes, subject, calls, cell, opt),
+                                  repeatable=True, meta=meta))
     return nodes
 
 
-def _session(t: Target, arms: list[tuple[str, Target]], subject: str, cell: str, opt: Options, dest: Path) -> None:
+def _session(t: Target, lanes: list[tuple[str, Target, Lane | None]], subject: str, calls: int, cell: str, opt: Options,
+             _deps: dict, dest: Path) -> None:
+    missing = [a.label for _role, a, lane in lanes if lane is None or cell not in lane.cells]
+    if missing:
+        raise RuntimeError(f"{missing} carry no {subject} at {calls} call(s) on {cell}")
     specs = []
-    for _role, a in arms:
-        spec = a.spec() + (f",schedule:{a.schedule_for(cell)}" if "carry" in subject else "")
+    for _role, a, lane in lanes:
+        spec = a.spec() + f",bench:{lane.bench}" + (f",calls:{lane.calls}" if lane.calls != 1 else "")
+        spec += f",schedule:{a.schedule_for(cell)}" if "carry" in subject else ""
         specs += ["--binary", spec]
     with tempfile.TemporaryDirectory(prefix="rola_suite_session_") as tmp:
-        rc, text = sh([t.python, "tools/probe_cells.py", "--bench", subject, "--cells", cell, "--reps", str(opt.reps),
-                       "--warmup", str(opt.warmup), "--rounds", str(opt.rounds), "--no-record", "--out", f"{tmp}/rows.jsonl",
-                       *specs], t.worktree, 7200)
+        rc, text = sh([t.python, "tools/probe_cells.py", "--bench", lanes[0][2].bench, "--cells", cell, "--reps",
+                       str(opt.reps), "--warmup", str(opt.warmup), "--rounds", str(opt.rounds), "--no-record", "--out",
+                       f"{tmp}/rows.jsonl", *specs], t.worktree, 7200)
         rows_path = Path(tmp) / "rows.jsonl"
         if not rows_path.exists():
             raise RuntimeError(f"probe_cells exited {rc} without rows:\n{text[-1500:]}")
         rows = [json.loads(line) for line in rows_path.read_text().splitlines() if line.strip()]
     by_label = {r["binary"]: r for r in rows}
-    doc = {"subject": subject, "cell": cell, "session": rows[0].get("session") if rows else None,
+    doc = {"subject": subject, "calls": calls, "cell": cell, "session": rows[0].get("session") if rows else None,
            "arms": [{"role": role, "label": a.label, **{k: v for k, v in by_label.get(a.label, {}).items()
-                                                        if k not in ("worktree", "venv")}} for role, a in arms]}
+                                                        if k not in ("worktree", "venv")}} for role, a, _lane in lanes]}
     errors = [a["label"] for a in doc["arms"] if "error" in a or "median_of_round_medians_ms" not in a]
     dest.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     if errors:

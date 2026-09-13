@@ -165,15 +165,48 @@ def cells(target: Target, kind: str) -> tuple[str, ...]:
     return tuple(json.loads(out.strip().splitlines()[-1]))
 
 
+@dataclass(frozen=True)
+class Lane:
+    """How one checkout spells a timing unit to its probe: its own bench name, the call count its worker takes, and the
+    cells `bench.subjects.applicable` admits there."""
+
+    bench: str
+    calls: int
+    cells: tuple[str, ...]
+
+
+#: A ROSTER FROM BEFORE ROLA'S CALL COUNT (`bench.subjects.Subject.calls`) names a multi-call unit as a bench of its own.
+#: An entry retires once no reference predates the count.
+PRE_COUNT_BENCHES = {"prefill_op_chunked": ("prefill_op", 4)}
+
+_ROSTER = """
+import json, sys
+sys.path.insert(0, 'benchmarks')
+from bench.driver import CELLS
+from bench.subjects import SUBJECTS, applicable
+counts = sorted({n for s in SUBJECTS.values() for n in getattr(s, 'calls', (1,))})
+roster = {}
+for cell, (kind, spec) in sorted(CELLS.items()):
+    for n in counts:
+        for name in applicable(spec, kind, *([n] if n != 1 else [])):
+            roster.setdefault(f'{name}@{n}', []).append(cell)
+print(json.dumps(roster))
+"""
+
+
 @cache
-def subjects(target: Target) -> dict[str, list[str]]:
-    """The bench roster the target defines, each subject with the cells it applies to (`bench.subjects.applicable`,
-    the check the probe itself makes)."""
-    code = ("import json, sys; sys.path.insert(0, 'benchmarks'); from bench.driver import CELLS; "
-            "from bench.subjects import SUBJECTS, applicable; roster = {n: [] for n in SUBJECTS}; "
-            "[roster[s].append(c) for c, (k, spec) in sorted(CELLS.items()) for s in applicable(spec, k)]; "
-            "print(json.dumps(roster))")
-    rc, out = sh([target.python, "-c", code], target.worktree, 600)
+def subjects(target: Target) -> dict[tuple[str, int], Lane]:
+    """The bench roster the target defines: each (subject, call count) unit with the lane that runs it there."""
+    rc, out = sh([target.python, "-c", _ROSTER], target.worktree, 600)
     if rc:
         raise SystemExit(f"{target.label}: could not read the bench roster: {out[-400:]}")
-    return json.loads(out.strip().splitlines()[-1])
+    raw = json.loads(out.strip().splitlines()[-1])
+    lanes: dict[tuple[str, int], Lane] = {}
+    for key, admitted in raw.items():
+        bench, n = key.rsplit("@", 1)
+        if bench not in PRE_COUNT_BENCHES:
+            lanes[bench, int(n)] = Lane(bench, int(n), tuple(admitted))
+    for bench, unit in PRE_COUNT_BENCHES.items():
+        if f"{bench}@1" in raw:
+            lanes.setdefault(unit, Lane(bench, 1, tuple(raw[f"{bench}@1"])))
+    return lanes
