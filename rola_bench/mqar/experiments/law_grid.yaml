@@ -1,7 +1,7 @@
 # THE LAW GRID — the small-scale two-factor design that tests the capacity theory's boundaries.
 # Built 2026-08-02 (Phase 1.4a). Expanded by rola_bench.mqar.build_configs; GRID_TIERS selects tiers.
 #
-#   rola_bench/fleet/__main__.py mqar law_grid
+#   python -m rola_bench.fleet mqar law_grid
 #
 # ------------------------------------------------------------------------------------------------
 # WHAT THIS GRID IS FOR
@@ -43,11 +43,12 @@
 # CAPACITY COORDINATE: `st` in every run_id is the REALIZED content-state readback
 # (rola_bench.mqar.realized_state), never a formula and never the trainer's logged state total.
 #
-# THE STATE-LADDER FLOOR. The N ladder starts at 16, not 2. The V3 CUDA consumer instantiates
-# `BC in (16, 64)` only, and the readout tile must DIVIDE N, so a routed arm below N = 16 has no
-# launchable eval geometry at all (`mqar.instances.MQAR_STATE_BLOCK`). The monolithic baselines have
-# no such floor; their curves simply start lower, and the asymmetry is stated rather than hidden by
-# trimming everyone to the same rungs.
+# THE STATE-LADDER FLOOR. The N ladder starts at 16, not 2. The V3 CUDA consumer instantiated
+# `BC in (16, 64)` only, and the readout tile had to DIVIDE N, so a routed arm below N = 16 had no
+# launchable eval geometry. The monolithic baselines have no such floor; their curves simply start
+# lower, and the asymmetry is stated rather than hidden by trimming everyone to the same rungs. rola
+# pads any level width now, so a routed rung below 16 is spellable; extending the ladder down is a
+# spec decision not yet taken.
 #
 # SIZE: 4 RoLA arms x 5 ncs x 4 L x 4 lrs x 3 seeds = 960 routed cells; 3 methods x 2 shapes x
 # 5 ncs x 4 L x 4 lrs x 3 seeds = up to 1440 baseline cells before structural exits; 48 attention

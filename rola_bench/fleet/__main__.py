@@ -2,9 +2,9 @@
 """Launch a RoLA benchmark on a fleet of rented GPUs.
 
     python -m rola_bench.fleet mqar canonical --boxes 6     # the canonical MQAR grid
-    python -m rola_bench.fleet mqar normsym                 # any MQAR spec, by name
+    python -m rola_bench.fleet mqar law_grid                # any MQAR spec, by name
     python -m rola_bench.fleet mqar seed_confirm            # seed-confirmation
-    python -m rola_bench.fleet lm   <config>                # other benchmarks (as they migrate)
+    python -m rola_bench.fleet lm default                   # the other benchmarks: lm, perf, similarity
 
 This is the suite's orchestration entrypoint. Each benchmark exposes a job BUILDER `f(config)->Job`
 (rola_bench.<bench>.job); we hand the built Job to the generic `fleet` Dispatcher, which owns
@@ -31,7 +31,7 @@ JOBS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("benchmark", choices=sorted(JOBS))
-    ap.add_argument("config", help="experiment config name (e.g. canonical, normsym, seed_confirm)")
+    ap.add_argument("config", help="experiment config name (e.g. canonical, law_grid, seed_confirm)")
     ap.add_argument("--boxes", type=int, default=6)
     ap.add_argument("--batch", type=int, default=None, help="override run_ids per box batch")
     # Which GPU provider to rent from. The provider's DECLARED semantics (fleet.semantics) gate the

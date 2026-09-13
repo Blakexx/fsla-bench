@@ -252,7 +252,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
     # CHILD because that is where the CUDA allocator lives — the parent here is a pure orchestrator
     # and (on the local box) deliberately holds no CUDA context. `zoology.launch` imports this file
     # to read `configs`, so the cap is in force before the first allocation. Set by the local grid
-    # dispatcher (`run_local_grid`), which shares the card with an interactive session; unset on the
+    # dispatcher (`rola_bench.mqar.local_grid`), which shares the card with an interactive session; unset on the
     # fleet, where a box owns its GPU outright.
     #
     # ROLA_PEAK_MEM_PATH, on the same seam, has the child write its own

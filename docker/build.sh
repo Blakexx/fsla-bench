@@ -3,8 +3,8 @@
 # one context — only runtime code (no .git/__pycache__/data/results/docs), so images are lean and
 # publication-safe. Requires the fleet base first: fleet/docker/build_base.sh.
 #
-#   build.sh mqar                 # build blakeresearch/rola-bench:v1   (MQAR benchmark)
-#   build.sh lm                   # build blakeresearch/rola-lm:v1      (LM benchmark, scaffold)
+#   build.sh mqar                 # build blakeresearch/rola-bench:$IMG_VERSION   (MQAR, perf, similarity)
+#   build.sh lm                   # build blakeresearch/rola-lm:$IMG_VERSION      (LM)
 #   build.sh mqar --push          # build, then push to the registry
 #   build.sh mqar --push --prune  # build, push, then remove the local image (keep base layers)
 #
@@ -22,9 +22,8 @@ TARGET="${1:?usage: build.sh <mqar|lm> [--push] [--prune]}"; shift || true
 PUSH=0; PRUNE=0
 for a in "$@"; do case "$a" in --push) PUSH=1;; --prune) PRUNE=1;; esac; done
 
-# IMG_VERSION pins the tag (default v2: v1 = the proven MQAR image, left untouched; v2 adds the
-# perf/rank code + the box_server base64-payload base). The mqar image is the WHOLE rola_bench
-# suite (perf+rank+mqar modules); perf/rank select their runner via FLEET_RUN_CMD at launch.
+# IMG_VERSION pins the tag. The mqar image is the whole rola_bench package less lm (mqar, perf and similarity select
+# their runner through FLEET_RUN_CMD at launch); the lm image is rola_bench less mqar.
 V="${IMG_VERSION:-v2}"
 case "$TARGET" in
   mqar) TAG="blakeresearch/rola-bench:$V"; DF="mqar.Dockerfile"; WITH_ZOO=1; BASE_DEFAULT=v2;;
@@ -33,18 +32,17 @@ case "$TARGET" in
 esac
 BASE_TAG="${FLEET_BASE_TAG:-$BASE_DEFAULT}"
 
-CLA="${ROLA_CLA_SRC:-/mnt/c/Users/Blake/Documents/VSCode/CLA}"
-FLA="${ROLA_FLA_SRC:-/home/blake/flash-linear-attention-rola-cuda-p0}"   # INTERIM until D4: rola-cute merges into flash-linear-attention-rola (the canonical repo, then pushed to remote) — re-point here + rebuild the image at that point
-ZOO="${ROLA_ZOO_SRC:-/home/blake/zoology}"
-RB="${ROLA_BENCH_SRC:-/home/blake/rola-bench}"
+# The package sources are this machine's checkouts, named in the environment (no defaults: a checkout lives wherever
+# the machine keeps it).
+FLA="${ROLA_FLA_SRC:?set ROLA_FLA_SRC to the fla-rola checkout}"
+ZOO="${ROLA_ZOO_SRC:?set ROLA_ZOO_SRC to the zoology checkout}"
+RB="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 RS=(rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' --exclude='build')
 
-# rola.py is deleted — the model is fla-rola, its helpers moved into rola-bench. Nothing imports
-# `rola`, so it's no longer staged/installed in the image.
 echo "staging fla-rola (fork)…"
 "${RS[@]}" "$FLA/" "$STAGE/fla-rola/"
 

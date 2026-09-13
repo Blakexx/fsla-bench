@@ -1,9 +1,9 @@
 # ROUTER-BIAS ablation: does a router bias (a content-independent default state) earn its place?
 # RE-PINNED 2026-08-02 (Phase 1.5). The axis is LIVE — `router_bias` is a real V3 layer kwarg and
-# every published `named_configs` builder pins it True, which until now was an UNTESTED pin. The
+# every published RoLA cell (`rola_bench.models.rola.Cell`) pins it True, which until now was an UNTESTED pin. The
 # pre-V3 arm (`rola-rla-kappa-asym`) is retired; the ablation is re-run on the flagship wiring.
 #
-#   rola_bench/fleet/__main__.py mqar router_bias
+#   python -m rola_bench.fleet mqar router_bias
 #
 # Paired cells: identical preset, identical N, identical LR, `router_bias` False vs True, three
 # seeds. The pairing is what makes it an ablation — nothing else moves. Run on ARM 1 (the flagship

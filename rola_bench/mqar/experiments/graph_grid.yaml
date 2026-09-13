@@ -87,14 +87,11 @@
 #   clock is not the write-mass clock it is documented to be.
 #   *** THE THIRD DECAY RUNG DOES NOT EXIST, AND THAT IS A REPORTED FACT. *** The design calls for a
 #   TIME-PROXY clock alongside the write-mass one, and this cell is exactly what separates them (a
-#   time clock erodes the long-lived items, a write-mass clock does not). The pinned engine's decay
-#   vocabulary is `decay in {'none','leaf_mass'}` (fla_rola/layers/rola.py:285) and the time clock
-#   `kernel='gla_static'` is REFUSED BY NAME at the engine's own config boundary
-#   (fla_rola/models/rola/instances.py:80): "V3's clock is unconditionally detached (ROLA_V3_SPEC.md
-#   §2 stop_gradient), which is exactly the 'gla_mass_detached' contract, not 'gla_static''s defining
-#   non-detached clock." `mqar.instances.RETIRED_INSTANCES` records the same retirement. So the cell
-#   is built and run at the two rungs that exist, and the comparison it was designed for is pending a
-#   clock that has no V3 spelling. Not substituted, not silently dropped.
+#   time clock erodes the long-lived items, a write-mass clock does not). rola's decay slot feeds a
+#   write-conditioned clock only (`rola/routing/decay.py`: a source that decayed on time "would be a
+#   different recurrence, and it is vetoed as one"), and fla_rola's decay sources are `constant` and
+#   `learned`, both rates on that clock. So the cell is built and run at the rungs that exist, and the
+#   comparison it was designed for has no spelling. Not substituted, not silently dropped.
 #
 # PREDICTED-5 (the natural-distribution proxy). `reuse` (pool 512, Zipf a = 1.5, k = 16 per
 #   sequence) MEASURES chi in [124, 126] at 20k train examples — an order of magnitude above its item
@@ -147,7 +144,7 @@
 # SCHEDULE — MEASURED, not assumed, and it contradicts the "one tier per night" plan for half the
 # tiers. A cell is 12520 optimizer steps (20k examples / batch 64 x 40 epochs) and the local card
 # (RTX 3080 Ti) runs 139 ms/step at L = 128, measured 2026-08-02 -> 29 min/cell at L = 128 and ~4x
-# that at L = 512. `run_local_grid --dry-run` prints the per-tier total; as it stands:
+# that at L = 512. `python -m rola_bench.mqar.local_grid --dry-run` prints the per-tier total; as it stands:
 #     decoupling 23.2 h | reuse 15.5 h | cue_map 15.5 h        <- LOCAL: one long night each
 #     overlap 30.9 h | decay 30.9 h | attn_capacity 30.9 h     <- LOCAL only over two nights
 #     resize 77.3 h | contract 92.8 h | attn_reference 8.7 h   <- RENTAL class (L = 512)
@@ -245,9 +242,10 @@ conditions:
      cue_permutation: true}
 tiers:
   # T1 — THE DECOUPLING CONTRAST. The one tier to run first: it is the file's primary claim and it is
-  # the cheapest. N brackets chi = 16 from at-demand upward; N < 16 has no routed spelling at all
-  # (the pinned readout tile must divide N — mqar.instances.MQAR_STATE_BLOCK), which is a reported
-  # floor on the state ladder, exactly as in law_grid.
+  # the cheapest. N brackets chi = 16 from at-demand upward. The ladder starts at 16, which was the
+  # pre-K31 engine's routed floor (its readout tile, 16, had to divide N), exactly as in law_grid.
+  # rola pads any level width now, so a rung below 16 is spellable; extending the ladder down is a
+  # spec decision not yet taken.
   "decoupling":
     - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1,
        conditions: [complete-k16, clustered-k16-m8]}

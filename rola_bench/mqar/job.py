@@ -1,13 +1,13 @@
 """MQAR jobs, config-driven. `mqar_job(<config>)` builds a fleet.Job for ANY MQAR spec
-(canonical / normsym / dmodel64 / router_bias / seed_confirm) — no per-experiment *_job.py.
+(canonical / law_grid / dmodel64 / router_bias / seed_confirm / ...) — no per-experiment *_job.py.
 
 Launch knobs live WITH the experiment: a `fleet:` block in experiments/<config>.yaml, or a `FLEET`
 dict in a module-config (seed_confirm). Everything else (name, results dir, done_ids, run command)
 is derived from the config name by rola_bench.fleet.jobs.make_job.
 
-  rola_bench/fleet/__main__.py mqar canonical        # tiers via fleet.env.GRID_TIERS
-  rola_bench/fleet/__main__.py mqar normsym
-  rola_bench/fleet/__main__.py mqar seed_confirm
+  python -m rola_bench.fleet mqar canonical        # tiers via fleet.env.GRID_TIERS
+  python -m rola_bench.fleet mqar law_grid
+  python -m rola_bench.fleet mqar seed_confirm
 """
 import importlib
 import os

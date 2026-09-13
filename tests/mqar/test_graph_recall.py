@@ -536,7 +536,7 @@ def test_reuse_is_solved_exactly_where_the_budget_allows_and_bounded_otherwise()
 
 
 def test_predicted_N_is_stamped_for_every_construction():
-    """The comparison the grid's headline statistic is built on (`mqar.graph_analysis`): the cell
+    """The comparison the grid's headline statistic is built on (`rola_bench.mqar.analysis.graph`): the cell
     carries the demand the theory predicts it needs, as its own field."""
     assert _stamp(construction="complete", demand=8)["graph_predicted_N"] == "8"
     assert _stamp(construction="overlap", demand=8, births=16)["graph_predicted_N"] == "8"

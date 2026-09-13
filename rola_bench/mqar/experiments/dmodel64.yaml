@@ -1,10 +1,10 @@
 # TINY-BACKBONE ablation: do many routed states rescue a small backbone on MQAR?
 # d_model = 64 (half the grid's), N = 256 (recurrent state >> backbone), full LR sweep.
 # RE-PINNED 2026-08-02 (Phase 1.5): the pre-V3 arm was `rola-rla-kappa-asym` at d_qk=12, a preset
-# defined by the retired `state_norm='kappa'` (mqar.instances.RETIRED_INSTANCES). The question the
+# defined by the retired `state_norm='kappa'`. The question the
 # spec asks is architecture-independent, so it survives with the V3 slate; the old rows do not.
 #
-#   rola_bench/fleet/__main__.py mqar dmodel64
+#   python -m rola_bench.fleet mqar dmodel64
 #
 # WHY IT IS WORTH KEEPING ALONGSIDE law_grid.yaml: the law grid holds the backbone fixed and moves
 # N and L. This spec moves the BACKBONE against a fixed large N — the "is routed state a substitute

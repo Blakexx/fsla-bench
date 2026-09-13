@@ -6,14 +6,12 @@ budget sections are flattened to the LM_* box env the runner (run.py) + arms.py 
 file is the single source of truth. Results: `rola_results` at lm/<config> (cell = <arm>_s<seed>).
 LM keeps preemption-safe checkpoint resume (payload_for + pull_in_progress + no_kill).
 
-Launch: rola_bench/fleet/__main__.py lm default
+Launch: python -m rola_bench.fleet lm default
 """
 import os
 
-from rola_bench.fleet.jobs import make_job
+from rola_bench.fleet.jobs import checkpoints, make_job
 from rola_bench.fleet.spec import load, env_from
-
-CKPT_ROOT = os.environ.get("ROLA_LM_CKPTS", "/mnt/e/rola/rola_data/lm_ckpts")
 
 
 def validate_matched_states(spec, box_env) -> None:
@@ -39,7 +37,7 @@ def lm_job(config="default"):
     fleet["env"] = {**box_env, **fleet.get("env", {})}
     # PER-CONFIG ckpt dir: cell run_ids are <arm>_s<seed> with no corpus, so two corpora share names; isolating by
     # config keeps one corpus's resume checkpoint from overwriting another's.
-    ckpt_dir = os.path.join(CKPT_ROOT, config)
+    ckpt_dir = os.path.join(checkpoints("ROLA_LM_CKPTS"), config)
 
     def _payload_for(run_id):  # resume payload = this cell's last in-progress ckpt tar; None on first run
         p = os.path.join(ckpt_dir, run_id + ".pt")

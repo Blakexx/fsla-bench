@@ -1,18 +1,12 @@
-# paper_v1 — the paper's systems numbers: FINAL RoLA vs REAL EXTERNAL implementations, layer-vs-layer
-# at matched d_model (scaling.py's existing model — round-robin, IQR, OOM sentinels, state-MiB).
-# Arms: attention/SDPA-flash (the unbounded-KV ceiling), the RoLA flagship (rola-base, rola-base-rla —
-# rola_bench.models.named_configs, requiring the production per-level heterogeneous routing capability), and
-# the REAL canonical `fla_rola.layers` baselines the engine forks: GLA,
-# GatedDeltaNet, DeltaNet, GSA (Mamba2's layer exists in this engine's `fla_rola/layers/mamba2.py` but
-# is NOT wired here -- it needs an SSM-shaped state cache the scaling.py decode/prefill harness doesn't
-# build; add it only alongside that harness change, not by hacking it into this cell shape).
+# paper_v1 — the paper's systems numbers: RoLA against real external implementations, layer against layer at
+# d_model 512 (`rola_bench/perf/README.md` has the protocol: round-robin arms, medians and IQRs, isolated memory
+# passes, UNBUILT/OOM/ERR rows).
+# Arms: causal SDPA attention (the growing-KV ceiling), the named RoLA cell rola-base-rla (`rola_bench.models.rola`,
+# built through fla_rola), and fla_rola's GLA and GatedDeltaNet layers at their canonical geometry; DeltaNet and GSA
+# are arms `scaling.py` also builds. Mamba2 is not an arm: it needs an SSM-shaped state cache the decode bench does
+# not build.
 #
-# The internal CuTe-vs-Triton engine bake-off (engine_bench.py cells) is ENGINEERING-only, not paper
-# material -- see engine_regression.yaml. paper_v1 covers train/prefill/decode(+graphed) x L-sweep.
-#
-# `SCALE_DECODE_GRAPHED=1` adds a `-graphed` cell variant to the RoLA arms only (the C9
-# `RoLADecodeGraph` pattern; falls back to a generic `torch.cuda.graph` capture pre-C9, and to an ERR
-# sentinel row if that capture itself is unsupported -- never crashes the sweep).
+# `SCALE_DECODE_GRAPHED=1` adds a CUDA-graph replay of each recurrent arm's decode beside its eager cell.
 #
 # Launch:
 #   python -m rola_bench.fleet perf paper_v1 --boxes 1

@@ -5,7 +5,7 @@
     GRID_TIERS=decoupling flock /tmp/rola_gpu.lock \
         python -m rola_bench.mqar.local_grid --config graph_grid
 
-`rola_bench/fleet/__main__.py` is the FLEET orchestrator: it rents boxes and never trains locally. This is its local
+`python -m rola_bench.fleet` is the FLEET orchestrator: it rents boxes and never trains locally. This is its local
 counterpart for a grid that is small enough to run on the developer card overnight
 ([[local-small-rented-big]]: local stays small BY DESIGN — tiers, gates, micro-probes; the big
 anchors and the publishable LM arms go to rented A100-class boxes). It reuses the fleet's own

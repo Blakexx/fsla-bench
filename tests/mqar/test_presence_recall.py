@@ -377,7 +377,7 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_colum
 
 def test_the_N_ladders_are_pointed_at_the_solved_demand():
     """chi = the pool size, so a ladder entirely above (or below) it cannot see a collapse threshold.
-    The routed floor N = 16 (`MQAR_STATE_BLOCK`) means the chi = 16 tier can only run AT the demand
+    The routed floor N = 16 (the pre-K31 engine's readout tile) means the chi = 16 tier can only run AT the demand
     and upward, which is stated in the file; the chi = 64 tier must genuinely bracket, since it is
     where the crossing is measured."""
     spec = _spec()
@@ -396,7 +396,7 @@ def test_the_N_ladders_are_pointed_at_the_solved_demand():
 
 
 def test_the_attention_axis_sweeps_d_qk_over_three_distinct_demands():
-    """A slope needs three points (`graph_analysis.fit_packing_constant` refuses two by name), and
+    """A slope needs three points (`mqar.analysis.graph.fit_packing_constant` refuses two by name), and
     the d_qk ladder must be a divisor ladder of d_model, since zoology's MHA derives
     head_dim = d_model // num_heads."""
     spec = _spec()

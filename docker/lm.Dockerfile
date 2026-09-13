@@ -1,10 +1,10 @@
 # rola-bench LM image — FROM the project-agnostic fleet base.
 #
-# Same pattern as mqar.Dockerfile but for the language-modeling benchmark: rola + fla-rola + the HF
-# stack + the vendored flame harness (in rola_bench/lm). zoology (MQAR baselines) is NOT installed.
+# Same pattern as mqar.Dockerfile but for the language-modeling benchmark: fla-rola + the HF stack. zoology (the MQAR
+# baselines) is not installed.
 #
-# The box-side contract is wired: run.py maps RUN_IDS ("<arm>_s<seed>") -> train_lm.py, which
-# appends {run_id, ok, params_m, state_floats, ppl, ...} to $FLEET_RESULTS + saves the ckpt dir.
+# The box-side contract: run.py maps RUN_IDS ("<arm>_s<seed>") to train_lm.py, which appends {run_id, ok, params_m,
+# state_floats, ppl, ...} to $FLEET_RESULTS and saves the checkpoint directory.
 ARG FLEET_BASE_TAG=v1
 FROM blakeresearch/fleet-base:${FLEET_BASE_TAG}
 
@@ -27,15 +27,13 @@ COPY rola-bench /opt/rola-bench
 RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla-rola \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/rola-bench
 
-# Verify the BOX-side path only (run_lm -> train_lm -> arms + deps incl. flash-attn for the attn arm).
-# NOT rola_bench.lm.job — that's DISPATCHER-side (constructs fleet.Job with fields the box's baked
-# fleet-base fleet may predate); the box runs run_lm and never imports the Job.
-RUN python -c "import torch, fla.layers, fla_rola, fleet, flash_attn; \
-import sys; sys.path.insert(0, '/opt/rola-bench/rola_bench/lm'); import arms, run_lm; \
+# Verify the box-side path only (run.py -> train_lm.py -> arms.py and their dependencies, flash-attn for the attn arm),
+# from the directory the box runs in. Not rola_bench.lm.job: that is dispatcher-side and builds a fleet.Job.
+RUN cd /opt/rola-bench/rola_bench/lm && python -c "import torch, fla.layers, fla_rola, fleet, flash_attn, arms, run; \
 print('rola-bench lm image OK; torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'arms', len(arms.ARMS))"
 
 ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/lm \
-    FLEET_VERIFY_CMD="python -c 'import torch; assert torch.cuda.is_available(); import run, arms; assert len(arms.ARMS)>=5; print(\"VERIFY OK\")'" \
+    FLEET_VERIFY_CMD="python -m rola_bench.fleet.verify" \
     FLEET_RUN_CMD="python run.py"
 
 WORKDIR /opt/rola-bench/rola_bench/lm

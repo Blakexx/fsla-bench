@@ -4,7 +4,7 @@ repos:
   - repo: local
     hooks:
       - id: suite-ruff
-        name: ruff (rola_bench/suite)
+        name: ruff (rola_bench/measure)
         language: system
         entry: ruff check --select E,F,UP,B,SIM,I,C4 --line-length 127 --target-version py310
         files: ^rola_bench/measure/.*\.py$

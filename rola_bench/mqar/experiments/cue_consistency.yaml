@@ -3,7 +3,7 @@
 # in its module docstring). Theory: V3_CAPACITY_THEORY_NOTES_2026-07-29 §3 (T0.5, the aliasing
 # ledger) and §3b (T3, the contract table); paper §5.2 Eq. (7) and §5.1's two error-free cases.
 #
-#   rola_bench/fleet/__main__.py mqar cue_consistency
+#   python -m rola_bench.fleet mqar cue_consistency
 #
 # WHY IT EXISTS. `law_grid.yaml` sweeps CAPACITY: it walks alpha_cap = N/L through 1 and measures the
 # first boundary. It structurally cannot move the second one, because standard MQAR's key IS its cue,

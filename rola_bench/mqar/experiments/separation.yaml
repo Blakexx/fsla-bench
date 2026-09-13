@@ -1,6 +1,6 @@
 # THE SEPARATION CELLS — the N = L diagonal at 16K-64K. Specced 2026-08-02 (Phase 1.4b).
 #
-#   rola_bench/fleet/__main__.py mqar separation        # RENTED A100-class only; see the cost note below
+#   python -m rola_bench.fleet mqar separation        # RENTED A100-class only; see the cost note below
 #
 # ------------------------------------------------------------------------------------------------
 # WHAT THESE CELLS ARE

@@ -26,12 +26,12 @@ Method-defining non-conv defaults (GLA output gate, GDN gate, Based taylor map, 
 are kept.
 
 **Matched state, RE-DERIVED 2026-08-02 (Phase 1.2).** `REF(nc)` is the RoLA CONTENT state at the
-pinned MQAR geometry, read from `rola_bench.mqar.instances.content_state_floats` — `H*N*d_v` with
+pinned MQAR geometry (`rola_bench.mqar.MQAR_GEOM`, read back off a built layer by `models.rola.state_floats`) — `H*N*d_v` with
 `H=4, d_v=64`, i.e. `256*nc`. The previous `REF(nc) = 624*nc` was written in the DELETED dimension
 (`624 = H*d_qk*(d_v+1)` at `d_qk=d_v=12`): a V3 RoLA state is `[N, d_v]`, so that reference
 over-sized every baseline by a factor of `d_qk = 12` at the same nc. This is finding F1's error on
-the MQAR tier, and it invalidates the matched-state x-coordinate of every pre-V3 row in
-`results/mqar/` (see `mqar-retrospective.md`). The denominator sidecar (`H*N` under
+the MQAR tier, and it invalidates the matched-state x-coordinate of every pre-V3 MQAR row (see
+`mqar-retrospective.md`). The denominator sidecar (`H*N` under
 `state_norm='global'`) is reported as separate overhead, never on the matched axis (#126).
 
 Baselines spend the same total recurrent floats on content (d_k*d_v), three ways, in their own

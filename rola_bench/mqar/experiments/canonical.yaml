@@ -2,7 +2,7 @@
 # scaling along its own natural axis, on the LITERATURE-STANDARD `ext` data protocol.
 # RE-PINNED 2026-08-02 (Phase 1.5) onto the V3 preset registry and the contender ladder.
 #
-#   rola_bench/fleet/__main__.py mqar canonical
+#   python -m rola_bench.fleet mqar canonical
 #
 # RELATIONSHIP TO law_grid.yaml: this spec is the literature-protocol comparison point, not the law
 # test. It holds the `ext` preset fixed — the same train-short/test-long ladder the MQAR baselines
@@ -13,8 +13,7 @@
 # WHAT THE RE-PIN CHANGED, and why every pre-V3 row here is superseded rather than extended:
 #   * the routed arms named `rola-rla-kappa-asym` / `rola-gla-scalar-sym` / `rola-gla-kappa-asym`,
 #     all three defined by knobs V3 deleted (state_norm='kappa', kernel='gla_scalar'). Retired by
-#     name in `mqar.instances.RETIRED_INSTANCES`; replaced by the three canonical wirings plus the
-#     D1 dense control.
+#     name; replaced by the three canonical wirings plus the D1 dense control.
 #   * `d_qk: 12` on every arm line. There is no d_qk in V3; a state is [N, d_v].
 #   * the matched-state reference `REF(nc) = 624*nc` was written in d_qk and over-sized every
 #     baseline by 12x at the same rung. `st` in each run_id is now the REALIZED content-state

@@ -1,6 +1,6 @@
 # THE PRESENCE GRID — v1's SOLE THEORY-CONFIRMATION INSTRUMENT.
 # Built 2026-08-03. Data generator: `zoology.data.presence_recall` (task, layout and stamp in its
-# module docstring). Design of record: development/plans/V3_CAPACITY_THEORY_NOTES_2026-07-29.md,
+# module docstring). Design of record: the V3 capacity-theory notes of 2026-07-29,
 # "THE PRESENCE-RECALL TASK" (user, ratified 2026-08-03).
 #
 #   GRID_TIERS=presence16 flock /tmp/rola_gpu.lock \
@@ -81,7 +81,7 @@
 # backbone at this length? — a routed failure under a floor far from ceiling measures generator
 # difficulty, not demand), and its own capacity law is linear in `d_qk` against `log2(chi)`, which
 # turns the packing constant `c` into a measurement. `presence-k32` exists ONLY for that fit: a slope
-# needs three distinct demands (`graph_analysis.fit_packing_constant` refuses two by name), and log2
+# needs three distinct demands (`mqar.analysis.graph.fit_packing_constant` refuses two by name), and log2
 # chi = 4, 5, 6 is the cheapest way to get them.
 #
 # *** MEASURED BEFORE DISPATCH, AND ADJUDICATED. ***
@@ -89,8 +89,8 @@
 # seed 0 -> 0.508 = chance, while routed arm2 solved the same family on a smaller budget), and the
 # contradiction that number posed to the paragraph above was ADJUDICATED before this file moved
 # again. Full matrix (LR sweep, depth and width controls, a learned always-attendable SINK control,
-# an MQAR positive control, and a matched-budget arm2 anchor):
-# rola-scratch/workflows/presence-recall/attention-adjudication.md. VERDICT: (b) OPTIMIZATION
+# an MQAR positive control, and a matched-budget arm2 anchor) is the presence-recall workflow's
+# attention-adjudication record. VERDICT: (b) OPTIMIZATION
 # ARTEFACT, not architecture. Attention solves presence-k16 PERFECTLY at lr 1e-3 (1.000 by epoch 5;
 # 1.000 at 3e-4, 0.974 at 1e-4) at the same 2 layers and d_qk = 32. The failure is a sharp,
 # TASK-SPECIFIC LR cliff bracketed [1e-3, 3e-3]: the very 3e-3 that fails here trains MQAR kv8 to
@@ -112,8 +112,9 @@
 #   interpolable), and `presence-k16` is ALREADY above criterion at its lowest available rung
 #   N = 16 = chi. FALSIFIED BY: `presence-k64` crossing near N = 32 = `s`, the per-sequence item
 #   count — the ladder resolves that factor of 2 — or not crossing on the ladder at all.
-#   NOTE THE FLOOR, and it is a property of the engine and not of this design: N < 16 has no routed
-#   spelling (`mqar.instances.MQAR_STATE_BLOCK = 16` must divide N), so the chi = 16 tier cannot show
+#   NOTE THE FLOOR, and it was a property of the engine and not of this design: N < 16 had no routed
+#   spelling on the pre-K31 engine (its readout tile, 16, had to divide N; rola pads any level width
+#   now, and extending the ladder down is a spec decision not yet taken), so the chi = 16 tier cannot show
 #   the sub-demand collapse and the chi = 64 tier is where the crossing is MEASURED. The `N*/chi`
 #   constancy claim therefore rests on one measured crossing plus one one-sided bound, and it is
 #   stated that way rather than quoted as two crossings.
@@ -243,12 +244,12 @@
 # At the original single pinned rate this was 24 + 24 + 20 = 68, inside the brief's ~40-60 plus the
 # stated 8-cell overshoot: the THIRD attention demand (`presence-k32`, 6 base cells) and the narrow
 # k16 rung that keeps its crossing on the ladder (2 base cells). Both are still kept: a
-# packing-constant slope from two demands is refused by `graph_analysis.fit_packing_constant` by
+# packing-constant slope from two demands is refused by `mqar.analysis.graph.fit_packing_constant` by
 # design (two points define a line through themselves, which is a ratio dressed as a fit), so
 # dropping either would delete PREDICTED-3 rather than shrink it. The instrument floor costs
 # nothing extra — it is read off the WIDEST rung of the same d_qk ladder.
 #
-# SCHEDULE — re-derived from `run_local_grid --dry-run` on the local card (RTX 3080 Ti) at the
+# SCHEDULE — re-derived from `python -m rola_bench.mqar.local_grid --dry-run` on the local card (RTX 3080 Ti) at the
 # 3-rate bracket (2026-08-03), per-cell footprint and wall clock from the measured 139 ms/step at
 # L = 128:
 #   presence16 (L = 64)   72 cells, worst-cell peak 0.65 GiB, ~17.4 h
@@ -335,12 +336,13 @@ conditions:
   - {tag: presence-k64, demand: 64, keys_per_sequence: 32}
 tiers:
   # T1 — THE LAW AT chi = 16. The tier to run first: it carries PREDICTED-4 and PREDICTED-5, and it
-  # is the cheapest. The ladder runs from AT the demand upward, because N < 16 has no routed spelling
-  # at all — the pinned readout tile must divide N (`mqar.instances.MQAR_STATE_BLOCK = 16`), which is
-  # a reported floor on the state ladder and exactly the floor `graph_grid`'s decoupling tier hits.
+  # is the cheapest. The ladder runs from AT the demand upward, because N < 16 had no routed spelling
+  # on the pre-K31 engine (its readout tile, 16, had to divide N) — exactly the floor `graph_grid`'s
+  # decoupling tier hits. rola pads any level width now; extending the ladder down is a spec decision
+  # not yet taken.
   # The consequence is stated rather than papered over: this tier can show that chi = 16 IS servable
   # at N = 16 (and how the arms differ there), but the crossing itself is below its floor and will be
-  # reported by `graph_analysis` as `above`. THE MEASURABLE CROSSING LIVES IN T2, whose ladder starts
+  # reported by `mqar.analysis.graph` as `above`. THE MEASURABLE CROSSING LIVES IN T2, whose ladder starts
   # at N = 32 = chi/2 — which is why the resize tier is not optional here.
   "presence16":
     - {build: routed, instance: rola-arm1-densread-sparsewrite, tag: arm1,
@@ -365,13 +367,13 @@ tiers:
   # d_qk = 8 asks for 16 heads) — the same mechanism `graph_grid`'s and `law_grid`'s attention
   # ladders use, with no mixer change at all. The ladder stops at 32 because log2 chi <= 6 here: a
   # threshold above d_qk = 32 would mean c < 0.19, far outside the packing regime the law is stated
-  # in, and the WIDEST rung is what `graph_analysis` reads the instrument floor off (it must be
+  # in, and the WIDEST rung is what `mqar.analysis.graph` reads the instrument floor off (it must be
   # capacity-adequate, which 32 amply is at chi = 64). Split into three arms only because each one
   # carries a single `seq_lens` and the conditions differ in length.
   "attn_capacity":
     # k16 carries an EXTRA narrow rung (d_qk = 4 = 32 heads). Reason, found by running the analysis
     # on synthetic rows before dispatch: log2 chi = 4 is the easiest demand on the ladder, so
-    # attention is liable to be above criterion already at d_qk = 8 — which `graph_analysis` reports
+    # attention is liable to be above criterion already at d_qk = 8 — which `mqar.analysis.graph` reports
     # as `above` (no crossing), leaving the packing-constant fit with two points and refusing it.
     # Two cells buy the third crossing the fit needs; at L = 64 the score tensor is 67 MiB.
     - {build: attn, head_dims: [4, 8, 16, 32], conditions: [presence-k16]}

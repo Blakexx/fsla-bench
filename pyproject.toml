@@ -5,17 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rola-bench"
 version = "0.1.0"
-description = "RoLA MQAR benchmark plug-in — the canonical-grid sweep, dispatched via `fleet`"
+description = "RoLA's benchmarks (MQAR, LM, perf, similarity) on fleet, and the local measurement suite"
 requires-python = ">=3.10"
-# Proper dependency edges (the whole point of this repo): the MQAR benchmark depends on the model
-# + baselines libs and on `fleet` for orchestration. First-party packages are installed from their
-# own repos (editable locally; from source in the Docker image) — listed here so the edge is
-# explicit and `pip` verifies they're present rather than re-vendoring them.
+# The dependency edges: the benches build RoLA through fla-rola (whose RoLA layer wraps rola), MQAR's model and
+# baselines come from zoology, dispatch from fleet, and every result is stored through rola-results. First-party
+# packages are installed from their own repositories (editable locally, from source in an image); they are listed so
+# pip verifies they are present.
 dependencies = [
-    "rola",          # model + kernels        (CLA repo)
-    "fla-rola",      # routed FLA fork         (/home/blake/flash-linear-attention-rola)
-    "zoology",       # baselines fork          (/home/blake/zoology)
-    "fleet",         # generic GPU orchestration (/home/blake/fleet)
+    "rola",          # the model and kernels
+    "fla-rola",      # the FLA fork: RoLA's layer and HF model, and the baseline layers
+    "zoology",       # MQAR's model, data and baselines (RoLAMixer wraps fla-rola)
+    "fleet",         # generic GPU orchestration
+    "rola-results",  # the result store
     "fla-core",      # canonical FLA kernels (baselines)
     "torch",
     "einops",

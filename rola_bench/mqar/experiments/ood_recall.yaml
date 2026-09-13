@@ -4,7 +4,7 @@
 # item count to sequence length (kv grows with L), so a "does the margin widen out of distribution"
 # curve confounded MORE ITEMS with LONGER SEQUENCES.
 #
-#   rola_bench/fleet/__main__.py mqar ood_recall
+#   python -m rola_bench.fleet mqar ood_recall
 #
 # THE DESIGN, in one line: hold the ITEM/LENGTH RATIO fixed and sweep ABSOLUTE test length.
 # Symbols: L = sequence length; kv = num_kv_pairs (items); N = addressable states per head (`nc`).

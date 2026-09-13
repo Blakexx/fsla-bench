@@ -5,7 +5,7 @@ causal mask (see similarity/evaluator.py). Selection: per CELL (= kernel, nc-run
 best-accuracy run's checkpoint from the MQAR store and score that one (dedups the LR axis, ~5x
 cheaper). Each cell's .pt ships to the box via the payload channel. SSE has no faithful extractor.
 
-Results: `rola_results` at similarity/<config> (rola_bench.fleet.jobs). Launch: rola_bench/fleet/__main__.py similarity main
+Results: `rola_results` at similarity/<config> (rola_bench.fleet.jobs). Launch: python -m rola_bench.fleet similarity main
 """
 import glob
 import json
@@ -14,10 +14,9 @@ import re
 
 from rola_results import ROOT, Store, locations
 
-from rola_bench.fleet.jobs import make_job
+from rola_bench.fleet.jobs import checkpoints, make_job
 from rola_bench.fleet.spec import load
 
-CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
 _NO_EXTRACTOR_PREFIXES = ("grid-sse-", "grid-routed-")  # SSE and RoLA have no faithful extractor (RoLA's is carded)
 
 
@@ -62,7 +61,7 @@ def _work_list(rungs):
     """Best-accuracy checkpoint per cell (LR+shape collapsed), restricted to `rungs` (e.g. 16,64,256)
     + mha (rung-independent)."""
     rungs = set(str(rungs).split(","))
-    have_pt = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(CKPT_DIR, "*.pt"))}
+    have_pt = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(checkpoints(), "*.pt"))}
     best = {}
     for rid, a in _mqar_accuracy().items():
         if rid not in have_pt or not _has_extractor(rid):
@@ -77,7 +76,7 @@ def _work_list(rungs):
 
 
 def _payload_for(run_id):
-    p = os.path.join(CKPT_DIR, run_id + ".pt")
+    p = os.path.join(checkpoints(), run_id + ".pt")
     if not os.path.exists(p):
         return None
     with open(p, "rb") as fh:

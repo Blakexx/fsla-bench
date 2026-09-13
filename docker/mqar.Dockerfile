@@ -32,8 +32,7 @@ print('rola-bench mqar image OK; torch', torch.__version__)"
 # Tell the (inherited) box_server how to verify the GPU and run a batch of run_ids.
 # NB: \$FLEET_RESULTS stays LITERAL in the stored env (Docker would expand it to empty at build);
 # box_server sets FLEET_RESULTS at runtime and bash -lc expands it then.
-# FLEET_VERIFY_CMD is a FAST GPU smoke (one routed RoLA fwd+bwd) — fail-fast host gate, not
-# correctness CI (the full fla-rola suite, verify.py, is pre-deploy/CI in rola-scratch).
+# FLEET_VERIFY_CMD is a FAST GPU smoke (one RoLA layer forward and backward): a fail-fast host gate, not correctness CI.
 ENV FLEET_WORKDIR=/opt/rola-bench/rola_bench/mqar \
     FLEET_VERIFY_CMD="python -m rola_bench.fleet.verify" \
     FLEET_RUN_CMD="python run.py --config canonical --results \$FLEET_RESULTS"

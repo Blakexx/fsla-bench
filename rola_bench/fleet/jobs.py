@@ -28,8 +28,8 @@ import os
 from fleet import Job, provider, semantics_of
 from rola_results import Store, key
 
-RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME", "/home/blake/rola-bench/runtime")
-CKPT_DIR = os.environ.get("ROLA_BENCH_CKPTS", "/mnt/e/rola/rola_data/fleet_ckpts")
+RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME",
+                              os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "runtime"))
 DEFAULT_IMAGE = "blakeresearch/rola-bench:v40"   # ⚠ keep in sync with the experiments yamls (paper_v1 pins v40); bumps are manual   # v27: DROP the warm pre-pass entirely (it was ~95% serial autotune-do_bench, net-negative; cells self-warm via WARMUP reps). v26: affinity-aware warm worker count. v25: scaling-bench fixes (nc->even-pow2 snap for flat|square|tree, infeasible-shape SKIP)
 # Default offer query PER DIALECT. The vast filter caps bandwidth $/GB (we pull a big image +
 # checkpoints) and screens on reliability — both are marketplace concepts with no analogue on a
@@ -96,6 +96,15 @@ def fleet_store(bench, config, image, job):
     return store_result, done_ids
 
 
+def checkpoints(variable="ROLA_BENCH_CKPTS"):
+    """The directory this machine keeps a job's pulled checkpoints in, named by `variable` in the environment. There
+    is no default: checkpoints are large and live on whatever disk the machine gives them, never in the repository."""
+    root = os.environ.get(variable)
+    if not root:
+        raise RuntimeError(f"set {variable} to the directory this machine keeps fleet checkpoints in")
+    return root
+
+
 def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
     fleet = dict(fleet or {})
     dialect = semantics_of(provider()).offer_query_dialect
@@ -109,7 +118,7 @@ def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
         offer_query=os.environ.get("OFFER_QUERY") or offer_query_for(fleet.pop("offer_query", None),
                                                                      dialect),
         store_result=store_result,
-        ckpt_dir=job_kwargs.pop("ckpt_dir", CKPT_DIR),
+        ckpt_dir=job_kwargs.pop("ckpt_dir", None) or checkpoints(),
         work_list=work_list,
         done_ids=done_ids,
         env={"FLEET_RUN_CMD": run_cmd, **fleet.pop("env", {})},
