@@ -127,7 +127,13 @@ python -m unittest tests.measure.test_engine
 ```
 
 The commit gate (`.githooks/pre-commit` -> `.pre-commit-config.yaml`) runs ruff with rola's rule set and its E30x spacing family
-over `rola_bench` and `tests`, and the measurement engine's contract tests.
+over `rola_bench` and `tests`, the measurement engine's contract tests, and the public mirror's declaration check.
+
+## Publishing
+
+This repository is developed in the private `rola-bench-dev` and published to the public `rola-bench`: a push to
+`master` runs `.github/workflows/mirror.yml`, which publishes the declared files as one snapshot commit
+([`.github/mirror/README.md`](.github/mirror/README.md)).
 
 ## Images
 
