@@ -125,7 +125,7 @@ def root(g, target: str, references: str = "", rounds: str = "8", reps: str = "1
         for name, instrument in out["instruments"].items():
             stores.append(store(g, f"{c['label']}/store/{name}", source=instrument, location=f"rola/{name}",
                                 cache=instrument.cache, root=root_dir))
-        for name, verdict in out.get("diffs", {}).items():  #: a checkout's own diffs, where it declares any
+        for name, verdict in out["diffs"].items():
             stores.append(store(g, f"{c['label']}/store/{name}", source=verdict, location=f"rola/{name}", root=root_dir))
         clock = clock or out["clock"]
         null_entry = null_entry or out["entries"].get("carry_forward")
