@@ -5,8 +5,8 @@
 The root (`declare.py`) registers it on every QKV cell of the selected groups. The cell is rola-devtools'
 (`rola_devtools.cells.qkv`: tokens, value width, heads, batch, dtype, causal) and its tensors are the central draw
 (`rola_devtools.cells.qkv.realize`), so every library timed on a QKV cell reads the same queries, keys and values. The
-call runs through Dao's FlashAttention-2 as torch compiles it, or FA3 (Hopper) and FA4 (Blackwell) once
-`torch.nn.attention.activate_flash_attention_impl` has registered them. The backend is forced, so torch refuses a call
+call runs through Dao's FlashAttention-2 as torch compiles it, or -- parameter `impl` -- FA3 (Hopper) or FA4
+(Blackwell), which torch registers and the entry activates for its process. The backend is forced, so torch refuses a call
 flash cannot take rather than timing its math or memory-efficient backend; building the entry makes one call, so that
 refusal is recorded as the entry's failure before anything is timed. Each sample is one call between two CUDA events; a
 call carries no state, so it needs no reset. What the entry reports records torch's version and the active
@@ -25,8 +25,10 @@ Which attention cell stands beside which RoLA cells is a group's (`groups.py`).
 """
 from __future__ import annotations
 
-#: the parameters the entry reads: the context T, the hidden width h (0: attention alone), the heads (the cell's when 0)
-PARAMS = ("context", "hidden", "heads")
+#: the parameters the entry reads: the context T, the hidden width h (0: attention alone), the heads (the cell's when
+#: 0), and the flash implementation torch is to dispatch to (`FA3` on Hopper, `FA4` on Blackwell; torch's own FA2 when
+#: absent)
+PARAMS = ("context", "hidden", "heads", "impl")
 
 
 def flash(cell, params):
@@ -34,7 +36,13 @@ def flash(cell, params):
     import torch.nn.functional as F
     from rola_devtools.cells.qkv import QKVCell, realize
     from rola_devtools.timing import Timed
-    from torch.nn.attention import SDPBackend, current_flash_attention_impl, sdpa_kernel
+    from torch.nn.attention import (
+        SDPBackend,
+        activate_flash_attention_impl,
+        current_flash_attention_impl,
+        list_flash_attention_impls,
+        sdpa_kernel,
+    )
 
     if not isinstance(cell, QKVCell):
         raise TypeError(f"the attention reference takes a QKV cell (rola_devtools.cells.qkv), got {type(cell).__name__}")
@@ -47,6 +55,18 @@ def flash(cell, params):
         raise ValueError(f"context and hidden are counts, heads at least 1: got {context}, {hidden}, {heads}")
     if heads != cell.heads and not hidden:
         raise ValueError("`heads` sizes a projection: give `hidden` with it")
+    #: THE IMPLEMENTATION is the process's: torch dispatches every flash call of this worker to the one activated, and
+    #: an entry that names another than the one already active is refused, not silently timed on it
+    impl = params.get("impl")
+    if impl:
+        if impl not in list_flash_attention_impls():
+            raise ValueError(f"torch registers {list_flash_attention_impls()} as flash implementations, not {impl!r}")
+        if current_flash_attention_impl() not in (None, impl):
+            raise ValueError(f"this process already dispatches flash to {current_flash_attention_impl()}, not {impl}")
+        if current_flash_attention_impl() is None:
+            activate_flash_attention_impl(impl)
+    elif current_flash_attention_impl() is not None:
+        raise ValueError(f"this process dispatches flash to {current_flash_attention_impl()}: name it as `impl`")
     c, dv, b = cell.tokens, cell.dv, cell.batch
     dtype = getattr(torch, cell.dtype)
     q, k, v = realize(cell) if heads == cell.heads else (None, None, None)
