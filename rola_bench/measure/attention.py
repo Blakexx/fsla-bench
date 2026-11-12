@@ -106,3 +106,33 @@ def flash(cell, params):
              "dtype": cell.dtype, "causal": cell.causal, "mask": "bottom-right" if (context or hidden) else "full",
              "device": torch.cuda.get_device_name(0)}
     return Timed(call=call, built=built, instrument="cuda_events")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """THE ENTRY TIMED BY ITSELF: `python -m rola_bench.measure.attention CELL [--reps N] [--warmup N] [--param k=v]`.
+    Where no session can be declared -- a rented card with no rola checkout built -- the reference is still one
+    number: the entry is built on the central cell and its own stopwatch read `reps` times after `warmup` calls. One
+    JSON line: what the entry built, and its calls' milliseconds in order. A session's readings are the suite's."""
+    import argparse
+    import json
+
+    from rola_devtools.cells import cell as central_cell
+
+    ap = argparse.ArgumentParser(description=main.__doc__)
+    ap.add_argument("cell")
+    ap.add_argument("--reps", type=int, default=11)
+    ap.add_argument("--warmup", type=int, default=10)
+    ap.add_argument("--param", action="append", default=[], metavar="NAME=VALUE", help=f"one of {PARAMS}")
+    a = ap.parse_args(argv)
+    params = dict(p.split("=", 1) for p in a.param)
+    timed = flash(central_cell(a.cell), params)
+    for _ in range(a.warmup):
+        timed.call()
+    print(json.dumps({"entry": "flash", "params": params, "built": timed.built, "instrument": timed.instrument,
+                      "warmup": a.warmup, "milliseconds": [timed.call() for _ in range(a.reps)]}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

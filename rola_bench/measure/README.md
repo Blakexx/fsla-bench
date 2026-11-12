@@ -36,7 +36,9 @@ reassociation its checkout states in `NUMERICS`, exact quantities exact) -- the 
 compared.
 
 `attention.py` is rola-bench's own entry: `flash`, causal attention through torch's forced flash backend on every QKV
-cell of every group, registered in the target's venv.
+cell of every group, registered in the target's venv. Where no session can be declared (a rented card with no rola
+checkout built), `python -m rola_bench.measure.attention CELL [--reps N] [--warmup N] [--param k=v]` builds the entry
+on a central cell and reads its own stopwatch: one JSON line of what it built and its calls' milliseconds.
 
 ## Groups and sessions (`groups.py`)
 
