@@ -10,7 +10,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "fsla_devtools", version = "0.1.0")
 git_override(
     module_name = "fsla_devtools",
-    commit = "ca72d7baa6a14cd942f1c9fb7e8d2fc247847384",
+    commit = "7da5dde27158330ba07ccda5c962d2d04228425e",
     remote = "https://github.com/Blakexx/fsla-devtools.git",
 )
 
