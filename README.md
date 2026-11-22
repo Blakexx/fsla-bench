@@ -133,7 +133,7 @@ bazel run //:bench_python -- -m unittest tests.measure.test_compose
 ```
 
 The gate is `bazel test //:gate`: ruff with fsla's rule set and its E30x spacing family over `fsla_bench`, `tests` and
-`declare.py`, the measurement composer's contract tests, and the public mirror's declaration check, on the bench
+`declare.py`, the measurement composer's contract tests, and the declaration check, on the bench
 environment. The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, fsla-devtools' commit gate) runs
 it on the commit as git will write it.
 
@@ -143,9 +143,8 @@ config's `workspace.devtools`, else `fsla-devtools` beside this checkout).
 
 ## Publishing
 
-This repository is developed in the private `fsla-bench-dev` and published to the public `fsla-bench`: a push to
-`master` runs `.github/workflows/mirror.yml`, which publishes the declared files as one snapshot commit
-(`.github/mirror/declarations.json`; the export is [fsla-devtools](https://github.com/Blakexx/fsla-devtools)').
+This repository is developed in public: `Blakexx/fsla-bench` is the development repository, with its whole history. The
+commit and push hooks run fsla-devtools' tripwire over what a change adds, under `.github/mirror/declarations.json`.
 
 ## Images
 

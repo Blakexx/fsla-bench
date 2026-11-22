@@ -23,8 +23,6 @@
     "fsla_bench",
     "tests"
   ],
-  "private": [
-    ".github/workflows/mirror.yml"
-  ],
+  "private": [],
   "allow": {}
 }
