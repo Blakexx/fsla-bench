@@ -1,5 +1,5 @@
 {
-  "public": "Blakexx/rola-bench",
+  "public": "Blakexx/fsla-bench",
   "ships": [
     ".bazeliskrc",
     ".bazelrc",
@@ -20,7 +20,7 @@
     "requirements.lock",
     "research.in",
     "research.lock",
-    "rola_bench",
+    "fsla_bench",
     "tests"
   ],
   "private": [

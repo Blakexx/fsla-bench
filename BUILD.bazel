@@ -1,4 +1,4 @@
-"""rola-bench's root package: its checks and gate (the tracked tree beside them: rola_bench/, tests/, declare.py hold no
+"""fsla-bench's root package: its checks and gate (the tracked tree beside them: fsla_bench/, tests/, declare.py hold no
 BUILD file, so their files are this package's)."""
 
 load("//bazel:defs.bzl", "bench_python", "research_python", "tree_part", "tree_test")
@@ -19,12 +19,12 @@ filegroup(
     ],
 )
 
-#: rola's rule set, over the bench package and its tests
+#: fsla's rule set, over the bench package and its tests
 tree_test(
     name = "ruff",
     size = "small",
     cmd = ["ruff", "check", "--select", "E,F,UP,B,SIM,I,C4", "--line-length", "127", "--target-version", "py310",
-           "rola_bench", "tests", "declare.py"],
+           "fsla_bench", "tests", "declare.py"],
     data = [":tree"],
 )
 
@@ -33,11 +33,11 @@ tree_test(
     size = "small",
     #: ruff's blank-line family is preview-gated, so its own invocation
     cmd = ["ruff", "check", "--preview", "--select", "E3", "--line-length", "127", "--target-version", "py310",
-           "rola_bench", "tests", "declare.py"],
+           "fsla_bench", "tests", "declare.py"],
     data = [":tree"],
 )
 
-#: the measurement composer's contract: the suite composes each rola checkout's declarations as declared
+#: the measurement composer's contract: the suite composes each fsla checkout's declarations as declared
 tree_test(
     name = "suite_contract",
     size = "small",
@@ -48,7 +48,7 @@ tree_test(
 tree_test(
     name = "mirror_declarations",
     size = "small",
-    cmd = ["python3", "-m", "rola_devtools.mirror", "--check"],
+    cmd = ["python3", "-m", "fsla_devtools.mirror", "--check"],
     data = [":tree"],
     git = True,
 )
@@ -64,40 +64,40 @@ test_suite(
     ],
 )
 
-#: THE RUNS (README.md#local-runs): each environment's interpreter, and the documented commands. A run that imports rola
-#: takes the rola checkout as its first argument, its library built (`bazel run //:mqar_smoke -- <rola checkout>`).
+#: THE RUNS (README.md#local-runs): each environment's interpreter, and the documented commands. A run that imports fsla
+#: takes the fsla checkout as its first argument, its library built (`bazel run //:mqar_smoke -- <fsla checkout>`).
 bench_python(name = "bench_python")
 
 research_python(name = "research_python")
 
 bench_python(
     name = "mqar_smoke",
-    module = "rola_bench.mqar.smoke",
-    rola = True,
+    module = "fsla_bench.mqar.smoke",
+    fsla = True,
 )
 
 bench_python(
     name = "mqar_local_grid",
-    module = "rola_bench.mqar.local_grid",
-    rola = True,
+    module = "fsla_bench.mqar.local_grid",
+    fsla = True,
 )
 
-#: the tests, per area (README.md#tests-and-the-gate): the model and MQAR suites import rola
+#: the tests, per area (README.md#tests-and-the-gate): the model and MQAR suites import fsla
 bench_python(
     name = "pytest",
     module = "pytest",
-    rola = True,
+    fsla = True,
 )
 
-#: the fleet launcher: the jobs it builds name rola's objects
+#: the fleet launcher: the jobs it builds name fsla's objects
 bench_python(
     name = "fleet",
-    module = "rola_bench.fleet",
-    rola = True,
+    module = "fsla_bench.fleet",
+    fsla = True,
 )
 
-#: the measurement suite, a declared build over rola-devtools' build system (declare.py)
+#: the measurement suite, a declared build over fsla-devtools' build system (declare.py)
 bench_python(
     name = "suite",
-    module = "rola_devtools.build",
+    module = "fsla_devtools.build",
 )

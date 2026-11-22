@@ -1,7 +1,7 @@
 """GATES for the MQAR grid: the wirings, the contender ladder, the realized-state readback, and every experiment spec.
 
-Mostly CPU. RoLA's forward runs only on rola's CUDA op, so the one gate that trains a wiring is CUDA-marked; while rola
-refuses training (before its native backward) that gate fails with rola's own error, on purpose.
+Mostly CPU. FSLA's forward runs only on fsla's CUDA op, so the one gate that trains a wiring is CUDA-marked; while fsla
+refuses training (before its native backward) that gate fails with fsla's own error, on purpose.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-_EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rola_bench", "mqar",
+_EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "fsla_bench", "mqar",
                         "experiments")
 _SPECS = ("law_grid", "separation", "ood_recall", "canonical", "dmodel64", "cue_consistency", "graph_grid",
           "presence_grid", "router_bias")
@@ -17,40 +17,40 @@ _N = 64
 
 
 def _mixer(wiring, n=_N):
-    from zoology.mixers.rola import RoLAMixer
+    from zoology.mixers.fsla import FSLAMixer
 
-    from rola_bench.models import rola as cells
-    from rola_bench.mqar import MQAR_GEOM
+    from fsla_bench.models import fsla as cells
+    from fsla_bench.mqar import MQAR_GEOM
 
     config = cells.mixer_config(cells.cell(wiring, n), **MQAR_GEOM)
-    return RoLAMixer(d_model=MQAR_GEOM["n_heads"] * MQAR_GEOM["d_v"], layer_idx=0, **config["kwargs"])
+    return FSLAMixer(d_model=MQAR_GEOM["n_heads"] * MQAR_GEOM["d_v"], layer_idx=0, **config["kwargs"])
 
 
 # =============================================================== 1. the wirings
 def test_slate_is_the_three_wirings_plus_the_d1_control():
-    from rola_bench.models import rola as cells
+    from fsla_bench.models import fsla as cells
 
-    assert cells.CANONICAL_WIRINGS == ("rola-arm1-densread-sparsewrite", "rola-arm2-union", "rola-arm3-levelsplit",
-                                       "rola-d1-dense")
+    assert cells.CANONICAL_WIRINGS == ("fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+                                       "fsla-d1-dense")
     assert set(cells.WIRINGS) - set(cells.CANONICAL_WIRINGS) == {
-        "rola-arm3-levelsplit-a2w",                  # the alpha axis
-        "rola-d1-dense-tied",                        # one tied softmax level against rola-d1-dense
-        "rola-hybrid", "rola-hybrid-tiedtop",        # the depth hybrid and its tied-top ablation
+        "fsla-arm3-levelsplit-a2w",                  # the alpha axis
+        "fsla-d1-dense-tied",                        # one tied softmax level against fsla-d1-dense
+        "fsla-hybrid", "fsla-hybrid-tiedtop",        # the depth hybrid and its tied-top ablation
     }
 
 
-@pytest.mark.parametrize("wiring", ["rola-arm1-densread-sparsewrite", "rola-arm2-union", "rola-arm3-levelsplit",
-                                    "rola-arm3-levelsplit-a2w", "rola-d1-dense", "rola-d1-dense-tied",
-                                    "rola-hybrid", "rola-hybrid-tiedtop"])
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+                                    "fsla-arm3-levelsplit-a2w", "fsla-d1-dense", "fsla-d1-dense-tied",
+                                    "fsla-hybrid", "fsla-hybrid-tiedtop"])
 def test_every_wiring_constructs(wiring):
-    from rola_bench.mqar import MQAR_GEOM
+    from fsla_bench.mqar import MQAR_GEOM
 
     mixer = _mixer(wiring)
     assert mixer.layer.topology.N == _N and mixer.layer.d_v == MQAR_GEOM["d_v"]
 
 
-@pytest.mark.parametrize("wiring", ["rola-arm1-densread-sparsewrite", "rola-arm2-union", "rola-arm3-levelsplit",
-                                    "rola-d1-dense"])
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+                                    "fsla-d1-dense"])
 def test_canonical_wirings_train_on_the_kernel(wiring):
     """Forward and backward on the CUDA op at the grid's own geometry."""
     import torch
@@ -66,76 +66,76 @@ def test_canonical_wirings_train_on_the_kernel(wiring):
     assert x.grad is not None and float(mixer.layer.routes.route_W.grad.abs().sum()) > 0
 
 
-@pytest.mark.parametrize("wiring", ["rola-arm1-densread-sparsewrite", "rola-arm2-union", "rola-arm3-levelsplit",
-                                    "rola-d1-dense"])
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+                                    "fsla-d1-dense"])
 def test_routing_resolves_to_the_intended_structure(wiring):
-    """Union is the one wiring whose untied sparse/sparse level resolves to rola's UnionRouting (one shared support
+    """Union is the one wiring whose untied sparse/sparse level resolves to fsla's UnionRouting (one shared support
     split between the duties); every other level is IndependentRouting (each duty its own exact activation)."""
-    import rola
+    import fsla
 
-    union_levels = {"rola-arm2-union": (0,)}.get(wiring, ())
+    union_levels = {"fsla-arm2-union": (0,)}.get(wiring, ())
     for index, level in enumerate(_mixer(wiring).layer.routes.levels):
-        want = rola.UnionRouting if index in union_levels else rola.IndependentRouting
+        want = fsla.UnionRouting if index in union_levels else fsla.IndependentRouting
         assert isinstance(level, want), f"{wiring}: level {index} is {type(level).__name__}, expected {want.__name__}"
 
 
 def test_d1_dense_control_is_a_single_dense_level():
-    import rola
+    import fsla
 
-    layer = _mixer("rola-d1-dense").layer
+    layer = _mixer("fsla-d1-dense").layer
     assert len(layer.routes.levels) == 1 and layer.topology.N == _N
     level = layer.routes.levels[0]
-    assert isinstance(level.read, rola.SoftmaxActivation) and isinstance(level.write, rola.SoftmaxActivation)
+    assert isinstance(level.read, fsla.SoftmaxActivation) and isinstance(level.write, fsla.SoftmaxActivation)
 
 
 def test_a2w_variant_differs_from_arm3_in_alpha_alone():
-    import rola
+    import fsla
 
-    from rola_bench.models import rola as cells
+    from fsla_bench.models import fsla as cells
 
-    base, a2w = cells.cell("rola-arm3-levelsplit", 64).levels, cells.cell("rola-arm3-levelsplit-a2w", 64).levels
-    assert a2w[0] == rola.IndependentRouting(width=8, read=rola.softmax(), write=rola.entmax(2.0))  # sparsemax write
+    base, a2w = cells.cell("fsla-arm3-levelsplit", 64).levels, cells.cell("fsla-arm3-levelsplit-a2w", 64).levels
+    assert a2w[0] == fsla.IndependentRouting(width=8, read=fsla.softmax(), write=fsla.entmax(2.0))  # sparsemax write
     assert a2w[1] == base[1]                                                                        # entmax-1.5 read
-    assert base[0] == rola.IndependentRouting(width=8, read=rola.softmax(), write=rola.entmax(1.5))
+    assert base[0] == fsla.IndependentRouting(width=8, read=fsla.softmax(), write=fsla.entmax(1.5))
 
 
 def test_a_wiring_without_a_uniform_spelling_is_refused_by_name():
-    from rola_bench.models import rola as cells
+    from fsla_bench.models import fsla as cells
 
-    assert cells.cell("rola-arm1-densread-sparsewrite", 256).widths == (16, 16)
+    assert cells.cell("fsla-arm1-densread-sparsewrite", 256).widths == (16, 16)
     with pytest.raises(cells.NoSpelling):
-        cells.cell("rola-arm1-densread-sparsewrite", 128)
-    assert cells.cell("rola-arm1-densread-sparsewrite", 128, widths=[8, 16]).widths == (8, 16)
+        cells.cell("fsla-arm1-densread-sparsewrite", 128)
+    assert cells.cell("fsla-arm1-densread-sparsewrite", 128, widths=[8, 16]).widths == (8, 16)
     with pytest.raises(ValueError, match="multiply"):
-        cells.cell("rola-arm1-densread-sparsewrite", 128, widths=[8, 8])
+        cells.cell("fsla-arm1-densread-sparsewrite", 128, widths=[8, 8])
 
 
 # =============================================================== 2. the capacity coordinate
 def test_realized_state_is_read_back_not_computed():
     """H * N * d_v content and the H * N mass column, measured off the constructed mixer."""
-    from rola_bench.models import rola as cells
-    from rola_bench.mqar import MQAR_GEOM
+    from fsla_bench.models import fsla as cells
+    from fsla_bench.mqar import MQAR_GEOM
 
     H, dv = MQAR_GEOM["n_heads"], MQAR_GEOM["d_v"]
     for n in (64, 256):
-        content, overhead = cells.state_floats(_mixer("rola-arm1-densread-sparsewrite", n))
+        content, overhead = cells.state_floats(_mixer("fsla-arm1-densread-sparsewrite", n))
         assert (content, overhead) == (H * n * dv, H * n)
 
 
 def test_ref_is_derived_from_the_pinned_geometry():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
-    from rola_bench.mqar import MQAR_GEOM
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
+    from fsla_bench.mqar import MQAR_GEOM
 
     for n in (2, 16, 256):
         assert cb.REF(n) == MQAR_GEOM["n_heads"] * n * MQAR_GEOM["d_v"]
 
 
 def test_readback_covers_every_arm_the_grid_builds():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
-    from rola_bench.models import rola as cells
-    from rola_bench.mqar import MQAR_GEOM
-    from rola_bench.mqar import common as C
-    from rola_bench.mqar.realized_state import state_floats
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
+    from fsla_bench.models import fsla as cells
+    from fsla_bench.mqar import MQAR_GEOM
+    from fsla_bench.mqar import common as C
+    from fsla_bench.mqar.realized_state import state_floats
 
     for method in cb.METHODS:
         for shape in ("wide", "square"):
@@ -144,14 +144,14 @@ def test_readback_covers_every_arm_the_grid_builds():
                 continue
             content, overhead = state_floats(cell[0], cb.DMODEL)
             assert isinstance(content, int) and content > 0 and overhead >= 0
-    rola_kernel = cells.mixer_config(cells.cell("rola-d1-dense", 64), **MQAR_GEOM)
-    assert state_floats(rola_kernel, cb.DMODEL)[0] == MQAR_GEOM["n_heads"] * 64 * MQAR_GEOM["d_v"]
+    fsla_kernel = cells.mixer_config(cells.cell("fsla-d1-dense", 64), **MQAR_GEOM)
+    assert state_floats(fsla_kernel, cb.DMODEL)[0] == MQAR_GEOM["n_heads"] * 64 * MQAR_GEOM["d_v"]
     assert state_floats(C.mha, cb.DMODEL) == (None, 0)      # attention: unbounded, no rung
 
 
 def test_baseline_readback_is_within_a_rounding_step_of_the_target():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
-    from rola_bench.mqar.realized_state import state_floats
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
+    from fsla_bench.mqar.realized_state import state_floats
 
     for method in cb.METHODS:
         for shape in cb.SHAPES:
@@ -166,14 +166,14 @@ def test_baseline_readback_is_within_a_rounding_step_of_the_target():
 
 # =============================================================== 3. the contender ladder
 def test_contender_ladder_is_one_occupant_per_rung():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
 
     assert cb.METHODS == ["rla", "gla", "gdn"]
     assert cb.baseline_cell("hedgehog", "wide", 16) is None
 
 
 def test_gdn_structural_exit_is_reported_not_hidden():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
 
     assert cb.baseline_cell("gdn", "wide", 256) is not None
     assert cb.baseline_cell("gdn", "wide", 512) is None       # head_dim = N > 256
@@ -185,14 +185,14 @@ def test_gdn_structural_exit_is_reported_not_hidden():
 
 # =============================================================== 4. the specs
 def _load(name):
-    from rola_bench.mqar.build_configs import load_spec
+    from fsla_bench.mqar.build_configs import load_spec
 
     return load_spec(os.path.join(_EXP_DIR, f"{name}.yaml"))
 
 
 @pytest.mark.parametrize("name", _SPECS)
 def test_every_spec_expands(name):
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
 
     configs, envs = build_configs(_load(name))
     assert configs and len(configs) == len(envs)
@@ -208,7 +208,7 @@ def test_every_spec_carries_at_least_three_seeds(name):
 
 
 def test_seed_floor_actually_bites():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
 
     spec = _load("law_grid")
     spec["train"]["seeds"] = [0]
@@ -217,10 +217,10 @@ def test_seed_floor_actually_bites():
 
 
 def test_a_routed_arm_with_a_field_no_cell_has_is_refused():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
 
     spec = _load("canonical")
-    spec["tiers"] = {"rola": [{"build": "routed", "instance": "rola-d1-dense", "tag": "d1", "state_norm": "raw"}]}
+    spec["tiers"] = {"fsla": [{"build": "routed", "instance": "fsla-d1-dense", "tag": "d1", "state_norm": "raw"}]}
     with pytest.raises(ValueError, match="state_norm"):
         build_configs(spec)
 
@@ -261,7 +261,7 @@ def test_separation_cells_sit_on_the_diagonal():
 
 
 def test_separation_gdn_is_capped_at_its_reachable_rungs():
-    import rola_bench.mqar.experiments.canonical_baselines as cb
+    import fsla_bench.mqar.experiments.canonical_baselines as cb
 
     for arm in _load("separation")["tiers"]["gdn_ceiling"]:
         if "gdn" not in arm["methods"]:
@@ -284,7 +284,7 @@ def test_ood_recall_holds_the_ratio_and_sweeps_absolute_length():
 
 
 def test_attention_dqk_ladder_expands():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
 
     spec = _load("canonical")
     spec["tiers"] = {"attn": [{"build": "attn", "head_dims": [2, 4, 8, 16, 32]}]}

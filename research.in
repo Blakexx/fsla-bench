@@ -1,7 +1,7 @@
-# rola-bench's research environment (MODULE.bazel's `environment.python` tag `research_env`): the baselines' stack --
+# fsla-bench's research environment (MODULE.bazel's `environment.python` tag `research_env`): the baselines' stack --
 # torch 2.6's CUDA 12.4 build, flash-attn's prebuilt wheel for it (by URL: the release's binary, never a source
 # build), upstream flash-linear-attention 0.4.2 -- with zoology and fleet pinned by their public commits beside the
-# lock. Versions are the ones the hand-made venv (rola311) was proven with. Compiled with `uv pip compile research.in
+# lock. Versions are the ones the hand-made venv (fsla311) was proven with. Compiled with `uv pip compile research.in
 # --python-version 3.11 --generate-hashes --extra-index-url https://download.pytorch.org/whl/cu124
 # --index-strategy unsafe-best-match -o research.lock`.
 torch==2.6.0+cu124

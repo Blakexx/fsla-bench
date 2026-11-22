@@ -539,7 +539,7 @@ def test_reuse_is_solved_exactly_where_the_budget_allows_and_bounded_otherwise()
 
 
 def test_predicted_N_is_stamped_for_every_construction():
-    """The comparison the grid's headline statistic is built on (`rola_bench.mqar.analysis.graph`): the cell
+    """The comparison the grid's headline statistic is built on (`fsla_bench.mqar.analysis.graph`): the cell
     carries the demand the theory predicts it needs, as its own field."""
     assert _stamp(construction="complete", demand=8)["graph_predicted_N"] == "8"
     assert _stamp(construction="overlap", demand=8, births=16)["graph_predicted_N"] == "8"
@@ -552,9 +552,9 @@ def test_predicted_N_is_stamped_for_every_construction():
 def _spec():
     import os
 
-    from rola_bench.mqar.build_configs import load_spec
+    from fsla_bench.mqar.build_configs import load_spec
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    here = os.path.join(repo, "rola_bench", "mqar", "experiments")
+    here = os.path.join(repo, "fsla_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "graph_grid.yaml"))
 
 
@@ -568,7 +568,7 @@ def test_every_tier_is_the_size_its_header_states(tier, cells):
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""
     import os
 
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     old = os.environ.get("GRID_TIERS")
     os.environ["GRID_TIERS"] = tier
     try:
@@ -583,7 +583,7 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_refer
     no claim in this file is about them; a stray `baselines` arm would silently triple a tier. The
     attention arm is admitted in EXACTLY ONE tier, as the instrument floor — if it ever appeared on a
     capacity tier it would be read as a contender on the N ladder, which it cannot be."""
-    from rola_bench.models.rola import CANONICAL_WIRINGS
+    from fsla_bench.models.fsla import CANONICAL_WIRINGS
     for tier, arms in _spec()["tiers"].items():
         kinds = {a["build"] for a in arms}
         if tier.startswith("attn"):
@@ -623,8 +623,8 @@ def test_every_run_id_parses_for_the_analysis():
     about would silently produce an empty headline table rather than an error."""
     import os
 
-    from rola_bench.mqar.analysis.graph import parse_run_id
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.analysis.graph import parse_run_id
+    from fsla_bench.mqar.build_configs import build_configs
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     conds = {c["tag"] for c in _spec()["conditions"]}

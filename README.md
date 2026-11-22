@@ -1,30 +1,30 @@
-# rola-bench
+# fsla-bench
 
-RoLA's benchmarks and its local measurement suite. The benchmark (MQAR recall) is a declarative spec that the generic
-[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite measures rola checkouts
-with their own instruments on this machine. Every result goes through `rola_results`.
+FSLA's benchmarks and its local measurement suite. The benchmark (MQAR recall) is a declarative spec that the generic
+[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite measures fsla checkouts
+with their own instruments on this machine. Every result goes through `fsla_results`.
 
 The language-modeling, layer-performance and similarity benchmarks are archived at the tag
 `archive/pre-rebuild-2026-09-14`: layer performance is rebuilt on the measurement suite's timing sessions, and
-language modeling and similarity return when RoLA trains.
+language modeling and similarity return when FSLA trains.
 
-rola-bench is a library consumer like any other. It builds RoLA only through fla (our fork of it), whose RoLA layer and HF model
-are a thin wrapper over rola. It never reaches into rola's kernels:
+fsla-bench is a library consumer like any other. It builds FSLA only through fla (our fork of it), whose FSLA layer and HF model
+are a thin wrapper over fsla. It never reaches into fsla's kernels:
 
 ```
-rola-bench ──▶ fla           the fork's rola branch: the RoLA layer and HF model (over rola), and the baseline layers
-           ──▶ zoology       MQAR's model, data and baselines; its RoLAMixer wraps fla's RoLA
+fsla-bench ──▶ fla           the fork's fsla branch: the FSLA layer and HF model (over fsla), and the baseline layers
+           ──▶ zoology       MQAR's model, data and baselines; its FSLAMixer wraps fla's FSLA
            ──▶ fleet         GPU orchestration
-           ──▶ rola-results  the result store
-           ──▶ rola          (through fla; the measurement suite measures rola checkouts directly)
+           ──▶ fsla-results  the result store
+           ──▶ fsla          (through fla; the measurement suite measures fsla checkouts directly)
 ```
 
 ## Layout
 
 ```
-rola_bench/
-  models/rola.py        the RoLA arms: wirings and cells, built through fla; state read off the layer
-  fleet/                python -m rola_bench.fleet (the launcher), jobs.py (Job factory + result sink),
+fsla_bench/
+  models/fsla.py        the FSLA arms: wirings and cells, built through fla; state read off the layer
+  fleet/                python -m fsla_bench.fleet (the launcher), jobs.py (Job factory + result sink),
                         spec.py (spec loader), verify.py (the box boot gate)
   mqar/                 job.py, run.py (box side), smoke.py, build_configs.py, local_grid.py (this machine's card),
                         realized_state.py, analysis/graph.py, experiments/*.yaml
@@ -33,34 +33,34 @@ tests/<area>/           one directory per area above
 docker/                 the fleet images
 ```
 
-## The RoLA arms (`rola_bench/models/rola.py`)
+## The FSLA arms (`fsla_bench/models/fsla.py`)
 
-A **wiring** is one of rola's own level spellings per routing level, outermost first (`rola.dense_routing`,
-`rola.split_routing`, `rola.union_routing`, `rola.tied_routing`). A **cell** is a wiring at a state count N per head:
-every level's width (the uniform factorization b**D = N unless widths are given), its levels as rola builds them, a
-decay source as rola's JSON (`None`, or `{"type": "LearnedDecay", ...}`) and the route projection's `bias`. The
-canonical MQAR slate is `rola-arm1-densread-sparsewrite`, `rola-arm2-union`, `rola-arm3-levelsplit` and the one-level
-control `rola-d1-dense`.
+A **wiring** is one of fsla's own level spellings per routing level, outermost first (`fsla.dense_routing`,
+`fsla.split_routing`, `fsla.union_routing`, `fsla.tied_routing`). A **cell** is a wiring at a state count N per head:
+every level's width (the uniform factorization b**D = N unless widths are given), its levels as fsla builds them, a
+decay source as fsla's JSON (`None`, or `{"type": "LearnedDecay", ...}`) and the route projection's `bias`. The
+canonical MQAR slate is `fsla-arm1-densread-sparsewrite`, `fsla-arm2-union`, `fsla-arm3-levelsplit` and the one-level
+control `fsla-d1-dense`.
 
-Every bench builds a cell one way: `mixer_config` for zoology, or `layer` for a bare fla layer, both passing rola's
-objects as their JSON (`fla.layers.rola.encode`). It reads a built cell's state back off the layer (`state_floats`),
+Every bench builds a cell one way: `mixer_config` for zoology, or `layer` for a bare fla layer, both passing fsla's
+objects as their JSON (`fla.layers.fsla.encode`). It reads a built cell's state back off the layer (`state_floats`),
 never from a formula. Whatever
-rola refuses, every build refuses with rola's own error. Today that is prefill while its kernel is rebuilt and
-training before its native backward, so every RoLA arm of every bench fails until rola builds those passes. The
+fsla refuses, every build refuses with fsla's own error. Today that is prefill while its kernel is rebuilt and
+training before its native backward, so every FSLA arm of every bench fails until fsla builds those passes. The
 baseline arms run.
 
 ## The benchmarks
 
-An experiment is `<bench> <config>`: `rola_bench/<bench>/experiments/<config>.yaml` is its single source of truth (the
+An experiment is `<bench> <config>`: `fsla_bench/<bench>/experiments/<config>.yaml` is its single source of truth (the
 grid, the hyperparameters, and a `fleet:` block of dispatch knobs). The bench's `job.py` expands it into cell ids and
-a box-side command, and `rola_bench.fleet.jobs.make_job` assembles the `fleet.Job`.
+a box-side command, and `fsla_bench.fleet.jobs.make_job` assembles the `fleet.Job`.
 
 | Bench | Measures | Specs |
 |---|---|---|
-| `mqar` | Recall accuracy at matched realized state: RoLA's wirings against zoology's baselines across N, L, learning rates and seeds. | `canonical`, `law_grid`, `graph_grid`, `presence_grid`, `cue_consistency`, `ood_recall`, `separation`, `dmodel64`, `router_bias`; `seed_confirm.py` (re-runs the winners at extra seeds) |
+| `mqar` | Recall accuracy at matched realized state: FSLA's wirings against zoology's baselines across N, L, learning rates and seeds. | `canonical`, `law_grid`, `graph_grid`, `presence_grid`, `cue_consistency`, `ood_recall`, `separation`, `dmodel64`, `router_bias`; `seed_confirm.py` (re-runs the winners at extra seeds) |
 
 ```bash
-bazel run //:fleet -- <rola checkout> mqar canonical --boxes 6
+bazel run //:fleet -- <fsla checkout> mqar canonical --boxes 6
 ```
 
 The launcher runs CPU-only: it builds the job and coordinates the boxes over HTTP, and every run happens on the rented
@@ -68,9 +68,9 @@ GPUs. It reads this machine's environment:
 
 | Variable | Meaning |
 |---|---|
-| `ROLA_BENCH_CKPTS` | where pulled MQAR checkpoints live (required by jobs that pull checkpoints; no default) |
-| `ROLA_BENCH_RUNTIME` | fleet operational state (bad hosts, host state); default `fleet-runtime/` under the dev config's `host.build_cache`, never in the checkout |
-| `ROLA_BENCH_IMAGE`, `OFFER_QUERY`, `FLEET_PROVIDER` | override the spec's image, offer query and provider |
+| `FSLA_BENCH_CKPTS` | where pulled MQAR checkpoints live (required by jobs that pull checkpoints; no default) |
+| `FSLA_BENCH_RUNTIME` | fleet operational state (bad hosts, host state); default `fleet-runtime/` under the dev config's `host.build_cache`, never in the checkout |
+| `FSLA_BENCH_IMAGE`, `OFFER_QUERY`, `FLEET_PROVIDER` | override the spec's image, offer query and provider |
 
 ## Local runs
 
@@ -80,33 +80,33 @@ index serves pinned by their public commits:
 
 | Environment | Its stack | Its interpreter |
 |---|---|---|
-| `bench_env` | torch 2.14 (CUDA 13.0, rola's), the fla fork's rola branch, zoology, fleet, rola-results (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
+| `bench_env` | torch 2.14 (CUDA 13.0, fsla's), the fla fork's fsla branch, zoology, fleet, fsla-results (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
 | `research_env` | the baselines' stack: torch 2.6 (CUDA 12.4), flash-attn's release wheel, upstream fla 0.4.2, zoology, fleet (`research.lock`) | `bazel run //:research_python -- <args>` |
 
-rola is never installed: a run that imports it (the arms registry does, so the launcher, the MQAR runs and the model
-tests) takes a rola checkout as its first argument, with that checkout's library built (`bazel run //:library` there),
+fsla is never installed: a run that imports it (the arms registry does, so the launcher, the MQAR runs and the model
+tests) takes a fsla checkout as its first argument, with that checkout's library built (`bazel run //:library` there),
 and puts it on the path after this one. The MQAR smoke builds every arm on this machine's GPU and runs one step:
 
 ```bash
-bazel run //:mqar_smoke -- <rola checkout>
+bazel run //:mqar_smoke -- <fsla checkout>
 ```
 
 An MQAR-family grid small enough for this card runs one tier at a time through the fleet's own cell runner, and the
 graph and presence grids are read by their analysis:
 
 ```bash
-GRID_TIERS=decoupling bazel run //:mqar_local_grid -- <rola checkout> --config graph_grid --dry-run
-bazel run //:bench_python -- -m rola_bench.mqar.analysis.graph --config graph_grid
+GRID_TIERS=decoupling bazel run //:mqar_local_grid -- <fsla checkout> --config graph_grid --dry-run
+bazel run //:bench_python -- -m fsla_bench.mqar.analysis.graph --config graph_grid
 ```
 
-The measurement suite is a declared build (`declare.py`, over rola-devtools' `rola_devtools.build`): each rola
+The measurement suite is a declared build (`declare.py`, over fsla-devtools' `fsla_devtools.build`): each fsla
 checkout's own declarations (its build, SASS, registers, phases, pipe counters and timelines, timing entries) composed
-with rola-bench's attention reference, one interleaved timing session per group of central cells, a memory pass, and
-every result stored. Each checkout runs in its own venv (rola's `bazel run //:dev_env` writes it beside the checkout).
-See [`rola_bench/measure/README.md`](rola_bench/measure/README.md):
+with fsla-bench's attention reference, one interleaved timing session per group of central cells, a memory pass, and
+every result stored. Each checkout runs in its own venv (fsla's `bazel run //:dev_env` writes it beside the checkout).
+See [`fsla_bench/measure/README.md`](fsla_bench/measure/README.md):
 
 ```bash
-bazel run //:suite -- run declare.py:suite --arg target=worktree:<rola checkout> \
+bazel run //:suite -- run declare.py:suite --arg target=worktree:<fsla checkout> \
     --arg references='worktree:<baseline>,label:master'
 ```
 
@@ -114,9 +114,9 @@ Local numbers are engineering gates. Citable numbers come from rented runs.
 
 ## Results
 
-Every result is stored through `rola_results`, in the rola-results repository: the fleet benches at `<bench>/<config>`,
+Every result is stored through `fsla_results`, in the fsla-results repository: the fleet benches at `<bench>/<config>`,
 the local MQAR grid beside the fleet's records at `mqar/<config>` (keyed by its checkouts instead of an image), and the
-measurement suite at `rola/<instrument>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
+measurement suite at `fsla/<instrument>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
 fleet's `store_result` sink and `done_ids`. Each pulled row is a sample of the record keyed by (bench, config, cell,
 image), stored once however often it is pulled again. A cell is done when the current image has an ok sample, so an
 image bump runs the grid again. Failures are samples too.
@@ -126,34 +126,34 @@ image bump runs the grid again. Failures are samples too.
 Tests run per area. The GPU-heavy suites are never run unscoped:
 
 ```bash
-bazel run //:pytest -- <rola checkout> tests/models
-bazel run //:pytest -- <rola checkout> tests/mqar
+bazel run //:pytest -- <fsla checkout> tests/models
+bazel run //:pytest -- <fsla checkout> tests/mqar
 bazel run //:bench_python -- -m unittest tests.measure.test_compose
 ```
 
-The gate is `bazel test //:gate`: ruff with rola's rule set and its E30x spacing family over `rola_bench`, `tests` and
+The gate is `bazel test //:gate`: ruff with fsla's rule set and its E30x spacing family over `fsla_bench`, `tests` and
 `declare.py`, the measurement composer's contract tests, and the public mirror's declaration check, on the bench
-environment. The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, rola-devtools' commit gate) runs
+environment. The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, fsla-devtools' commit gate) runs
 it on the commit as git will write it.
 
-Bazel is rola's pinned bazelisk (a rola checkout's `python3 tools/bootstrap.py` links it), and it runs through this
-checkout's front door (`bazel/bazel`), which runs rola-devtools' from the machine's rola-devtools checkout (the dev
-config's `workspace.devtools`, else `rola-devtools` beside this checkout).
+Bazel is fsla's pinned bazelisk (a fsla checkout's `python3 tools/bootstrap.py` links it), and it runs through this
+checkout's front door (`bazel/bazel`), which runs fsla-devtools' from the machine's fsla-devtools checkout (the dev
+config's `workspace.devtools`, else `fsla-devtools` beside this checkout).
 
 ## Publishing
 
-This repository is developed in the private `rola-bench-dev` and published to the public `rola-bench`: a push to
+This repository is developed in the private `fsla-bench-dev` and published to the public `fsla-bench`: a push to
 `master` runs `.github/workflows/mirror.yml`, which publishes the declared files as one snapshot commit
-(`.github/mirror/declarations.json`; the export is [rola-devtools](https://github.com/Blakexx/rola-devtools)').
+(`.github/mirror/declarations.json`; the export is [fsla-devtools](https://github.com/Blakexx/fsla-devtools)').
 
 ## Images
 
 | Image | Dockerfile | Benchmarks |
 |---|---|---|
-| `blakeresearch/rola-bench` | `docker/mqar.Dockerfile` | MQAR |
+| `blakeresearch/fsla-bench` | `docker/mqar.Dockerfile` | MQAR |
 
 It builds `FROM blakeresearch/fleet-base` and sets `FLEET_RUN_CMD` and `FLEET_VERIFY_CMD`
-(`python -m rola_bench.fleet.verify`). `docker/build.sh mqar [--push] [--prune]` stages clean sources from the
-checkouts named by `ROLA_FLA_SRC` and `ROLA_ZOO_SRC`. The images do not install rola yet, and fla does not import
-without it, so no current image builds. The fleet base's torch is a CUDA 12.8 build, and rola's manifests are
+(`python -m fsla_bench.fleet.verify`). `docker/build.sh mqar [--push] [--prune]` stages clean sources from the
+checkouts named by `FSLA_FLA_SRC` and `FSLA_ZOO_SRC`. The images do not install fsla yet, and fla does not import
+without it, so no current image builds. The fleet base's torch is a CUDA 12.8 build, and fsla's manifests are
 ratified under CUDA 13.0.

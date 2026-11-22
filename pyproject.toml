@@ -3,29 +3,29 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rola-bench"
+name = "fsla-bench"
 license = { file = "LICENSE" }
 version = "0.1.0"
-description = "RoLA's benchmarks on fleet (MQAR) and the local measurement suite"
+description = "FSLA's benchmarks on fleet (MQAR) and the local measurement suite"
 requires-python = ">=3.10"
-# The dependency edges: the benches build RoLA through fla (our fork's RoLA layer wraps rola), MQAR's model and
-# baselines come from zoology, dispatch from fleet, and every result is stored through rola-results. First-party
+# The dependency edges: the benches build FSLA through fla (our fork's FSLA layer wraps fsla), MQAR's model and
+# baselines come from zoology, dispatch from fleet, and every result is stored through fsla-results. First-party
 # packages come from their own repositories (locally the graph's environments pin them by public commit and a run names
-# its rola checkout, README.md#local-runs; an image installs them from source); they are listed so pip verifies they
+# its fsla checkout, README.md#local-runs; an image installs them from source); they are listed so pip verifies they
 # are present.
 dependencies = [
-    "rola",          # the model and kernels
-    "flash-linear-attention",  # fla, from the fork's rola branch: RoLA's layer and HF model, and the baseline layers
-    "zoology",       # MQAR's model, data and baselines (RoLAMixer wraps fla's RoLA)
+    "fsla",          # the model and kernels
+    "flash-linear-attention",  # fla, from the fork's fsla branch: FSLA's layer and HF model, and the baseline layers
+    "zoology",       # MQAR's model, data and baselines (FSLAMixer wraps fla's FSLA)
     "fleet",         # generic GPU orchestration
-    "rola-results",  # the result store
+    "fsla-results",  # the result store
     "torch",
     "numpy",
     "pyyaml",
 ]
 
 [tool.setuptools.packages.find]
-include = ["rola_bench*"]
+include = ["fsla_bench*"]
 namespaces = false
 
 [tool.pytest.ini_options]

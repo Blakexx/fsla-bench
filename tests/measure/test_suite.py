@@ -13,19 +13,19 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from rola_devtools.build.declare import Graph, load
-from rola_devtools.cells import central
+from fsla_devtools.build.declare import Graph, load
+from fsla_devtools.cells import central
 
 ROOT = Path(__file__).resolve().parents[2]
-GROUPS = load(ROOT / "rola_bench" / "measure" / "groups.py")
+GROUPS = load(ROOT / "fsla_bench" / "measure" / "groups.py")
 SUITE = load(ROOT / "declare.py")
 
-#: a checkout's declarations as rola's `declare.py` shapes them: a build, its instruments, and on the carry cells a
+#: a checkout's declarations as fsla's `declare.py` shapes them: a build, its instruments, and on the carry cells a
 #: `prefill` registration, the `facts_pass` one the root's null gate takes, and a clock reader
 FAKE = textwrap.dedent('''
-    from rola_devtools.build.declare import Env
-    from rola_devtools.cells.declare import cells as cell_nodes
-    from rola_devtools.timing.declare import register_clock_reader, register_timing
+    from fsla_devtools.build.declare import Env
+    from fsla_devtools.cells.declare import cells as cell_nodes
+    from fsla_devtools.timing.declare import register_clock_reader, register_timing
 
 
     def checkout(path, *, python, label):
@@ -36,8 +36,8 @@ FAKE = textwrap.dedent('''
 
 
     def declare(g, env, *, timing=None, instruments=("sass", "phases")):
-        from rola_devtools.cells import central
-        from rola_devtools.diff import side
+        from fsla_devtools.cells import central
+        from fsla_devtools.diff import side
 
         cells = sorted(central().cells)
         carry = [c for c in cells if not c.startswith(("qkv-", "layer-", "producer-"))]
@@ -124,13 +124,13 @@ class Root(unittest.TestCase):
         """The root declares EVERYTHING; `--only`/`--skip` at the CLI is the one way to run less of it."""
         import inspect
 
-        from rola_devtools.build.scheduler import select
+        from fsla_devtools.build.scheduler import select
 
         self.assertFalse({"cells", "skip_cells", "parts", "groups", "instruments"}
                          & set(inspect.signature(SUITE["root"]).parameters))
         public, targets = self.root()
         #: a session per group arm set that has a member -- every group, not a gate subset; the double registers
-        #: only `prefill`, rola-bench `flash` and each group's own attention arms (the incremental cell's), so
+        #: only `prefill`, fsla-bench `flash` and each group's own attention arms (the incremental cell's), so
         #: the arm sets naming other arms declare nothing
         sessions = {label for label in targets if label.startswith("session/")}
         expected = {f"session/{g.name}/{'+'.join(arms)}" for g in GROUPS["GROUPS"].values() for arms in g.together
@@ -153,7 +153,7 @@ class Root(unittest.TestCase):
         (self.base / "base" / "declare.py").unlink()
         with self.assertRaisesRegex(SystemExit, "before the declaration API"):
             self.root(references=f"worktree:{self.base / 'base'}")
-        with self.assertRaisesRegex(SystemExit, "rola-bench's own entry"):
+        with self.assertRaisesRegex(SystemExit, "fsla-bench's own entry"):
             SUITE["root"](Graph(), target=f"worktree:{self.base / 'tip'},label:bench")
 
 

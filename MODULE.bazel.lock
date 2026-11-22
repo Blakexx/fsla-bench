@@ -197,29 +197,29 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
-    "@@rola_devtools+//bazel:environment.bzl%environment": {
+    "@@fsla_devtools+//bazel:environment.bzl%environment": {
       "general": {
-        "bzlTransitiveDigest": "nYRcMSeAmQnM3u2iQk3pDAZ0dQ/8XSSaZkIxdBKMhXg=",
-        "usagesDigest": "F2e1Pe3yCCCnwcOeursfZuXMQmrTd7z5vqo+Px+Fs8Y=",
+        "bzlTransitiveDigest": "fWnz4VEUK1f2i7SoVPWoX+jUPEjYcsA3snToJt8FN/M=",
+        "usagesDigest": "mqg5Q3ya8l8Ikin1Xhjm7iEoqJzSxYndKnxaUIauirk=",
         "recordedInputs": [
-          "REPO_MAPPING:,rola_devtools rola_devtools+",
-          "REPO_MAPPING:,uv rola_devtools++environment+uv"
+          "REPO_MAPPING:,fsla_devtools fsla_devtools+",
+          "REPO_MAPPING:,uv fsla_devtools++environment+uv"
         ],
         "generatedRepoSpecs": {
           "bench_env": {
-            "repoRuleId": "@@rola_devtools+//bazel:environment.bzl%_python_repo",
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_python_repo",
             "attributes": {
               "lock": "@@//:requirements.lock",
-              "uv": "@@rola_devtools++environment+uv//:uv",
-              "uv_pin": "@@rola_devtools+//pins:uv_pin.json",
+              "uv": "@@fsla_devtools++environment+uv//:uv",
+              "uv_pin": "@@fsla_devtools+//pins:uv_pin.json",
               "index": "https://download.pytorch.org/whl/cu130",
               "index_field": "torch_index",
               "devtools": true,
               "packages": [
-                "flash-linear-attention @ git+https://github.com/Blakexx/flash-linear-attention@2b4a95dd6a0df2827a45bc38b8619203bdcebae4",
-                "zoology @ git+https://github.com/Blakexx/rola-zoology@1a3ab7affca7477548e68ee1b5ba6287cb760e5d",
+                "flash-linear-attention @ git+https://github.com/Blakexx/flash-linear-attention@a9a5c3dfd1b5e0335e8ee07ba96923fcb6afc0ed",
+                "zoology @ git+https://github.com/Blakexx/fsla-zoology@de702827eb6a81aa957da2f5ba7e6a3a73df7165",
                 "fleet @ git+https://github.com/Blakexx/fleet@d2b4fa3c4ba2a47d5c89c8e5c3e2dad329ff8b83",
-                "rola-results @ git+https://github.com/Blakexx/rola-results@40b41681bb4fd22f744810a3a2281c8e7c376327"
+                "fsla-results @ git+https://github.com/Blakexx/fsla-results@7906aa2c087b159a261146e1eaecaa6268ab081f"
               ],
               "isolated_builds": false,
               "post_args": [],
@@ -230,16 +230,16 @@
             }
           },
           "research_env": {
-            "repoRuleId": "@@rola_devtools+//bazel:environment.bzl%_python_repo",
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_python_repo",
             "attributes": {
               "lock": "@@//:research.lock",
-              "uv": "@@rola_devtools++environment+uv//:uv",
-              "uv_pin": "@@rola_devtools+//pins:uv_pin.json",
+              "uv": "@@fsla_devtools++environment+uv//:uv",
+              "uv_pin": "@@fsla_devtools+//pins:uv_pin.json",
               "index": "https://download.pytorch.org/whl/cu124",
               "index_field": "torch_index",
               "devtools": true,
               "packages": [
-                "zoology @ git+https://github.com/Blakexx/rola-zoology@1a3ab7affca7477548e68ee1b5ba6287cb760e5d",
+                "zoology @ git+https://github.com/Blakexx/fsla-zoology@de702827eb6a81aa957da2f5ba7e6a3a73df7165",
                 "fleet @ git+https://github.com/Blakexx/fleet@d2b4fa3c4ba2a47d5c89c8e5c3e2dad329ff8b83"
               ],
               "isolated_builds": false,
@@ -251,15 +251,37 @@
             }
           },
           "uv": {
-            "repoRuleId": "@@rola_devtools+//bazel:environment.bzl%_pinned_repo",
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_pinned_repo",
             "attributes": {
-              "pin": "@@rola_devtools+//pins:uv_pin.json",
+              "pin": "@@fsla_devtools+//pins:uv_pin.json",
               "build": "exports_files([\"{binary}\"], visibility = [\"//visibility:public\"])\n"
             }
           },
           "bench_tree": {
-            "repoRuleId": "@@rola_devtools+//bazel:environment.bzl%_tree_repo",
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_tree_repo",
             "attributes": {}
+          }
+        }
+      }
+    },
+    "@@pybind11_bazel+//:internal_configure.bzl%internal_configure_extension": {
+      "general": {
+        "bzlTransitiveDigest": "BsgERqYptkJeeC8wFaLj251IoTZTSy/58WA6kVp0q8I=",
+        "usagesDigest": "D1r3lfzMuUBFxgG8V6o0bQTLMk3GkaGOaPzw53wrwyw=",
+        "recordedInputs": [
+          "REPO_MAPPING:pybind11_bazel+,bazel_tools bazel_tools",
+          "FILE:@@pybind11_bazel+//MODULE.bazel e6f4c20442eaa7c90d7190d8dc539d0ab422f95c65a57cc59562170c58ae3d34"
+        ],
+        "generatedRepoSpecs": {
+          "pybind11": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file": "@@pybind11_bazel+//:pybind11-BUILD.bazel",
+              "strip_prefix": "pybind11-2.12.0",
+              "urls": [
+                "https://github.com/pybind/pybind11/archive/v2.12.0.zip"
+              ]
+            }
           }
         }
       }

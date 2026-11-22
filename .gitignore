@@ -1,7 +1,7 @@
 wandb/
 *.log
-*.pt          # NEVER check in model files (checkpoints live off the repository's disk: ROLA_BENCH_CKPTS, ROLA_LM_CKPTS)
-# Results are stored through rola_results, in the rola-results repository; nothing here is a result.
+*.pt          # NEVER check in model files (checkpoints live off the repository's disk: FSLA_BENCH_CKPTS, FSLA_LM_CKPTS)
+# Results are stored through fsla_results, in the fsla-results repository; nothing here is a result.
 __pycache__/
 *.pyc
 *.egg-info/

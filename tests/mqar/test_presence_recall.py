@@ -339,9 +339,9 @@ def test_gen_version_is_in_the_cache_key():
 def _spec():
     import os
 
-    from rola_bench.mqar.build_configs import load_spec
+    from fsla_bench.mqar.build_configs import load_spec
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    here = os.path.join(repo, "rola_bench", "mqar", "experiments")
+    here = os.path.join(repo, "fsla_bench", "mqar", "experiments")
     return load_spec(os.path.join(here, "presence_grid.yaml"))
 
 
@@ -352,7 +352,7 @@ def test_every_tier_is_the_size_its_header_states(tier, cells):
     card). If a tier silently doubles, the night it was planned for is not the night it takes."""
     import os
 
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     old = os.environ.get("GRID_TIERS")
     os.environ["GRID_TIERS"] = tier
     try:
@@ -367,7 +367,7 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_colum
     in this file is about them; a stray `baselines` arm would silently triple a tier. Attention is
     admitted in EXACTLY ONE tier — on a capacity tier it would be read as a contender on the N
     ladder, which it cannot be (its state is a growing KV cache)."""
-    from rola_bench.models.rola import CANONICAL_WIRINGS
+    from fsla_bench.models.fsla import CANONICAL_WIRINGS
     for tier, arms in _spec()["tiers"].items():
         kinds = {a["build"] for a in arms}
         if tier.startswith("attn"):
@@ -375,7 +375,7 @@ def test_the_slate_is_the_three_wirings_plus_the_control_plus_an_attention_colum
             continue
         assert kinds == {"routed"}, f"{tier} carries a non-routed arm"
         #: the decay column carries the three structured wirings only (d1's dense write would decay everything every step)
-        slate = set(CANONICAL_WIRINGS) - ({"rola-d1-dense"} if "decay" in tier else set())
+        slate = set(CANONICAL_WIRINGS) - ({"fsla-d1-dense"} if "decay" in tier else set())
         assert {a["instance"] for a in arms} == slate, f"{tier} is not the slate"
 
 
@@ -438,8 +438,8 @@ def test_every_run_id_parses_for_the_analysis():
     about would silently produce an empty headline table rather than an error."""
     import os
 
-    from rola_bench.mqar.analysis.graph import parse_run_id
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.analysis.graph import parse_run_id
+    from fsla_bench.mqar.build_configs import build_configs
     os.environ["GRID_TIERS"] = "all"
     configs, _ = build_configs(_spec())
     tags = {c["tag"] for c in _spec()["conditions"]}
@@ -459,7 +459,7 @@ def test_the_grid_stamps_the_realized_demand_as_a_slice_key():
 def test_the_spec_conditions_build_the_data_they_name():
     """The knob set is validated by `common.make_presence_data`, so a renamed knob refuses here
     rather than being silently dropped and reported as a condition that was never run."""
-    from rola_bench.mqar import common as C
+    from fsla_bench.mqar import common as C
     spec = _spec()
     for cond in spec["conditions"]:
         knobs = {k: v for k, v in cond.items() if k != "tag"}
@@ -475,7 +475,7 @@ def test_the_analysis_knows_this_task_and_its_chance_line():
     most of the task, so the criterion cannot be shared between them. The task is read off the
     spec's own `data.protocol.kind`, and a criterion at or below the chance line is refused —
     otherwise the reported crossing would be the threshold of GUESSING."""
-    from rola_bench.mqar.analysis.graph import TASKS, analyse, task_of
+    from fsla_bench.mqar.analysis.graph import TASKS, analyse, task_of
     spec = _spec()
     task = task_of(spec)
     assert (task.chance, task.criterion) == (0.5, 0.75)
@@ -488,7 +488,7 @@ def test_the_analysis_resolves_the_demand_with_the_presence_generator():
     """`predicted_chi` REBUILDS each condition's episodes rather than reading a knob (the stamp is
     absent on a segment-cache hit), so it must dispatch to the generator the spec names — solving a
     presence condition with the graph-recall builder would raise or, worse, answer."""
-    from rola_bench.mqar.analysis.graph import predicted_chi
+    from fsla_bench.mqar.analysis.graph import predicted_chi
     spec = _spec()
     conds = {c["tag"]: c for c in spec["conditions"]}
     for tag, L in (("presence-k16", 64), ("presence-k64", 256)):

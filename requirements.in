@@ -1,8 +1,8 @@
-# rola-bench's graph environment (MODULE.bazel's `environment.python` tag `bench_env`): the fork's stack, on rola's
-# torch (the cu13 toolchain's build), which rola-bench's gate, its tests and its local runs import. The packages that
-# are not on an index -- the fla fork, the zoology fork, fleet, rola-results -- are pinned by their public commits
+# fsla-bench's graph environment (MODULE.bazel's `environment.python` tag `bench_env`): the fork's stack, on fsla's
+# torch (the cu13 toolchain's build), which fsla-bench's gate, its tests and its local runs import. The packages that
+# are not on an index -- the fla fork, the zoology fork, fleet, fsla-results -- are pinned by their public commits
 # beside the lock (the tag's `packages`), so this lock carries their dependencies. Versions are the ones the hand-made
-# venv (rola311-cu13) was proven with. Compiled with `uv pip compile requirements.in --python-version 3.11
+# venv (fsla311-cu13) was proven with. Compiled with `uv pip compile requirements.in --python-version 3.11
 # --generate-hashes --extra-index-url https://download.pytorch.org/whl/cu130 --index-strategy unsafe-best-match
 # -o requirements.lock`.
 torch==2.14.0+cu130

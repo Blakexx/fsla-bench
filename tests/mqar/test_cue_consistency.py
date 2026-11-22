@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_EXP_DIR = os.path.join(_REPO, "rola_bench", "mqar", "experiments")
+_EXP_DIR = os.path.join(_REPO, "fsla_bench", "mqar", "experiments")
 
 # A small, statistically clean instance: P = 4 keeps the plug-in entropy estimator's bias far below
 # the tolerance (16 address states over 80k samples), and kv = 4 keeps G <= P as the generator
@@ -286,7 +286,7 @@ def test_unrealizable_settings_refuse_by_name(kw, msg):
 
 
 def test_unknown_knob_is_refused_at_the_spec_surface():
-    from rola_bench.mqar.common import make_cue_data
+    from fsla_bench.mqar.common import make_cue_data
     with pytest.raises(ValueError, match="unknown cue-consistency knob"):
         make_cue_data(8192, 8, 8, None, train_seq_len=48, test_seq_lens=[48], train_examples=8,
                       test_examples=8, cue_digit=1)
@@ -294,19 +294,19 @@ def test_unknown_knob_is_refused_at_the_spec_surface():
 
 # ============================================================== 6. the grid spec
 def _spec():
-    from rola_bench.mqar.build_configs import load_spec
+    from fsla_bench.mqar.build_configs import load_spec
     return load_spec(os.path.join(_EXP_DIR, "cue_consistency.yaml"))
 
 
 def test_spec_expands_to_the_cell_count_its_header_states():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     cfgs, _ = build_configs(_spec())
     assert len(cfgs) == 450, "the header's arithmetic (378 + 72) is a load-bearing claim"
     assert len({c.run_id for c in cfgs}) == len(cfgs), "condition tags must separate the result rows"
 
 
 def test_every_condition_is_reachable_and_carries_its_knobs():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     spec = _spec()
     tags = [c["tag"] for c in spec["conditions"]]
     assert tags == ["agree", "agree-shuffled", "partial-m1", "partial-m2", "partial-m4",
@@ -324,7 +324,7 @@ def test_every_condition_is_reachable_and_carries_its_knobs():
 
 def test_the_knob_axes_are_actually_crossed_not_confounded():
     """Every condition shares L, kv, vocab and geometry with every other; only the cue knobs move."""
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     cfgs, _ = build_configs(_spec())
     segs = {c.run_id.rsplit("-s", 1)[-1]: c.data.train_configs[0] for c in cfgs}
     fixed = {(s.input_seq_len, s.num_kv_pairs, s.vocab_size, s.key_digits, s.digit_vocab)
@@ -364,7 +364,7 @@ def test_the_harmless_aliasing_control_matches_a_harmful_cell_exactly():
 
 
 def test_slate_is_the_three_wirings_plus_d1_plus_the_four_contenders():
-    from rola_bench.models.rola import CANONICAL_WIRINGS
+    from fsla_bench.models.fsla import CANONICAL_WIRINGS
     spec = _spec()
     routed = [a["instance"] for a in spec["tiers"]["knobs"] if a["build"] == "routed"]
     assert set(routed) == set(CANONICAL_WIRINGS)
@@ -384,14 +384,14 @@ def test_predictions_are_stated_in_the_header_and_marked():
 # =========================================================== 7. the axis must not leak into old specs
 @pytest.mark.parametrize("name", ["law_grid", "ood_recall", "canonical", "router_bias"])
 def test_specs_without_conditions_are_untouched_by_the_new_axis(name):
-    from rola_bench.mqar.build_configs import _conditions, load_spec
+    from fsla_bench.mqar.build_configs import _conditions, load_spec
     spec = load_spec(os.path.join(_EXP_DIR, f"{name}.yaml"))
     assert _conditions(spec) == [(None, {})]
     assert "cond" not in str(spec)
 
 
 def test_a_condition_axis_without_cue_protocol_refuses():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     spec = _spec()
     spec["data"]["protocol"] = {"train_kv": [4], "test_seq_lens": [128],
                                 "test_kv_by_len": {128: [4]}, "train_examples": 8, "test_examples": 8}
@@ -400,16 +400,16 @@ def test_a_condition_axis_without_cue_protocol_refuses():
 
 
 def test_an_explicit_run_id_without_cond_refuses():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     spec = _spec()
-    spec["tiers"] = {"knobs": [{"build": "routed", "instance": "rola-d1-dense", "tag": "d1",
+    spec["tiers"] = {"knobs": [{"build": "routed", "instance": "fsla-d1-dense", "tag": "d1",
                                 "run_id": "cell-{tag}-{nc}-{seed}"}]}
     with pytest.raises(ValueError, match=r"must contain \{cond\}"):
         build_configs(spec)
 
 
 def test_an_arm_naming_an_undeclared_condition_refuses():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     spec = _spec()
     spec["tiers"]["contenders"][0]["conditions"] = ["agree", "typo-tag"]
     with pytest.raises(ValueError, match="does not declare"):
@@ -417,7 +417,7 @@ def test_an_arm_naming_an_undeclared_condition_refuses():
 
 
 def test_duplicate_condition_tags_refuse():
-    from rola_bench.mqar.build_configs import build_configs
+    from fsla_bench.mqar.build_configs import build_configs
     spec = _spec()
     spec["conditions"].append(dict(spec["conditions"][0]))
     with pytest.raises(ValueError, match="duplicate condition tag"):
