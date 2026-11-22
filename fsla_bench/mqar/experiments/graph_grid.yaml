@@ -1,5 +1,5 @@
 # THE GRAPH GRID — recall against the CO-OCCURRENCE GRAPH, not against the item count.
-# Built 2026-08-02. Data generator: `zoology.data.graph_recall` (construction -> graph table in its
+# Built 2026-08-02. Data generator: `chromatic_recall.data.graph_recall` (construction -> graph table in its
 # module docstring). Runs LOCALLY, one tier per night:
 #
 #   GRID_TIERS=decoupling flock /tmp/fsla_gpu.lock \

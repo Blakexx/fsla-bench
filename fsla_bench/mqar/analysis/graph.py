@@ -4,7 +4,7 @@
     python -m fsla_bench.mqar.analysis.graph --config graph_grid [--criterion 0.5] [--json out.json]
 
 The grid sweeps `N` (addressable FSLA states per head) against a data distribution whose
-co-occurrence graph has a solved chromatic number `chi` (`zoology.data.graph_chi`). The theory says
+co-occurrence graph has a solved chromatic number `chi` (`chromatic_recall.data.graph_chi`). The theory says
 recall collapses when `N` falls below `chi` — not below the item count, not below the key-vocabulary
 size. This module turns each (condition, arm) accuracy-vs-N curve into ONE number, the interpolated
 `N*` at which accuracy crosses a criterion, and reports it against that condition's predicted chi.
@@ -38,7 +38,7 @@ and a family whose attention score is far from ceiling is one where a routed arm
 generator difficulty rather than demand. The table says so in that case.
 
 TWO INSTRUMENTS, ONE ANALYSIS (2026-08-03). The same machinery reads the PRESENCE-RECALL grid
-(`zoology.data.presence_recall`, v1's theory-confirmation instrument) because that generator stamps
+(`chromatic_recall.data.presence_recall`, v1's theory-confirmation instrument) because that generator stamps
 its demand in the same `graph_demand_*` vocabulary and its cells carry the same run_id shape. What
 differs is the METRIC'S FLOOR, and it is not cosmetic: presence-recall's answer is one bit, so a
 label-free predictor already scores `TASKS['presence_recall'].chance = 0.5` and a collapse threshold read at
@@ -77,8 +77,8 @@ class Task(NamedTuple):
 #: thousands, so its label-free floor is ~0 and the historical 0.5 criterion is a real statement;
 #: `presence_recall`'s target is one bit, so 0.5 is what guessing scores.
 TASKS = {
-    "graph_recall": Task(chance=0.0, criterion=0.5, builder="zoology.data.graph_recall"),
-    "presence_recall": Task(chance=0.5, criterion=0.75, builder="zoology.data.presence_recall"),
+    "graph_recall": Task(chance=0.0, criterion=0.5, builder="chromatic_recall.data.graph_recall"),
+    "presence_recall": Task(chance=0.5, criterion=0.75, builder="chromatic_recall.data.presence_recall"),
 }
 
 
@@ -136,7 +136,7 @@ def predicted_chi(spec, cond_knobs, seq_len, num_examples, seed=0):
     path and the same seed discipline as the training segment, therefore the same graph."""
     import importlib
 
-    from zoology.data.graph_recall import demand_bounds
+    from chromatic_recall.data.graph_recall import demand_bounds
 
     proto = spec["data"]["protocol"]
     build_episodes = importlib.import_module(task_of(spec).builder).build_episodes

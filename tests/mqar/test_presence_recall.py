@@ -1,4 +1,4 @@
-"""GATES for `zoology.data.presence_recall` — v1's theory-confirmation instrument (2026-08-03).
+"""GATES for `chromatic_recall.data.presence_recall` — v1's theory-confirmation instrument (2026-08-03).
 
 The task: a frozen map `pi` over the key vocabulary with `pi(x) != x`, a sequence of key tokens, and
 one bit at every key position — has `pi(x_t)` appeared STRICTLY BEFORE t? Everything the instrument
@@ -36,17 +36,17 @@ BASE = {"vocab_size": 1024, "num_examples": 2000, "input_seq_len": 64}
 
 
 def _episodes(**kw):
-    from zoology.data.presence_recall import build_episodes
+    from chromatic_recall.data.presence_recall import build_episodes
     return build_episodes(**{**BASE, "seed": 0, **kw})
 
 
 def _stamp(**kw):
-    from zoology.data.presence_recall import stamp
+    from chromatic_recall.data.presence_recall import stamp
     return stamp(_episodes(**kw))
 
 
 def _segment(**kw):
-    from zoology.data.presence_recall import presence_recall
+    from chromatic_recall.data.presence_recall import presence_recall
     return presence_recall(**{**BASE, "seed": 0, **kw})
 
 
@@ -61,7 +61,7 @@ def test_labels_are_a_prefix_membership_check_on_pi(kw):
     """The whole task, checked one position at a time against a from-the-definition implementation.
     The fast path plants a class and then draws a key to realize it; this asserts that what it
     realized is what the definition says, on the arrays the renderer consumes."""
-    from zoology.data.presence_recall import brute_force_labels
+    from chromatic_recall.data.presence_recall import brute_force_labels
     ep = _episodes(num_examples=300, **kw)
     assert (brute_force_labels(ep.key_token, ep.key_pool, ep.pi) == ep.label).all()
 
@@ -75,7 +75,7 @@ def test_a_key_is_emitted_at_most_once_per_sequence():
 
 
 def test_the_labels_land_on_the_key_positions_in_the_reserved_pair():
-    from zoology.data.presence_recall import label_tokens
+    from chromatic_recall.data.presence_recall import label_tokens
     n = 128
     ep = _episodes(num_examples=n, seed=3, demand=16)
     seg = _segment(num_examples=n, seed=3, demand=16)
@@ -106,7 +106,7 @@ def test_the_label_tokens_never_appear_in_the_input_and_filler_never_draws_a_key
     """Two ambiguities removed at once: a filler that coincided with a live key would be an
     uninstructed event silently rewriting the presence set, and an input token that IS the answer
     would be a copy channel."""
-    from zoology.data.presence_recall import label_tokens
+    from chromatic_recall.data.presence_recall import label_tokens
     n = 128
     ep = _episodes(num_examples=n, seed=1, demand=16)
     seg = _segment(num_examples=n, seed=1, demand=16)
@@ -131,7 +131,7 @@ def test_every_pair_of_key_events_is_at_least_min_separation_apart(sep):
 
 # =============================================================== 2. pi is frozen and deranged
 def test_pi_is_a_derangement_at_every_pool_size():
-    from zoology.data.presence_recall import frozen_pi
+    from chromatic_recall.data.presence_recall import frozen_pi
     for k in (2, 3, 8, 16, 64):
         pi = frozen_pi(k, 12345)
         assert sorted(pi.tolist()) == list(range(k)), "pi must be a bijection"
@@ -180,7 +180,7 @@ def test_the_balance_is_flat_in_POSITION_which_is_the_confound_that_matters(k, s
     anything, and the whole grid would be measuring that. The planted draw removes it and the stamp
     measures what is left."""
     ep = _episodes(num_examples=4000, demand=k, keys_per_sequence=s, input_seq_len=256)
-    from zoology.data.presence_recall import stamp
+    from chromatic_recall.data.presence_recall import stamp
     per_pos = ep.label[:, 1:].mean(axis=0)
     assert np.abs(per_pos - 0.5).max() < 0.05, f"positional prior: {per_pos.round(3)}"
     assert stamp(ep)["presence_position_bias"] < 0.05
@@ -232,7 +232,7 @@ def test_the_demand_and_the_per_sequence_item_count_are_different_numbers():
     'pays for the items of a sequence' and 'pays for the demand' predict thresholds a factor of two
     apart. Without it the grid could not tell the two accounts apart at all."""
     ep = _episodes(num_examples=500, demand=32)
-    from zoology.data.presence_recall import stamp
+    from chromatic_recall.data.presence_recall import stamp
     assert ep.key_token.shape[1] == 16 and stamp(ep)["graph_demand_upper"] == 32
 
 
@@ -240,7 +240,7 @@ def test_the_coverage_gate_refuses_an_under_realized_sample():
     """The drawn subset varies, so union completeness is a property of the SAMPLE: a handful of
     episodes realizes a strict subgraph of K_K. That cell is refused on the dataset path rather than
     discovered later as an unexplained curve."""
-    from zoology.data.graph_chi import DemandMismatch
+    from chromatic_recall.data.graph_chi import DemandMismatch
     with pytest.raises(DemandMismatch, match="coverage shortfall"):
         _segment(num_examples=3, demand=32)
 
@@ -249,7 +249,7 @@ def test_every_stamp_field_reaches_the_segment_slices():
     """`DataSegment` carries `(inputs, labels, slices)` and the on-disk cache stores exactly those,
     so `slices` is the only cache-safe home for the stamp — and it is what `slice_keys` reports
     per-slice accuracy against."""
-    from zoology.data.presence_recall import STAMP_FIELDS
+    from chromatic_recall.data.presence_recall import STAMP_FIELDS
     seg = _segment(num_examples=500, demand=16)
     assert set(STAMP_FIELDS) <= set(seg.slices)
     assert seg.slices["graph_demand_upper"] == 16 and seg.slices["graph_nodes"] == 16
@@ -302,7 +302,7 @@ def test_no_global_rng_reads_in_source():
     import ast
     import inspect
 
-    from zoology.data import presence_recall as mod
+    from chromatic_recall.data import presence_recall as mod
 
     banned = {("np", "random", "seed"), ("np", "random", "choice"), ("np", "random", "randint"),
               ("torch", "randint"), ("torch", "rand")}
@@ -327,7 +327,7 @@ def test_gen_version_is_in_the_cache_key():
     """`DataSegment.from_config` hashes `config.model_dump()`; a plain (non-private) `gen_version`
     field therefore invalidates stale on-disk caches by key mismatch when the draw sequence changes,
     without deleting anyone's files. Same mechanism as `MQARConfig.gen_version`."""
-    from zoology.data.presence_recall import PRESENCE_RECALL_GEN_VERSION, PresenceRecallConfig
+    from chromatic_recall.data.presence_recall import PRESENCE_RECALL_GEN_VERSION, PresenceRecallConfig
     cfg = PresenceRecallConfig(vocab_size=1024, num_examples=500, input_seq_len=64, demand=8)
     assert cfg.model_dump()["gen_version"] == PRESENCE_RECALL_GEN_VERSION
     seg = cfg.build(seed=5)
@@ -450,7 +450,7 @@ def test_every_run_id_parses_for_the_analysis():
 
 
 def test_the_grid_stamps_the_realized_demand_as_a_slice_key():
-    from zoology.data.presence_recall import STAMP_FIELDS
+    from chromatic_recall.data.presence_recall import STAMP_FIELDS
     keys = _spec()["train"]["slice_keys"]
     assert "graph_demand_upper" in keys and "graph_construction" in keys
     assert set(keys) <= set(STAMP_FIELDS) | {"num_kv_pairs", "input_seq_len"}

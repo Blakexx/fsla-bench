@@ -1,5 +1,5 @@
 # CUE-CONSISTENCY — the paper's SECOND named boundary (Sec. 7.1): ADDRESS AGREEMENT, Eq. (7).
-# Built 2026-08-02 (Phase 2). Data generator: `zoology.data.cue_consistency` (knob->mechanism table
+# Built 2026-08-02 (Phase 2). Data generator: `chromatic_recall.data.cue_consistency` (knob->mechanism table
 # in its module docstring). Theory: V3_CAPACITY_THEORY_NOTES_2026-07-29 §3 (T0.5, the aliasing
 # ledger) and §3b (T3, the contract table); paper §5.2 Eq. (7) and §5.1's two error-free cases.
 #

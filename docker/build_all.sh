@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command to build and push the fleet base and the fsla-bench image (no GPU required: a pure build).
 #
-#   FLEET_SRC=<fleet checkout> FSLA_FLA_SRC=<fla fork checkout> FSLA_ZOO_SRC=<zoology checkout> bash docker/build_all.sh
+#   FLEET_SRC=<fleet checkout> FSLA_FLA_SRC=<fla fork checkout> FSLA_ZOO_SRC=<zoology checkout> FSLA_RECALL_SRC=<chromatic-recall checkout> bash docker/build_all.sh
 #
 # Builds, in order:
 #   1. blakeresearch/fleet-base:$IMG_VERSION  -- the fleet base (context: the fleet checkout).

@@ -104,7 +104,7 @@ def make_law_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, t
 # --- THE CUE-CONSISTENCY PROTOCOL (added 2026-08-02, Phase 2) -------------------------------------
 # The law protocol above sweeps CAPACITY (N, L, kv). It cannot move the paper's SECOND named boundary
 # (Sec. 7.1), address agreement: standard MQAR's key IS its cue, so Eq. (7) holds by construction at
-# every capacity and the axis is structurally absent. `zoology.data.cue_consistency` makes the cue
+# every capacity and the axis is structurally absent. `chromatic_recall.data.cue_consistency` makes the cue
 # structure the independent variable; this builder is the spec-side surface for it. See that module's
 # docstring for the knob->mechanism table.
 #
@@ -149,7 +149,7 @@ def make_cue_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, t
     re-implement them -- two copies of a validation rule is how the matched axis and the reported
     axis drift apart (Phase 1 finding P6).
     """
-    from zoology.data.cue_consistency import CueConsistencyConfig
+    from chromatic_recall.data.cue_consistency import CueConsistencyConfig
 
     return _make_knobbed_data(
         CueConsistencyConfig, CUE_KNOBS, "cue-consistency", vocab, train_batch, test_batch,
@@ -161,7 +161,7 @@ def make_cue_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len, t
 # The law protocol sweeps CAPACITY (N, L, kv) and the cue protocol sweeps the retrieval CONTRACT.
 # Neither can move the CO-OCCURRENCE GRAPH: MQAR's items are mutually co-occurring by construction,
 # so its graph is a clique at every setting and its chromatic number is pinned to its item count.
-# `zoology.data.graph_recall` makes the graph the independent variable — `clustered(k, m)` presents
+# `chromatic_recall.data.graph_recall` makes the graph the independent variable — `clustered(k, m)` presents
 # k*m keys at demand k, `overlap(w, B)` presents B keys at demand w — and this builder is the
 # spec-side surface for it. Knob -> graph table in that module's docstring.
 #
@@ -186,10 +186,10 @@ def make_graph_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len,
     is, not a condition anyone chooses. Train segments draw random point-lookup targets; test
     segments are EXHAUSTIVE over the contract's items, so every aliased pair is counted in every eval
     sequence and the measured collapse threshold is sharp against the solved demand (see
-    `zoology.data.graph_recall`, "THE CONTRACT"). A spec that could set it could silently evaluate on
+    `chromatic_recall.data.graph_recall`, "THE CONTRACT"). A spec that could set it could silently evaluate on
     sampled queries, which would smear sub-chi degradation by sampling luck.
     """
-    from zoology.data.graph_recall import GraphRecallConfig
+    from chromatic_recall.data.graph_recall import GraphRecallConfig
 
     unknown = set(knobs) - set(GRAPH_KNOBS)
     if unknown:
@@ -205,7 +205,7 @@ def make_graph_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_len,
 
 
 # --- THE PRESENCE-RECALL PROTOCOL (added 2026-08-03) ----------------------------------------------
-# v1's sole theory-confirmation instrument (`zoology.data.presence_recall`). The graph protocol above
+# v1's sole theory-confirmation instrument (`chromatic_recall.data.presence_recall`). The graph protocol above
 # sweeps WHICH GRAPH the distribution realizes while keeping MQAR's value-retrieval contract; the
 # presence protocol keeps the graph a complete one and deletes the VALUE: the label at every key
 # position is the single bit "has pi(x) appeared before?", for a frozen map pi with pi(x) != x. That
@@ -232,7 +232,7 @@ def make_presence_data(vocab, train_batch, test_batch, cache_dir, *, train_seq_l
     carries a question — so the split changes no draw; it is set and stamped so a result row says
     which segment it came from, and so the surface is the same one `make_graph_data` presents.
     """
-    from zoology.data.presence_recall import PresenceRecallConfig
+    from chromatic_recall.data.presence_recall import PresenceRecallConfig
 
     unknown = set(knobs) - set(PRESENCE_KNOBS)
     if unknown:

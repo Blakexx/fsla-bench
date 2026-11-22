@@ -23,7 +23,7 @@ rule the target states for that surface -- the oracle pair's dual run and kernel
 `diff/<surface>`. For each group (`fsla_bench/measure/groups.py`) and each arm set it times together, one SESSION
 (`measure_timing`) over every checkout's registration of those arms on the group's cells, the target's clock reader
 proving the clock; one MEMORY pass over every registration on every selected cell; a NULL GATE over the target's
-`facts_pass` on each group's first FSLA cell, its entries timed against copies of themselves in second workers, so a
+`layer_op` on each layer group's cell, its entries timed against copies of themselves in second workers, so a
 comparison across checkouts' workers is read beside what the gate found; a store for each instrument
 (`fsla/<instrument>`), each session (`timing/session`), the memory pass (`timing/memory`) and the null gate
 (`timing/null`); and the server's stop, which runs whatever failed. Which checkout is the reference for a ratio is
@@ -133,7 +133,7 @@ def root(g, target: str, references: str = "", rounds: str = "8", reps: str = "1
         for name, verdict in out["diffs"].items():
             stores.append(store(g, f"{c['label']}/store/{name}", source=verdict, location=f"fsla/{name}", root=root_dir))
         clock = clock or out["clock"]
-        null_entry = null_entry or out["entries"].get("facts_pass")
+        null_entry = null_entry or out["entries"].get("layer_op")
 
     #: THE CROSS-CHECKOUT DIFFS: each surface the target exposes, against the same surface in each reference, under
     #: THIS ROOT'S rule for it (`RULES`) -- the suite owns how checkouts are compared, as it owns how they are timed

@@ -13,7 +13,8 @@ are a thin wrapper over fsla. It never reaches into fsla's kernels:
 
 ```
 fsla-bench ──▶ fla           the fork's fsla branch: the FSLA layer and HF model (over fsla), and the baseline layers
-           ──▶ zoology       MQAR's model, data and baselines; its FSLAMixer wraps fla's FSLA
+           ──▶ zoology       MQAR's model and baselines (the fork's fsla-pins); its FSLAMixer wraps fla's FSLA
+           ──▶ chromatic-recall  the recall tasks (presence, graph, cue consistency) and the launcher MQAR runs through
            ──▶ fleet         GPU orchestration
            ──▶ fsla-results  the result store
            ──▶ fsla          (through fla; the measurement suite measures fsla checkouts directly)
@@ -80,8 +81,8 @@ index serves pinned by their public commits:
 
 | Environment | Its stack | Its interpreter |
 |---|---|---|
-| `bench_env` | torch 2.14 (CUDA 13.0, fsla's), the fla fork's fsla branch, zoology, fleet, fsla-results (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
-| `research_env` | the baselines' stack: torch 2.6 (CUDA 12.4), flash-attn's release wheel, upstream fla 0.4.2, zoology, fleet (`research.lock`) | `bazel run //:research_python -- <args>` |
+| `bench_env` | torch 2.14 (CUDA 13.0, fsla's), the fla fork's fsla branch, zoology, chromatic-recall, fleet, fsla-results (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
+| `research_env` | the baselines' stack: torch 2.6 (CUDA 12.4), flash-attn's release wheel, upstream fla 0.4.2, zoology, chromatic-recall, fleet (`research.lock`) | `bazel run //:research_python -- <args>` |
 
 fsla is never installed: a run that imports it (the arms registry does, so the launcher, the MQAR runs and the model
 tests) takes a fsla checkout as its first argument, with that checkout's library built (`bazel run //:library` there),
@@ -100,7 +101,7 @@ bazel run //:bench_python -- -m fsla_bench.mqar.analysis.graph --config graph_gr
 ```
 
 The measurement suite is a declared build (`declare.py`, over fsla-devtools' `fsla_devtools.build`): each fsla
-checkout's own declarations (its build, SASS, registers, phases, pipe counters and timelines, timing entries) composed
+checkout's own declarations (its build, SASS gate, realized support, timing entries) composed
 with fsla-bench's attention reference, one interleaved timing session per group of central cells, a memory pass, and
 every result stored. Each checkout runs in its own venv (fsla's `bazel run //:dev_env` writes it beside the checkout).
 See [`fsla_bench/measure/README.md`](fsla_bench/measure/README.md):
@@ -154,6 +155,5 @@ This repository is developed in the private `fsla-bench-dev` and published to th
 
 It builds `FROM blakeresearch/fleet-base` and sets `FLEET_RUN_CMD` and `FLEET_VERIFY_CMD`
 (`python -m fsla_bench.fleet.verify`). `docker/build.sh mqar [--push] [--prune]` stages clean sources from the
-checkouts named by `FSLA_FLA_SRC` and `FSLA_ZOO_SRC`. The images do not install fsla yet, and fla does not import
-without it, so no current image builds. The fleet base's torch is a CUDA 12.8 build, and fsla's manifests are
-ratified under CUDA 13.0.
+checkouts named by `FSLA_FLA_SRC`, `FSLA_ZOO_SRC` (the fork's `fsla-pins`) and `FSLA_RECALL_SRC` (chromatic-recall), each at its pinned commit. The images do not install fsla yet, and fla does not import
+without it, so no current image builds. The fleet base's torch is a CUDA 12.8 build.

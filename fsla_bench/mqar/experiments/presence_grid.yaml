@@ -1,5 +1,5 @@
 # THE PRESENCE GRID — v1's SOLE THEORY-CONFIRMATION INSTRUMENT.
-# Built 2026-08-03. Data generator: `zoology.data.presence_recall` (task, layout and stamp in its
+# Built 2026-08-03. Data generator: `chromatic_recall.data.presence_recall` (task, layout and stamp in its
 # module docstring). Design of record: the V3 capacity-theory notes of 2026-07-29,
 # "THE PRESENCE-RECALL TASK" (user, ratified 2026-08-03).
 #
@@ -32,7 +32,7 @@
 # token it reads, with `pi(x) != x`, frozen per cell and stamped. `K` = `demand` = the key pool size.
 # `s` = `keys_per_sequence`, the key events one sequence emits (each key at most once). `chi` = the
 # DEMAND: the chromatic number of the realized union co-occurrence graph, SOLVED per segment by
-# `zoology.data.graph_chi`. `N` = addressable FSLA states per head (`nc`). `L` = sequence length in
+# `chromatic_recall.data.graph_chi`. `N` = addressable FSLA states per head (`nc`). `L` = sequence length in
 # tokens. `d_qk` = attention's per-head key width.
 #
 # THE TASK. Every key position's label is one bit: has `pi(x_t)` appeared strictly before t? Against

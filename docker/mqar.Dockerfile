@@ -1,7 +1,7 @@
 # fsla-bench MQAR image — FROM the project-agnostic fleet base.
 #
 # The base provides torch + the `fleet` package + box_server (the container entrypoint). Here we add
-# the research stack (fsla, fla from the fork, zoology) + the suite package (fsla_bench), and tell box_server
+# the research stack (fsla, fla from the fork, zoology at the fork's fsla-pins, chromatic-recall) + the suite package (fsla_bench), and tell box_server
 # how to run/verify a batch via FLEET_RUN_CMD / FLEET_VERIFY_CMD. Sources are staged clean by
 # build.sh — only runtime code, no .git/CLAUDE.md/data/results (publication-safe).
 ARG FLEET_BASE_TAG=v2
@@ -17,15 +17,18 @@ RUN pip install --no-cache-dir \
 # Clean package sources (staged by build.sh) — install no-deps.
 COPY fla        /opt/fla
 COPY zoology    /opt/zoology
+COPY chromatic-recall /opt/chromatic-recall
 COPY fsla-bench /opt/fsla-bench
 # --no-build-isolation: use the image's torch (zoology's setup.py imports torch at build time;
 # build isolation would give it a torch-less env -> ModuleNotFoundError).
+# chromatic-recall is installed after zoology (its tasks build zoology's data segments; run.py launches through it).
 RUN pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fla \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/zoology \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/chromatic-recall \
  && pip install --no-cache-dir --no-deps --no-build-isolation -e /opt/fsla-bench
 
 # Build-time gate: the whole dependency graph imports cleanly (no path hacks).
-RUN python -c "import torch, fla.ops.simple_gla, fla.layers, zoology, fleet; \
+RUN python -c "import torch, fla.ops.simple_gla, fla.layers, zoology, chromatic_recall.launch, fleet; \
 import fsla_bench.mqar.job; from fla.layers import LinearAttention, GatedDeltaNet; \
 print('fsla-bench mqar image OK; torch', torch.__version__)"
 

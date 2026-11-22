@@ -1,6 +1,6 @@
 """GATES for the cue-consistency instrument (Phase 2, 2026-08-02).
 
-`zoology.data.cue_consistency` is the data generator for the paper's SECOND named boundary
+`chromatic_recall.data.cue_consistency` is the data generator for the paper's SECOND named boundary
 (Sec. 7.1): address agreement, Eq. (7), `addr_r(u) = addr_w(pi(u))`. Nothing downstream can detect a
 knob that does not do what its name says, because the whole experiment IS the knob: a cell reports
 "accuracy at cue_digits = 1" and there is no independent witness that the cue actually carried one
@@ -39,7 +39,7 @@ BASE = {"vocab_size": 200, "input_seq_len": 48, "num_kv_pairs": 4, "key_digits":
 
 
 def _episodes(n=20_000, seed=0, **kw):
-    from zoology.data.cue_consistency import build_episodes
+    from chromatic_recall.data.cue_consistency import build_episodes
     return build_episodes(num_examples=n, seed=seed, **{**BASE, **kw})
 
 
@@ -134,7 +134,7 @@ def test_only_the_shuffled_rung_permutes_the_write_side_slot_order(consistency, 
 def test_the_query_side_is_always_canonical_order():
     """The shuffle is write-side ONLY. If the query were permuted too, agreement would be restored
     per episode and the condition would measure nothing."""
-    from zoology.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
+    from chromatic_recall.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
     ep = _episodes(n=200, cue_digits=1, slot_consistency="episode_shuffled")
     seg = cue_consistency(num_examples=200, seed=0, cue_digits=1,
                           slot_consistency="episode_shuffled", random_non_queries=False, **BASE)
@@ -192,7 +192,7 @@ def test_consensus_and_recency_have_identical_marginalization_width():
 
 # ============================================================ 4. determinism and the tokenization
 def test_determinism_per_seed():
-    from zoology.data.cue_consistency import cue_consistency
+    from chromatic_recall.data.cue_consistency import cue_consistency
     kw = dict(num_examples=64, cue_digits=1, matches_per_cue=2, **BASE)
     a = cue_consistency(seed=7, **kw)
     b = cue_consistency(seed=7, **kw)
@@ -204,7 +204,7 @@ def test_determinism_per_seed():
 def test_determinism_survives_an_unrelated_global_numpy_consumer():
     """The generator uses its own Generator, not the global `np.random.seed`. A shared global stream
     would make a segment's content depend on what else ran first in the process."""
-    from zoology.data.cue_consistency import cue_consistency
+    from chromatic_recall.data.cue_consistency import cue_consistency
     kw = dict(num_examples=64, seed=7, cue_digits=1, matches_per_cue=2, **BASE)
     a = cue_consistency(**kw)
     np.random.seed(999)
@@ -217,7 +217,7 @@ def test_determinism_survives_an_unrelated_global_numpy_consumer():
 def test_tokens_decode_back_to_the_episode(q, m):
     """The rendered sequence IS the episode: context items in order, digits under the write
     permutation, value last. Gated by decoding rather than by inspection."""
-    from zoology.data.cue_consistency import cue_consistency
+    from chromatic_recall.data.cue_consistency import cue_consistency
     kw = dict(cue_digits=q, matches_per_cue=m, **BASE)
     ep = _episodes(n=200, cue_digits=q, matches_per_cue=m)
     x = cue_consistency(num_examples=200, seed=0, random_non_queries=False, **kw).inputs.numpy()
@@ -235,7 +235,7 @@ def test_tokens_decode_back_to_the_episode(q, m):
 
 @pytest.mark.parametrize("q", [2, 1, 0])
 def test_wildcard_marks_exactly_the_open_digits_and_occurs_nowhere_else(q):
-    from zoology.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
+    from chromatic_recall.data.cue_consistency import WILDCARD_TOKEN, cue_consistency
     D, kv = BASE["key_digits"], BASE["num_kv_pairs"]
     m = 1 if q else kv
     seg = cue_consistency(num_examples=300, seed=3, cue_digits=q, matches_per_cue=m,
@@ -247,7 +247,7 @@ def test_wildcard_marks_exactly_the_open_digits_and_occurs_nowhere_else(q):
 
 
 def test_labels_are_the_contract_target_and_nothing_else():
-    from zoology.data.cue_consistency import cue_consistency
+    from chromatic_recall.data.cue_consistency import cue_consistency
     kw = dict(cue_digits=1, matches_per_cue=2, **BASE)
     ep = _episodes(n=300, **kw)
     seg = cue_consistency(num_examples=300, seed=0, random_non_queries=False, **kw)
@@ -261,7 +261,7 @@ def test_labels_are_the_contract_target_and_nothing_else():
 
 
 def test_slices_report_the_condition():
-    from zoology.data.cue_consistency import cue_consistency
+    from chromatic_recall.data.cue_consistency import cue_consistency
     seg = cue_consistency(num_examples=8, seed=0, cue_digits=1, matches_per_cue=2, **BASE)
     assert seg.slices["cue_digits"] == 1 and seg.slices["matches_per_cue"] == 2
     assert seg.slices["num_kv_pairs"] == 4 and seg.slices["input_seq_len"] == 48
@@ -280,7 +280,7 @@ def test_slices_report_the_condition():
     ({"match_resolution": "oldest"}, "match_resolution"),
 ])
 def test_unrealizable_settings_refuse_by_name(kw, msg):
-    from zoology.data.cue_consistency import build_episodes
+    from chromatic_recall.data.cue_consistency import build_episodes
     with pytest.raises(ValueError, match=msg):
         build_episodes(num_examples=8, seed=0, **{**BASE, **kw})
 

@@ -128,7 +128,7 @@ def parse_stdout(stdout):
     final_overall = epoch_curve[-1]["overall"] if epoch_curve else 0.0
     best_ep_idx = best_ep["epoch"] if best_ep else None
 
-    # MODEL_STATS_JSON line emitted by zoology/logger.py.
+    # MODEL_STATS_JSON line emitted by chromatic_recall.launch.
     n_params = None
     model_state_total = None
     m = re.search(r'MODEL_STATS_JSON ', stdout)
@@ -140,7 +140,7 @@ def parse_stdout(stdout):
         except Exception as e:
             print(f"WARN: MODEL_STATS_JSON parse failed: {e}", flush=True)
 
-    # FLOPS_JSON line (also from logger.py) — forward FLOPs at training batch
+    # FLOPS_JSON line (also from chromatic_recall.launch) — forward FLOPs at training batch
     # × seq_len, with disk-backed caching per unique cell config.
     # The flops_by_op dict is a nested dict so the older non-greedy regex won't
     # match cleanly; we use a more permissive single-line greedy match.
@@ -259,7 +259,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
     tmp_path = Path(f"/tmp/_rla_single_{idx}.py")
     # FSLA_GPU_MEM_FRACTION caps the TRAINING process's share of the card. It is applied in the
     # CHILD because that is where the CUDA allocator lives — the parent here is a pure orchestrator
-    # and (on the local box) deliberately holds no CUDA context. `zoology.launch` imports this file
+    # and (on the local box) deliberately holds no CUDA context. `chromatic_recall.launch` imports this file
     # to read `configs`, so the cap is in force before the first allocation. Set by the local grid
     # dispatcher (`fsla_bench.mqar.local_grid`), which shares the card with an interactive session; unset on the
     # fleet, where a box owns its GPU outright.
@@ -326,7 +326,7 @@ def run_one(idx, run_id, cfg, env_overrides, results_file=None):
         # metrics, etc. as they happen) AND buffer for post-hoc parsing of
         # FLOPS_JSON, MODEL_STATS_JSON, valid/accuracy lines.
         proc = subprocess.Popen(
-            [PYTHON, "-m", "zoology.launch", str(tmp_path)],
+            [PYTHON, "-m", "chromatic_recall.launch", str(tmp_path)],
             cwd=str(ZOO), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,  # line-buffered

@@ -29,10 +29,15 @@ case "$TARGET" in
 esac
 BASE_TAG="${FLEET_BASE_TAG:-$BASE_DEFAULT}"
 
+# The pins the graph's environments name (MODULE.bazel): the image is built from a checkout at exactly these commits.
+ZOO_PIN=8befca418e90ae0bf6fe45fb892d8eae885169f2   # Blakexx/fsla-zoology, branch fsla-pins
+CR_PIN=ffdd03b3582b6c82af27fa00f19950c1378e652e    # Blakexx/chromatic-recall, main
+
 # The package sources are this machine's checkouts, named in the environment (no defaults: a checkout lives wherever
 # the machine keeps it).
 FLA="${FSLA_FLA_SRC:?set FSLA_FLA_SRC to the fla fork checkout (branch fsla)}"
-ZOO="${FSLA_ZOO_SRC:?set FSLA_ZOO_SRC to the zoology checkout}"
+ZOO="${FSLA_ZOO_SRC:?set FSLA_ZOO_SRC to the zoology checkout (Blakexx/fsla-zoology at $ZOO_PIN)}"
+CR="${FSLA_RECALL_SRC:?set FSLA_RECALL_SRC to the chromatic-recall checkout (Blakexx/chromatic-recall at $CR_PIN)}"
 RB="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -44,11 +49,12 @@ echo "staging fla (the fork's fsla branch)…"
 "${RS[@]}" "$FLA/" "$STAGE/fla/"
 
 if [ "$WITH_ZOO" = 1 ]; then
-  echo "staging zoology (MQAR baselines package + packaging)…"
-  mkdir -p "$STAGE/zoology"
-  "${RS[@]}" "$ZOO/zoology" "$STAGE/zoology/"
-  cp "$ZOO/pyproject.toml" "$STAGE/zoology/" 2>/dev/null || true
-  cp "$ZOO/setup.py" "$STAGE/zoology/" 2>/dev/null || true
+  echo "staging zoology (the fork's fsla-pins) and chromatic-recall (the recall tasks, the launcher)…"
+  [ "$(git -C "$ZOO" rev-parse HEAD)" = "$ZOO_PIN" ] || { echo "FSLA_ZOO_SRC is not at $ZOO_PIN" >&2; exit 2; }
+  [ "$(git -C "$CR" rev-parse HEAD)" = "$CR_PIN" ] || { echo "FSLA_RECALL_SRC is not at $CR_PIN" >&2; exit 2; }
+  mkdir -p "$STAGE/zoology" "$STAGE/chromatic-recall"
+  "${RS[@]}" --exclude='notebooks' --exclude='assets' "$ZOO/" "$STAGE/zoology/"
+  "${RS[@]}" "$CR/" "$STAGE/chromatic-recall/"
 fi
 
 # fsla-bench: the suite package, less the legacy experiments.

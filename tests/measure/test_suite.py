@@ -1,7 +1,7 @@
 """The suite's root (`declare.py`) and groups: every group holds its claim against the central cells and a group breaking
 it is refused; the root loads each checkout's own declarations, gives the target alone its instruments, and declares one
 session per group and arm set over every checkout's registration on the group's cells beside the attention reference,
-one memory pass, a null gate on the target's facts pass, a store for each result and a server stop that runs after
+one memory pass, a null gate on the target's layer op, a store for each result and a server stop that runs after
 everything; a checkout without declarations is not compared. No GPU: nothing is built.
 `python -m unittest tests.measure.test_suite`"""
 from __future__ import annotations
@@ -21,7 +21,7 @@ GROUPS = load(ROOT / "fsla_bench" / "measure" / "groups.py")
 SUITE = load(ROOT / "declare.py")
 
 #: a checkout's declarations as fsla's `declare.py` shapes them: a build, its instruments, and on the carry cells a
-#: `prefill` registration, the `facts_pass` one the root's null gate takes, and a clock reader
+#: `prefill` registration, on the layer cells the `layer_op` one the root's null gate takes, and a clock reader
 FAKE = textwrap.dedent('''
     from fsla_devtools.build.declare import Env
     from fsla_devtools.cells.declare import cells as cell_nodes
@@ -49,9 +49,10 @@ FAKE = textwrap.dedent('''
                "diffs": {}}
         if timing is None:
             return out
-        for arm in ("prefill", "facts_pass"):
+        layer = [c for c in cells if c.startswith("layer-")]
+        for arm, on in (("prefill", carry), ("layer_op", layer)):
             out["entries"][arm] = register_timing(g, arm, server=timing, env=env, executor="fake:timed",
-                                                  cells=cell_nodes(g, carry), deps={"binary": binary})
+                                                  cells=cell_nodes(g, on), deps={"binary": binary})
         out["clock"] = register_clock_reader(g, "clock", server=timing, env=env, executor="fake:clock")
         return out
 ''')
@@ -109,12 +110,11 @@ class Root(unittest.TestCase):
         self.assertEqual({k: stored[k] for k in ("tip/store/phases", "store/memory")},
                          {"tip/store/phases": "tip/phases", "store/memory": "memory"})
         gate = targets["null"]
-        #: the null gate takes the FIRST carry cell of every group the target's facts_pass registers on: one
+        #: the null gate takes the FIRST layer cell of every group the target's layer_op registers on: one
         #: cell a group, so a worker's bias is read once per group's shape and never per cell
-        with_carry = [g for g in GROUPS["GROUPS"].values() if any(not c.startswith(("qkv-", "layer-")) for c in g.cells)]
-        self.assertEqual(gate.deps["r0"].label, "tip/facts_pass")
-        self.assertEqual(gate.params["cells"], [next(c for c in g.cells if not c.startswith(("qkv-", "layer-")))
-                                                for g in with_carry])
+        with_layer = [g for g in GROUPS["GROUPS"].values() if any(c.startswith("layer-") for c in g.cells)]
+        self.assertEqual(gate.deps["r0"].label, "tip/layer_op")
+        self.assertEqual(gate.params["cells"], [next(c for c in g.cells if c.startswith("layer-")) for g in with_layer])
         stop = targets["timing-server-stop"]
         self.assertTrue(stop.always_run)
         self.assertIn(targets["store/memory"], stop.deps.values())

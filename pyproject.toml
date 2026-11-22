@@ -16,7 +16,8 @@ requires-python = ">=3.10"
 dependencies = [
     "fsla",          # the model and kernels
     "flash-linear-attention",  # fla, from the fork's fsla branch: FSLA's layer and HF model, and the baseline layers
-    "zoology",       # MQAR's model, data and baselines (FSLAMixer wraps fla's FSLA)
+    "zoology",       # MQAR's model and baselines, the fork's fsla-pins (its FSLAMixer wraps fla's FSLA)
+    "chromatic-recall",  # the recall tasks (presence, graph, cue consistency) and the launcher MQAR runs through
     "fleet",         # generic GPU orchestration
     "fsla-results",  # the result store
     "torch",

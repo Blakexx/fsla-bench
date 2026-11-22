@@ -1,4 +1,4 @@
-"""GATES for `zoology.data.graph_recall` — the graph-structured recall generator (2026-08-02).
+"""GATES for `chromatic_recall.data.graph_recall` — the graph-structured recall generator (2026-08-02).
 
 The generator's whole value is that the sequence distribution has a KNOWN co-occurrence graph, so
 these gates check the three things that claim rests on, and nothing decorative:
@@ -33,17 +33,17 @@ BASE = {"vocab_size": 1024, "num_examples": 2000, "input_seq_len": 128}
 
 
 def _episodes(**kw):
-    from zoology.data.graph_recall import build_episodes
+    from chromatic_recall.data.graph_recall import build_episodes
     return build_episodes(**{**BASE, "seed": 0, **kw})
 
 
 def _stamp(**kw):
-    from zoology.data.graph_recall import stamp
+    from chromatic_recall.data.graph_recall import stamp
     return stamp(_episodes(**kw))
 
 
 def _segment(**kw):
-    from zoology.data.graph_recall import graph_recall
+    from chromatic_recall.data.graph_recall import graph_recall
     return graph_recall(**{**BASE, "seed": 0, **kw})
 
 
@@ -85,7 +85,7 @@ def test_overlap_writes_more_keys_than_the_demand():
     the demand are different numbers. Without this the cell would just be `complete(B)`."""
     ep = _episodes(construction="overlap", demand=8, births=24, keys_per_class=1)
     assert ep.write_key.shape[1] == 24
-    from zoology.data.graph_recall import stamp
+    from chromatic_recall.data.graph_recall import stamp
     assert stamp(ep)["graph_demand_upper"] == 8
 
 
@@ -102,7 +102,7 @@ def test_reuse_reports_bounds_and_claims_no_nominal_demand():
 def test_demand_bounds_are_correct_on_hand_checkable_graphs():
     """The bound machinery itself, against graphs whose chi is known by inspection rather than by
     the generator that produced them ([[matching-the-naive-antipattern]])."""
-    from zoology.data.graph_recall import demand_bounds
+    from chromatic_recall.data.graph_recall import demand_bounds
     # one clique of 5 -> chi = 5; two disjoint triangles -> chi = 3; a 4-cycle (as two groups) -> 2
     assert demand_bounds(np.array([[[10, 11, 12, 13, 14]]]))["upper"] == 5
     assert demand_bounds(np.array([[[1, 2, 3]], [[4, 5, 6]]]))["upper"] == 3
@@ -134,7 +134,7 @@ def test_every_stamp_field_reaches_the_segment_slices():
     """`DataSegment` carries `(inputs, labels, slices)` and the on-disk cache stores exactly those,
     so `slices` is the only cache-safe home for the stamp — and it is what `slice_keys` can report
     per-slice accuracy against."""
-    from zoology.data.graph_recall import STAMP_FIELDS
+    from chromatic_recall.data.graph_recall import STAMP_FIELDS
     seg = _segment(construction="clustered", demand=8, keys_per_class=4)
     assert set(STAMP_FIELDS) <= set(seg.slices)
     assert seg.slices["graph_demand_upper"] == 8 and seg.slices["graph_nodes"] == 32
@@ -168,7 +168,7 @@ def test_every_written_key_is_queried_exactly_once_and_after_its_write(kw):
     {"construction": "overlap", "demand": 8, "births": 16, "keys_per_class": 2, "long_lived": 2},
 ])
 def test_labels_sit_on_query_keys_and_nowhere_else(kw):
-    from zoology.data.graph_recall import build_episodes, graph_recall
+    from chromatic_recall.data.graph_recall import build_episodes, graph_recall
     ep = build_episodes(**{**BASE, "num_examples": 64, "seed": 3, **kw})
     seg = graph_recall(**{**BASE, "num_examples": 64, "seed": 3, **kw})
     labelled = (seg.labels != -100).numpy()
@@ -247,7 +247,7 @@ def test_no_global_rng_reads_in_source():
     import ast
     import inspect
 
-    from zoology.data import graph_recall as mod
+    from chromatic_recall.data import graph_recall as mod
 
     banned = {("np", "random", "seed"), ("np", "random", "choice"), ("np", "random", "randint"),
               ("torch", "randint"), ("torch", "rand")}
@@ -452,8 +452,8 @@ def test_solver_agrees_with_the_closed_form_and_says_which_argument_it_used(kw, 
     heuristic that happens to agree. `method` is asserted because "greedy got the right number" and
     "the graph is a complete multipartite graph, so k colors is optimal" are different claims, and
     only the second one survives a change of parameters."""
-    from zoology.data.graph_chi import solve_chi
-    from zoology.data.graph_recall import realized_graph
+    from chromatic_recall.data.graph_chi import solve_chi
+    from chromatic_recall.data.graph_recall import realized_graph
     _nodes, adj = realized_graph(_episodes(num_examples=500, **kw).groups)
     res = solve_chi(adj)
     assert (res["lower"], res["upper"], res["exact"], res["method"]) == (chi, chi, True, method)
@@ -462,7 +462,7 @@ def test_solver_agrees_with_the_closed_form_and_says_which_argument_it_used(kw, 
 def test_solver_is_exact_on_graphs_whose_chi_is_known_by_hand():
     """Independent of the generator entirely: the ladder's general rungs, on classical graphs.
     C5 needs 3 (odd hole), the Petersen graph needs 3, K_{3,3} needs 2."""
-    from zoology.data.graph_chi import solve_chi
+    from chromatic_recall.data.graph_chi import solve_chi
 
     def g(n, edges):
         a = np.zeros((n, n), dtype=bool)
@@ -482,8 +482,8 @@ def test_solver_is_exact_on_graphs_whose_chi_is_known_by_hand():
 def test_both_certificates_are_verified_not_trusted():
     """A bound is only as good as its witness, so the solver re-checks the clique and the coloring it
     is about to return. Gated by handing the checkers a wrong witness."""
-    from zoology.data.graph_chi import _check_clique, _check_coloring, solve_chi
-    from zoology.data.graph_recall import realized_graph
+    from chromatic_recall.data.graph_chi import _check_clique, _check_coloring, solve_chi
+    from chromatic_recall.data.graph_recall import realized_graph
     _nodes, adj = realized_graph(_episodes(num_examples=200, construction="clustered", demand=4,
                                            keys_per_class=3).groups)
     res = solve_chi(adj)
@@ -501,8 +501,8 @@ def test_the_coverage_gate_catches_a_realized_demand_below_the_nominal_one():
     — here, one partial live window instead of the full schedule — realizes a smaller graph than
     `overlap(w=8)` claims, and `verify_construction` must refuse it by name rather than let a cell
     ship with an x-coordinate of 8 that the model was never shown."""
-    from zoology.data.graph_chi import DemandMismatch, verify_construction
-    from zoology.data.graph_recall import demand_bounds
+    from chromatic_recall.data.graph_chi import DemandMismatch, verify_construction
+    from chromatic_recall.data.graph_recall import demand_bounds
     ep = _episodes(num_examples=200, construction="overlap", demand=8, births=16)
     full = demand_bounds(ep.groups)
     verify_construction("overlap", {"demand": 8}, full)              # the real sample passes
@@ -525,15 +525,15 @@ def test_the_closed_form_demand_is_invariant_to_the_sample_size():
 
 
 def test_reuse_is_solved_exactly_where_the_budget_allows_and_bounded_otherwise():
-    from zoology.data.graph_chi import solve_chi
-    from zoology.data.graph_recall import realized_graph
+    from chromatic_recall.data.graph_chi import solve_chi
+    from chromatic_recall.data.graph_recall import realized_graph
     _nodes, adj = realized_graph(_episodes(num_examples=2000, construction="reuse", demand=8,
                                            pool_size=96, zipf_a=1.5).groups)
     res = solve_chi(adj)
     assert res["method"] in ("exact_branch_and_bound", "certified_bounds")
     assert res["lower"] <= res["upper"]
     # whatever the rung, the interval is certified on both sides
-    from zoology.data.graph_chi import _check_clique, _check_coloring
+    from chromatic_recall.data.graph_chi import _check_clique, _check_coloring
     assert _check_clique(adj, res["clique"]) == res["lower"]
     assert _check_coloring(adj, np.array(res["coloring"])) == res["upper"]
 
@@ -673,7 +673,7 @@ def test_the_N_ladders_bracket_the_demand_they_are_pointed_at():
 
 
 def test_the_grid_stamps_the_realized_demand_as_a_slice_key():
-    from zoology.data.graph_recall import STAMP_FIELDS
+    from chromatic_recall.data.graph_recall import STAMP_FIELDS
     keys = _spec()["train"]["slice_keys"]
     assert "graph_demand_upper" in keys and "graph_construction" in keys
     assert set(keys) <= set(STAMP_FIELDS) | {"num_kv_pairs", "input_seq_len"}
@@ -683,7 +683,7 @@ def test_gen_version_is_in_the_cache_key():
     """`DataSegment.from_config` hashes `config.model_dump()`; a plain (non-private) `gen_version`
     field therefore invalidates stale on-disk caches by key mismatch when the draw sequence changes,
     without deleting anyone's files. Same mechanism as `MQARConfig.gen_version`."""
-    from zoology.data.graph_recall import GRAPH_RECALL_GEN_VERSION, GraphRecallConfig
+    from chromatic_recall.data.graph_recall import GRAPH_RECALL_GEN_VERSION, GraphRecallConfig
     cfg = GraphRecallConfig(vocab_size=1024, num_examples=32, input_seq_len=128, demand=4)
     assert cfg.model_dump()["gen_version"] == GRAPH_RECALL_GEN_VERSION
     seg = cfg.build(seed=5)
