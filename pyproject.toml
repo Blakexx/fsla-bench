@@ -27,3 +27,7 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["rola_bench*"]
 namespaces = false
+
+[tool.pytest.ini_options]
+#: `-p no:cacheprovider`: it writes no `.pytest_cache` into the tree it runs in
+addopts = "-p no:cacheprovider"

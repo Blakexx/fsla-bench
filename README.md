@@ -69,7 +69,7 @@ GPUs. It reads this machine's environment:
 | Variable | Meaning |
 |---|---|
 | `ROLA_BENCH_CKPTS` | where pulled MQAR checkpoints live (required by jobs that pull checkpoints; no default) |
-| `ROLA_BENCH_RUNTIME` | fleet operational state (bad hosts, host state); default `runtime/` here, ignored by git |
+| `ROLA_BENCH_RUNTIME` | fleet operational state (bad hosts, host state); default `fleet-runtime/` under the dev config's `host.build_cache`, never in the checkout |
 | `ROLA_BENCH_IMAGE`, `OFFER_QUERY`, `FLEET_PROVIDER` | override the spec's image, offer query and provider |
 
 ## Local runs

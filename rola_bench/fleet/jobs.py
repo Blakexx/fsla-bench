@@ -28,8 +28,19 @@ import os
 from fleet import Job, provider, semantics_of
 from rola_results import Store, key
 
-RUNTIME_ROOT = os.environ.get("ROLA_BENCH_RUNTIME",
-                              os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "runtime"))
+
+def runtime_root():
+    """Fleet operational state (a job's bad-hosts blocklist and host state): `ROLA_BENCH_RUNTIME`, else `fleet-runtime/`
+    under the dev config's `host.build_cache`. It is never in the checkout; it must survive between launches (a
+    blocklist is learned once) and is wipeable (a lost one is learned again), which is what that directory is for."""
+    named = os.environ.get("ROLA_BENCH_RUNTIME")
+    if named:
+        return named
+    from rola_devtools.config import machine
+
+    return os.path.join(machine("host.build_cache"), "fleet-runtime")
+
+
 DEFAULT_IMAGE = "blakeresearch/rola-bench:v40"   # keep in sync with the specs' fleet.image pins; bumps are manual
 # Default offer query PER DIALECT. The vast filter caps bandwidth $/GB (we pull a big image +
 # checkpoints) and screens on reliability — both are marketplace concepts with no analogue on a
@@ -108,7 +119,8 @@ def checkpoints(variable="ROLA_BENCH_CKPTS"):
 def make_job(bench, config, work_list, run_cmd, fleet=None, **job_kwargs):
     fleet = dict(fleet or {})
     dialect = semantics_of(provider()).offer_query_dialect
-    runtime = os.path.join(RUNTIME_ROOT, f"{bench}-{config}")
+    runtime = os.path.join(runtime_root(), f"{bench}-{config}")
+    os.makedirs(runtime, exist_ok=True)
     name = fleet.pop("name", f"{bench}-{config}")
     image = os.environ.get("ROLA_BENCH_IMAGE", fleet.pop("image", DEFAULT_IMAGE))
     store_result, done_ids = fleet_store(bench, config, image, name)
