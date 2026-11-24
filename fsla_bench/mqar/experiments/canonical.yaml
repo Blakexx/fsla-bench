@@ -13,7 +13,7 @@
 # WHAT THE RE-PIN CHANGED, and why every pre-V3 row here is superseded rather than extended:
 #   * the routed arms named `fsla-rla-kappa-asym` / `fsla-gla-scalar-sym` / `fsla-gla-kappa-asym`,
 #     all three defined by knobs V3 deleted (state_norm='kappa', kernel='gla_scalar'). Retired by
-#     name; replaced by the three canonical wirings plus the D1 dense control.
+#     name; replaced by the two canonical wirings plus the D1 dense control.
 #   * `d_qk: 12` on every arm line. There is no d_qk in V3; a state is [N, d_v].
 #   * the matched-state reference `REF(nc) = 624*nc` was written in d_qk and over-sized every
 #     baseline by 12x at the same rung. `st` in each run_id is now the REALIZED content-state
@@ -37,10 +37,9 @@ train:
 lrs: [0.0003, 0.001, 0.003, 0.01, 0.03]  # canonical 5-LR grid (3e-4 .. 3e-2)
 ncs: [2, 4, 8, 16, 32, 64, 128, 256]
 tiers:
-  # T1 — the FSLA slate: three canonical wirings + the D1 dense (map-family) control.
+  # T1 — the FSLA slate: two canonical wirings + the D1 dense (map-family) control.
   "fsla":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3}
     - {build: routed, instance: fsla-d1-dense,                  tag: d1}
   # T2 — the contender ladder, all three shapes (this is the shape-robustness plot).

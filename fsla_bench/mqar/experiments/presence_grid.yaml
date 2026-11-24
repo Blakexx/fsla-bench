@@ -70,7 +70,7 @@
 # criterion to 0.75 — halfway from chance to ceiling. An untrained model sits BELOW 0.5 (it must
 # first learn to answer inside the reserved label pair at all), so "off chance" here means ABOVE.
 #
-# ARMS — the three canonical wirings plus the D1 DENSE CONTROL, and an ATTENTION CAPACITY COLUMN.
+# ARMS — the two canonical wirings plus the D1 DENSE CONTROL, and an ATTENTION CAPACITY COLUMN.
 # The fixed-state class baselines (rla / gla / gdn) stay out for the same reason as in
 # `graph_grid.yaml`: they are established on the law grid at this exact backbone and no claim in this
 # file is about them.
@@ -101,7 +101,7 @@
 # STANDS — attention certifies the family solvable at 1.000 at the swept protocol below — and
 # PREDICTED-3 is measurable at that protocol. The pinned single LR is GONE; see LR IS SWEPT PER ARM
 # below. The matched-budget fairness anchor (arm2 = 0.858 at 3e-3, its ONLY measured full-budget
-# rate) carries the same one-LR caveat the attention floor did, which is exactly why the routed
+# rate, measured before the wiring left the slate) carries the same one-LR caveat the attention floor did, which is exactly why the routed
 # arms get the same sweep rather than a pinned rate.
 #
 # ============================ ADVANCE PREDICTIONS ============================
@@ -129,8 +129,8 @@
 #   demand), or one linear in chi itself (attention paying the way a fixed state does, which would
 #   collapse the two-axis claim into one).
 #
-# PREDICTED-4 (THE WIRINGS' ASYMMETRY — the prediction this task exists for). `pi` forces
-#   `addr_read(x) = addr_write(pi(x))`, so address agreement is no longer free, and the four arms
+# PREDICTED-4 (THE WIRINGS' EXPOSURE TO THE CUE MAP). `pi` forces
+#   `addr_read(x) = addr_write(pi(x))`, so address agreement is no longer free, and the three arms
 #   have DIFFERENT exposures to that. Per-arm expectation, stated before the run:
 #     * `arm1` (coarse dense-READ / sparse-write): its guarantee is the READ TOUCH — a dense read
 #       touches every state, so it intersects the write support whatever the map is. EXPECTED
@@ -139,18 +139,11 @@
 #     * `arm3` (level split, one sparse duty per level, opposite across levels): its guarantee is
 #       PER-LEVEL COMPLEMENTARITY — every level has a dense side, so read and write intersect level
 #       by level regardless of `pi`. EXPECTED UNCHANGED, like arm1.
-#     * `arm2` (UNION — one shared entmax support split by sigma): its guarantee is the SHARED SOLVE,
-#       i.e. read and write are drawn from ONE support, which is exactly what makes agreement free
-#       when the read cue IS the written content. Under `pi` that coincidence is gone: at position t
-#       the arm must emit the support UNION {f(x_t), f(pi(x_t))}, spending its support on two
-#       addresses instead of one. EXPECTED TO PAY: `N*/chi` strictly HIGHER for arm2 than for arm1
-#       and arm3 on this task, while the identity-cue tiers of `graph_grid` show no such gap.
 #     * `d1` (dense control, every state touched by every token): agreement is trivial and there is
 #       no structure to break. EXPECTED at the same `N*/chi` as arm1/arm3 — it is what says the
 #       wirings' thresholds are a property of the demand and not of their sparsity.
-#   FALSIFIED BY: arm2 sitting at arm1's ratio (the union's identity-cue advantage was never doing
-#   the work the theory says it does), or ALL arms shifting together (the shift is the task getting
-#   harder, not the wiring's guarantee being tested).
+#   FALSIFIED BY: ALL arms shifting together (the shift is the task getting harder, not the wiring's
+#   guarantee being tested).
 #
 # PREDICTED-5 (the floor is exactly 0.5, and that is a check on the generator). The planted balance
 #   is flat in position (`presence_position_bias` stamped per segment), so a model with no working
@@ -160,7 +153,8 @@
 #   measured. This is the cheapest falsifier in the file and it is readable off the first tier.
 #   PARTIALLY OBSERVED ALREADY, at a toy budget (30 epochs x 8k examples, N = 32, seed 0, k16):
 #   arm1 0.506, arm3 0.506, d1 0.506, mha-dqk8 0.505 — i.e. AT the chance line and not above it,
-#   which is the prediction's shape — while arm2 reached 0.963 on the same budget. That single
+#   which is the prediction's shape — while arm2 reached 0.963 on the same budget (measured
+#   before that wiring left the slate). That single
 #   toy-scale draw is NOT evidence about the arms' ordering (one seed, a third of the grid's step
 #   budget, and the grid's own N ladder untouched); it is quoted only because it is the falsifier's
 #   direction and because it is the reason the attention floor above was probed at full size.
@@ -176,15 +170,14 @@
 #   (unit-gated: `test_fsla_v3_inclusion_gated_decay.py::test_matching_rule_*`) — the sparse-write
 #   arm1 is therefore the control cell, and the clocks separate only where writes spread. Three
 #   predictions, each with its falsifier:
-#     * DO-NO-HARM: `leaf_mass` sits ~at its decay-off twin on the spread arms (arm2/arm3) — the
+#     * DO-NO-HARM: `leaf_mass` sits ~at its decay-off twin on the spread arm (arm3) — the
 #       mass-proportional clock's whole design is that spread traffic ticks it negligibly.
-#       FALSIFIED BY: arm2-mass or arm3-mass materially below the same arm at decay off, which
+#       FALSIFIED BY: arm3-mass materially below the same arm at decay off, which
 #       would say write-mass decay itself erodes retention under spread writes and the "compatible
 #       clock" half of the mechanism is wrong.
 #     * INCLUSION DEGRADES WITH SPREAD WIDTH: `inclusion_gated` is WORST on arm3 (the level-split
 #       wiring writes DENSE on some level, so every write full-strength-ticks that entire level's
-#       leaves — the widest support in the slate), MILDER on arm2 (the union support spans the two
-#       addresses {f(x_t), f(pi(x_t))} — spread, but narrow), and ~COINCIDENT with leaf_mass on
+#       leaves — the widest support in the slate), and ~COINCIDENT with leaf_mass on
 #       arm1 (near-point sparse writes; the matching rule). FALSIFIED BY: inclusion ~= leaf_mass on
 #       the dense-write arm3 — gating would not matter and the "catastrophic clock" half of the
 #       mechanism is wrong — or the ordering not tracking write-support width across the arms.
@@ -217,7 +210,7 @@
 #       floor. PREDICTED: the dense control sits at/near chance INDEPENDENT of N once L is large,
 #       and does not inherit attention's log2(chi) ladder. FALSIFIED BY: the dense control
 #       tracking attention's curve (it found a concentration mechanism it should not have).
-#     * SPARSE READS (arm1/arm3 by their dense-side guarantee, arm2 the hard wiring): the entmax
+#     * SPARSE READS (arm1/arm3 by their dense-side guarantee): the entmax
 #       image includes the simplex BOUNDARY (softmax's image is the interior only — strict
 #       superset, provably); the zero default is structural, no sink, no race, no margin.
 #   THE VALUE-SIDE CLAIM (the d_v codebook wall): dense attention's honest solve is
@@ -231,15 +224,15 @@
 #   addition, costed when scheduled; recorded now so the prediction predates the measurement.
 # =============================================================================
 #
-# CELL COUNT — 192 training runs in four tiers AT STAGE 1: the 3-rate LR bracket multiplies every
+# CELL COUNT — 156 training runs in four tiers AT STAGE 1: the 3-rate LR bracket multiplies every
 # tier x3, and the multiplier is carried honestly (stage 2 re-runs WINNERS only, so the sweep is
 # paid once, here). Arithmetic, per tier, on the squares ladders (amendment 2026-08-15):
-#   presence16        4 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 48
-#   presence64        4 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 48
+#   presence16        3 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 36
+#   presence64        3 arms x 2 ncs x 1 condition x 3 lrs x 2 seeds          = 36
 #   attn_capacity     (4 d_qk at k16 + 3 at k32 + 3 at k64) x 3 lrs x 2 seeds = 60
-#   presence_decay16  3 arms x 1 clock x 2 ncs x 1 condition x 3 lrs x 2 seeds = 36  (the learned leaf-mass clock;
+#   presence_decay16  2 arms x 1 clock x 2 ncs x 1 condition x 3 lrs x 2 seeds = 24  (the learned leaf-mass clock;
 #                     the inclusion-gated clock is deleted with fsla's)
-# (decay-OFF rows for the contrast are presence16's own arm1/arm2/arm3 cells — same condition, same
+# (decay-OFF rows for the contrast are presence16's own arm1/arm3 cells — same condition, same
 # ladder, same bracket — so the off column is READ, not re-run.)
 # At the original single pinned rate this was 24 + 24 + 20 = 68, inside the brief's ~40-60 plus the
 # stated 8-cell overshoot: the THIRD attention demand (`presence-k32`, 6 base cells) and the narrow
@@ -271,7 +264,7 @@
 # adopted by habit: the adjudication above located a task-specific LR cliff between 1e-3 and 3e-3
 # for the attention column, so a pinned 0.003 would read the ENTIRE attn_capacity tier at chance
 # for a reason that is pure artefact — and the routed arms' only full-budget number (arm2 0.858 at
-# 3e-3) carries the same one-LR caveat, so they get the same bracket (fairness, not symmetry for
+# 3e-3, measured before the wiring left the slate) carries the same one-LR caveat, so they get the same bracket (fairness, not symmetry for
 # its own sake). STAGING, mirroring graph_grid/law_grid's staged protocol exactly: stage 1 is this
 # file — every arm runs the full `lrs` bracket at seeds [0, 1] and analysis reports the BEST cell
 # per (arm, N, condition) over the bracket; stage 2 re-runs each winner AT ITS WINNING LR at
@@ -319,8 +312,7 @@ single_seed_rationale: >
   provides: stage 1 is this file at seeds [0, 1] over the full LR bracket, stage 2 re-runs the
   winning cell per (arm, N) AT ITS WINNING LR at extra seeds via `SEED_CONFIRM_BASE=presence_grid`
   (mqar/experiments/seed_confirm.py), which is where the error bars on a published row come from. No
-  row from this file is publishable at 2 seeds on its own, and PREDICTED-4 (the arm2 gap) is exactly
-  the row stage 2 must widen before it is printed.
+  row from this file is publishable at 2 seeds on its own.
 lrs: [0.0003, 0.001, 0.003]              # the per-arm bracket; see LR IS SWEPT PER ARM above
 ncs: [16, 64]                            # SQUARES ONLY (amendment 2026-08-15); the k64 tier overrides to bracket its chi
 seq_lens: [64]                           # default L; tiers override where the episode needs more
@@ -347,16 +339,13 @@ tiers:
   "presence16":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
        conditions: [presence-k16]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2, conditions: [presence-k16]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3, conditions: [presence-k16]}
     - {build: routed, instance: fsla-d1-dense, tag: d1, conditions: [presence-k16]}
-  # T2 — THE RESIZE, at chi = 64. Same four arms, ladder shifted 4x so it brackets 64 from both
+  # T2 — THE RESIZE, at chi = 64. Same three arms, ladder shifted 4x so it brackets 64 from both
   # sides. L = 256: 32 key events at min_separation 4 need 125 tokens at minimum, and the rest is gap
   # room so the events are not forced into a near-uniform comb.
   "presence64":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1, seq_lens: [256],
-       conditions: [presence-k64], ncs: [64, 256]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2, seq_lens: [256],
        conditions: [presence-k64], ncs: [64, 256]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3, seq_lens: [256],
        conditions: [presence-k64], ncs: [64, 256]}
@@ -380,7 +369,7 @@ tiers:
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k32], seq_lens: [128]}
     - {build: attn, head_dims: [8, 16, 32], conditions: [presence-k64], seq_lens: [256]}
   # T4 — THE DECAY CONTRAST at chi = 16 (PREDICTED-6). Paired one-for-one on the spread wirings plus
-  # the arm1 point-write control; the decay-OFF column is T1's own arm1/arm2/arm3 rows (identical
+  # the arm1 point-write control; the decay-OFF column is T1's own arm1/arm3 rows (identical
   # condition, ladder and bracket), read rather than re-run. ENGINE PROVENANCE, stated per cell
   # class: every cell in this file TRAINS on the fp64 oracle (`naive_fsla_v3` — the layer's
   # training-mode dispatch is structurally oracle-only), and the `*-incl` cells additionally EVAL on
@@ -393,8 +382,6 @@ tiers:
   # write level.
   "presence_decay16":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1-mass, decay: {type: LearnedDecay},
-       conditions: [presence-k16]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2-mass, decay: {type: LearnedDecay},
        conditions: [presence-k16]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3-mass, decay: {type: LearnedDecay},
        conditions: [presence-k16]}

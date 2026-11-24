@@ -1,7 +1,7 @@
 """THE FSLA ARMS: every FSLA cell fsla-bench measures, as fsla's own objects, built only through fla.
 
 A WIRING is one of fsla's level spellings per routing level, outermost first (`fsla.dense_routing`,
-`fsla.split_routing`, `fsla.union_routing`, `fsla.tied_routing`), each taking the level's width. A CELL is a wiring at
+`fsla.split_routing`, `fsla.tied_routing`), each taking the level's width. A CELL is a wiring at
 a state count N: every level's width (the uniform factorization b**D = N unless widths are given), its levels as fsla
 builds them, the decay source as fsla's JSON (`None`, or `{"type": "LearnedDecay", ...}`; `fla.layers.fsla.decode`
 builds it with the levels' widths), and the route projection's `bias`. Every bench builds a cell one way --
@@ -20,23 +20,21 @@ from functools import partial
 
 import fsla
 
-#: The wirings. The first four are the canonical MQAR slate; the rest are the variants a grid axis asks for (the alpha-2
-#: write split, the tied spelling, the depth hybrids).
+#: The wirings. The first three are the canonical MQAR slate; the rest are the variants a grid axis asks for (the alpha-2
+#: write split, the tied spelling, the depth hybrid).
 WIRINGS: dict[str, tuple[Callable[[int], object], ...]] = {
     "fsla-arm1-densread-sparsewrite": (partial(fsla.split_routing, alpha=1.5, sparse_duty="write"), fsla.dense_routing),
-    "fsla-arm2-union": (partial(fsla.union_routing, alpha=1.5), fsla.dense_routing),
     "fsla-arm3-levelsplit": (partial(fsla.split_routing, alpha=1.5, sparse_duty="write"),
                              partial(fsla.split_routing, alpha=1.5, sparse_duty="read")),
     "fsla-d1-dense": (fsla.dense_routing,),
     "fsla-arm3-levelsplit-a2w": (partial(fsla.split_routing, alpha=2.0, sparse_duty="write"),
                                  partial(fsla.split_routing, alpha=1.5, sparse_duty="read")),
     "fsla-d1-dense-tied": (partial(fsla.tied_routing, activation=fsla.softmax()),),
-    "fsla-hybrid": (partial(fsla.union_routing, alpha=1.5), partial(fsla.split_routing, alpha=1.5, sparse_duty="write")),
     "fsla-hybrid-tiedtop": (partial(fsla.tied_routing, activation=fsla.entmax(1.5)),
                             partial(fsla.split_routing, alpha=1.5, sparse_duty="write")),
 }
 
-CANONICAL_WIRINGS = ("fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit", "fsla-d1-dense")
+CANONICAL_WIRINGS = ("fsla-arm1-densread-sparsewrite", "fsla-arm3-levelsplit", "fsla-d1-dense")
 
 
 class NoSpelling(ValueError):

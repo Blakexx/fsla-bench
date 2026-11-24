@@ -24,7 +24,7 @@
 # retrospective's H3 (loss of scale-freeness under a delta rule) predicts the SECOND ladder is where
 # GDN falls off, and predicts it shape-dependently — hence both GDN shapes below.
 #
-# CONTENDERS: the full taxonomy ladder plus all three FSLA wirings and the D1 dense control. GDN runs
+# CONTENDERS: the full taxonomy ladder plus both FSLA wirings and the D1 dense control. GDN runs
 # BOTH `wide` (keys-only growth) and `square`; its extrapolation fragility was shape-dependent in the
 # pilot and the shape covariate must be carried. GDN-wide's head_dim <= 256 kernel cap bounds it at
 # N = 256; higher rungs are omitted with a printed reason (a cost column, not missing data).
@@ -64,7 +64,6 @@ seq_lens: [256]                          # single TRAIN length; the sweep is at 
 tiers:
   "fsla":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3}
     - {build: routed, instance: fsla-d1-dense,                  tag: d1}
   "contenders":

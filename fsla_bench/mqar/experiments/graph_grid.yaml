@@ -35,7 +35,7 @@
 # when some sequence draws both endpoints — so a knob-derived x-axis would report a graph that was
 # never presented. Same rule as the capacity coordinate (`realized_state`), for the same reason.
 #
-# ARMS — the three canonical wirings plus the D1 DENSE CONTROL, and an ATTENTION REFERENCE COLUMN.
+# ARMS — the two canonical wirings plus the D1 DENSE CONTROL, and an ATTENTION REFERENCE COLUMN.
 # Theory-licensed trim: the fixed-state class baselines (rla / gla / gdn) are established on the
 # standard law grid at this exact backbone, no claim in this file is about them, and adding them
 # would triple a local overnight tier to re-measure a known row. They stay out.
@@ -249,8 +249,6 @@ tiers:
   "decoupling":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
        conditions: [complete-k16, clustered-k16-m8]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2,
-       conditions: [complete-k16, clustered-k16-m8]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3,
        conditions: [complete-k16, clustered-k16-m8]}
     - {build: routed, instance: fsla-d1-dense, tag: d1,
@@ -260,8 +258,6 @@ tiers:
   "resize":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
        conditions: [complete-k64], ncs: [16, 32, 64, 128, 256], seq_lens: [512]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2,
-       conditions: [complete-k64], ncs: [16, 32, 64, 128, 256], seq_lens: [512]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3,
        conditions: [complete-k64], ncs: [16, 32, 64, 128, 256], seq_lens: [512]}
     - {build: routed, instance: fsla-d1-dense, tag: d1,
@@ -270,8 +266,6 @@ tiers:
   # whether saturation follows w = 16 or B = 32, and two rungs answer it.
   "overlap":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
-       conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2,
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3,
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
@@ -283,8 +277,6 @@ tiers:
   "decay":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1-mass, decay: {type: LearnedDecay},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2-mass, decay: {type: LearnedDecay},
-       conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3-mass, decay: {type: LearnedDecay},
        conditions: [overlap-w16-uniform, overlap-w16-mixed], ncs: [16, 64], seq_lens: [256]}
     - {build: routed, instance: fsla-d1-dense, tag: d1-mass, decay: {type: LearnedDecay},
@@ -293,8 +285,6 @@ tiers:
   # item count (16) — which is the whole prediction.
   "reuse":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
-       conditions: [reuse-zipf], ncs: [32, 64, 128, 256]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2,
        conditions: [reuse-zipf], ncs: [32, 64, 128, 256]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3,
        conditions: [reuse-zipf], ncs: [32, 64, 128, 256]}
@@ -306,8 +296,6 @@ tiers:
   "contract":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1, seq_lens: [512],
        conditions: [complete-k64-contract50, complete-k64-sampled25], ncs: [16, 32, 64]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2, seq_lens: [512],
-       conditions: [complete-k64-contract50, complete-k64-sampled25], ncs: [16, 32, 64]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3, seq_lens: [512],
        conditions: [complete-k64-contract50, complete-k64-sampled25], ncs: [16, 32, 64]}
     - {build: routed, instance: fsla-d1-dense, tag: d1, seq_lens: [512],
@@ -317,8 +305,6 @@ tiers:
   # a shift of the threshold between 16 and 64 answers, not the shape of the curve between them.
   "cue_map":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1,
-       conditions: [complete-k16-pi, clustered-k16-m8-pi], ncs: [16, 64]}
-    - {build: routed, instance: fsla-arm2-union, tag: arm2,
        conditions: [complete-k16-pi, clustered-k16-m8-pi], ncs: [16, 64]}
     - {build: routed, instance: fsla-arm3-levelsplit, tag: arm3,
        conditions: [complete-k16-pi, clustered-k16-m8-pi], ncs: [16, 64]}

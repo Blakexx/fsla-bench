@@ -35,7 +35,7 @@
 # top rungs unreachable; those cells are omitted with a printed reason and are a COST COLUMN for
 # GDN, never missing data.
 #
-# FSLA: the three canonical wirings plus the D1 DENSE CONTROL. The control is the map-family
+# FSLA: the two canonical wirings plus the D1 DENSE CONTROL. The control is the map-family
 # baseline — a single dense softmax level, i.e. monolithic normalized-exponential linear attention
 # in FSLA's own vocabulary. Any structure that does not beat it at matched N and d_v bought nothing.
 #
@@ -90,10 +90,9 @@ lrs: [0.001, 0.003, 0.01, 0.03]          # brackets both optima the pre-V3 calib
 ncs: [16, 32, 64, 128, 256]              # the N ladder (floor = the pinned readout tile)
 seq_lens: [32, 64, 128, 256]             # the L ladder — CROSSED with ncs; alpha_cap in [0.0625, 8]
 tiers:
-  # T1 — the FSLA slate: three canonical wirings + the D1 dense control.
+  # T1 — the FSLA slate: two canonical wirings + the D1 dense control.
   "fsla":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3}
     - {build: routed, instance: fsla-d1-dense,                  tag: d1}
   # T2 — the contender ladder. Both GDN shapes are mandatory (shape is a covariate, see header).

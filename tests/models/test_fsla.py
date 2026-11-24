@@ -31,16 +31,16 @@ def test_the_mixer_and_the_bare_layer_are_the_same_layer(wiring):
 def test_a_cell_is_fslas_own_layer_with_the_wirings_levels():
     import fsla
 
-    c = cells.cell("fsla-hybrid", 256)
+    c = cells.cell("fsla-arm1-densread-sparsewrite", 256)
     layer = cells.layer(c, hidden_size=128, num_heads=2, d_v=64)
     assert type(layer.layer) is fsla.FSLA
     assert layer.topology.widths == (16, 16)
-    assert [type(level) for level in layer.routes.levels] == [fsla.UnionRouting, fsla.IndependentRouting]
+    assert [type(level) for level in layer.routes.levels] == [fsla.IndependentRouting, fsla.IndependentRouting]
 
 
 def test_state_is_read_off_the_built_layer():
     for n in (16, 64, 256):
-        layer = cells.layer(cells.cell("fsla-arm2-union", n), hidden_size=128, num_heads=4, d_v=64)
+        layer = cells.layer(cells.cell("fsla-arm1-densread-sparsewrite", n), hidden_size=128, num_heads=4, d_v=64)
         assert cells.state_floats(layer) == (4 * n * 64, 4 * n)
 
 

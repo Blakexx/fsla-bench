@@ -37,10 +37,10 @@ docker/                 the fleet images
 ## The FSLA arms (`fsla_bench/models/fsla.py`)
 
 A **wiring** is one of fsla's own level spellings per routing level, outermost first (`fsla.dense_routing`,
-`fsla.split_routing`, `fsla.union_routing`, `fsla.tied_routing`). A **cell** is a wiring at a state count N per head:
+`fsla.split_routing`, `fsla.tied_routing`). A **cell** is a wiring at a state count N per head:
 every level's width (the uniform factorization b**D = N unless widths are given), its levels as fsla builds them, a
 decay source as fsla's JSON (`None`, or `{"type": "LearnedDecay", ...}`) and the route projection's `bias`. The
-canonical MQAR slate is `fsla-arm1-densread-sparsewrite`, `fsla-arm2-union`, `fsla-arm3-levelsplit` and the one-level
+canonical MQAR slate is `fsla-arm1-densread-sparsewrite`, `fsla-arm3-levelsplit` and the one-level
 control `fsla-d1-dense`.
 
 Every bench builds a cell one way: `mixer_config` for zoology, or `layer` for a bare fla layer, both passing fsla's

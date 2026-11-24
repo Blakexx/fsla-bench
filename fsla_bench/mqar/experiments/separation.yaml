@@ -16,9 +16,9 @@
 #
 # WHAT RUNS, AND WHAT IS A COST COLUMN INSTEAD
 #
-#   * the three FSLA WIRINGS — TRAINED at all three rungs. They differ in touched slots per token
-#     (O(N) / O(sqrt N) / O(1)), so this is the diagonal on which the touch-product law is a cost
-#     statement rather than an asymptotic one. At these rungs they factorize as [128,128],
+#   * the two FSLA WIRINGS — TRAINED at all three rungs. They differ in touched slots per token,
+#     so this is the diagonal on which the touch-product law is a cost statement rather than an
+#     asymptotic one. At these rungs they factorize as [128,128],
 #     [128,256] and [256,256].
 #
 #   * the D1 DENSE CONTROL — **absent from the diagonal, and its absence is a RESULT.** An
@@ -91,17 +91,14 @@ tiers:
   # --- the diagonal, one tier per rung so a box runs exactly one scale --------------------------
   "diag16k":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1, ncs: [16384], seq_lens: [16384]}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2, ncs: [16384], seq_lens: [16384]}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3, ncs: [16384], seq_lens: [16384]}
     # NO d1 arm: the unfactorized control has no spelling above MAX_BRANCH_WIDTH = 256 (header).
     - {build: attn, seq_lens: [16384]}
   "diag32k":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1, ncs: [32768], seq_lens: [32768]}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2, ncs: [32768], seq_lens: [32768]}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3, ncs: [32768], seq_lens: [32768]}
   "diag64k":
     - {build: routed, instance: fsla-arm1-densread-sparsewrite, tag: arm1, ncs: [65536], seq_lens: [65536]}
-    - {build: routed, instance: fsla-arm2-union,                tag: arm2, ncs: [65536], seq_lens: [65536]}
     - {build: routed, instance: fsla-arm3-levelsplit,           tag: arm3, ncs: [65536], seq_lens: [65536]}
   # --- GDN's ceiling, MEASURED. Its last reachable rung per shape, at N = L on each. -------------
   "gdn_ceiling":

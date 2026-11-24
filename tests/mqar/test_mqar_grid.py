@@ -27,21 +27,20 @@ def _mixer(wiring, n=_N):
 
 
 # =============================================================== 1. the wirings
-def test_slate_is_the_three_wirings_plus_the_d1_control():
+def test_slate_is_the_two_wirings_plus_the_d1_control():
     from fsla_bench.models import fsla as cells
 
-    assert cells.CANONICAL_WIRINGS == ("fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
-                                       "fsla-d1-dense")
+    assert cells.CANONICAL_WIRINGS == ("fsla-arm1-densread-sparsewrite", "fsla-arm3-levelsplit", "fsla-d1-dense")
     assert set(cells.WIRINGS) - set(cells.CANONICAL_WIRINGS) == {
         "fsla-arm3-levelsplit-a2w",                  # the alpha axis
         "fsla-d1-dense-tied",                        # one tied softmax level against fsla-d1-dense
-        "fsla-hybrid", "fsla-hybrid-tiedtop",        # the depth hybrid and its tied-top ablation
+        "fsla-hybrid-tiedtop",                       # the depth hybrid with a tied top level
     }
 
 
-@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm3-levelsplit",
                                     "fsla-arm3-levelsplit-a2w", "fsla-d1-dense", "fsla-d1-dense-tied",
-                                    "fsla-hybrid", "fsla-hybrid-tiedtop"])
+                                    "fsla-hybrid-tiedtop"])
 def test_every_wiring_constructs(wiring):
     from fsla_bench.mqar import MQAR_GEOM
 
@@ -49,7 +48,7 @@ def test_every_wiring_constructs(wiring):
     assert mixer.layer.topology.N == _N and mixer.layer.d_v == MQAR_GEOM["d_v"]
 
 
-@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm3-levelsplit",
                                     "fsla-d1-dense"])
 def test_canonical_wirings_train_on_the_kernel(wiring):
     """Forward and backward on the CUDA op at the grid's own geometry."""
@@ -66,17 +65,15 @@ def test_canonical_wirings_train_on_the_kernel(wiring):
     assert x.grad is not None and float(mixer.layer.routes.route_W.grad.abs().sum()) > 0
 
 
-@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm2-union", "fsla-arm3-levelsplit",
+@pytest.mark.parametrize("wiring", ["fsla-arm1-densread-sparsewrite", "fsla-arm3-levelsplit",
                                     "fsla-d1-dense"])
 def test_routing_resolves_to_the_intended_structure(wiring):
-    """Union is the one wiring whose untied sparse/sparse level resolves to fsla's UnionRouting (one shared support
-    split between the duties); every other level is IndependentRouting (each duty its own exact activation)."""
+    """Every level of a canonical wiring is IndependentRouting (each duty its own exact activation)."""
     import fsla
 
-    union_levels = {"fsla-arm2-union": (0,)}.get(wiring, ())
     for index, level in enumerate(_mixer(wiring).layer.routes.levels):
-        want = fsla.UnionRouting if index in union_levels else fsla.IndependentRouting
-        assert isinstance(level, want), f"{wiring}: level {index} is {type(level).__name__}, expected {want.__name__}"
+        assert isinstance(level, fsla.IndependentRouting), (
+            f"{wiring}: level {index} is {type(level).__name__}, expected IndependentRouting")
 
 
 def test_d1_dense_control_is_a_single_dense_level():
