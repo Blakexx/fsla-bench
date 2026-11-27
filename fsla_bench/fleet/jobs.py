@@ -4,7 +4,7 @@ A fleet `Job` is almost entirely boilerplate; the only real per-experiment knobs
 (run_ids), the box-side run command, and a few fleet settings. This assembles the Job from those,
 so benchmarks don't each hand-roll a `*_job.py`.
 
-Results are stored through `fsla_results` at `<bench>/<config>`: each row the dispatcher pulls is a sample of the
+Results are stored through `fsla_devtools.results` at `<bench>/<config>`: each row the dispatcher pulls is a sample of the
 record keyed by (bench, config, cell, image), stored once however often it is re-pulled, and a cell is done when the
 CURRENT image's record has an ok sample -- an image bump runs the grid again (`fleet_store`).
 
@@ -26,7 +26,7 @@ import json
 import os
 
 from fleet import Job, provider, semantics_of
-from fsla_results import Store, key
+from fsla_devtools.results import Store, key
 
 
 def runtime_root():
@@ -83,7 +83,7 @@ def offer_query_for(spec_query, dialect):
 
 
 def fleet_store(bench, config, image, job):
-    """The job's result sink and completion reader over `fsla_results` at `<bench>/<config>`."""
+    """The job's result sink and completion reader over `fsla_devtools.results` at `<bench>/<config>`."""
     store = Store(f"{bench}/{config}")
 
     def semantics(cell):

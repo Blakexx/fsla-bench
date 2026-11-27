@@ -10,7 +10,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "fsla_devtools", version = "0.1.0")
 git_override(
     module_name = "fsla_devtools",
-    commit = "7da5dde27158330ba07ccda5c962d2d04228425e",
+    commit = "6849469fdea012da16f28e154e46a10d021d67e9",
     remote = "https://github.com/Blakexx/fsla-devtools.git",
 )
 
@@ -34,7 +34,6 @@ environment.python(
         "zoology @ git+https://github.com/Blakexx/fsla-zoology@8befca418e90ae0bf6fe45fb892d8eae885169f2",
         "chromatic-recall @ git+https://github.com/Blakexx/chromatic-recall@ffdd03b3582b6c82af27fa00f19950c1378e652e",
         "fleet @ git+https://github.com/Blakexx/fleet@d2b4fa3c4ba2a47d5c89c8e5c3e2dad329ff8b83",
-        "fsla-results @ git+https://github.com/Blakexx/fsla-results@85ef7ec1300734d0ed429246ae8367b1aea432da",
     ],
     uv = "@uv//:uv",
     uv_pin = "@fsla_devtools//pins:uv_pin.json",

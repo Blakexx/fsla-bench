@@ -27,7 +27,7 @@ proving the clock; one MEMORY pass over every registration on every selected cel
 comparison across checkouts' workers is read beside what the gate found; a store for each instrument
 (`fsla/<instrument>`), each session (`timing/session`), the memory pass (`timing/memory`) and the null gate
 (`timing/null`); and the server's stop, which runs whatever failed. Which checkout is the reference for a ratio is
-chosen when the records are read (`fsla_results`), never here.
+chosen when the records are read (`fsla_devtools.results`), never here.
 """
 from __future__ import annotations
 

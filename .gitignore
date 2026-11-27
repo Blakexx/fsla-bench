@@ -1,7 +1,7 @@
 wandb/
 *.log
 *.pt          # NEVER check in model files (checkpoints live off the repository's disk: FSLA_BENCH_CKPTS, FSLA_LM_CKPTS)
-# Results are stored through fsla_results, in the fsla-results repository; nothing here is a result.
+# Results are stored through fsla_devtools.results, in the data repository fsla-results; nothing here is a result.
 __pycache__/
 *.pyc
 *.egg-info/

@@ -2,7 +2,7 @@
 
 FSLA's benchmarks and its local measurement suite. The benchmark (MQAR recall) is a declarative spec that the generic
 [`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite measures fsla checkouts
-with their own instruments on this machine. Every result goes through `fsla_results`.
+with their own instruments on this machine. Every result goes through fsla-devtools' store, `fsla_devtools.results`.
 
 The language-modeling, layer-performance and similarity benchmarks are archived at the tag
 `archive/pre-rebuild-2026-09-14`: layer performance is rebuilt on the measurement suite's timing sessions, and
@@ -16,7 +16,7 @@ fsla-bench ──▶ fla           the fork's fsla branch: the FSLA layer and HF
            ──▶ zoology       MQAR's model and baselines (the fork's fsla-pins); its FSLAMixer wraps fla's FSLA
            ──▶ chromatic-recall  the recall tasks (presence, graph, cue consistency) and the launcher MQAR runs through
            ──▶ fleet         GPU orchestration
-           ──▶ fsla-results  the result store
+           ──▶ fsla-devtools the result store's code (`fsla_devtools.results`), writing into fsla-results, the data
            ──▶ fsla          (through fla; the measurement suite measures fsla checkouts directly)
 ```
 
@@ -81,7 +81,7 @@ index serves pinned by their public commits:
 
 | Environment | Its stack | Its interpreter |
 |---|---|---|
-| `bench_env` | torch 2.14 (CUDA 13.0, fsla's), the fla fork's fsla branch, zoology, chromatic-recall, fleet, fsla-results (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
+| `bench_env` | torch 2.14 (CUDA 13.0, fsla's), the fla fork's fsla branch, zoology, chromatic-recall, fleet, fsla_devtools (`requirements.lock`) | `bazel run //:bench_python -- <args>` |
 | `research_env` | the baselines' stack: torch 2.6 (CUDA 12.4), flash-attn's release wheel, upstream fla 0.4.2, zoology, chromatic-recall, fleet (`research.lock`) | `bazel run //:research_python -- <args>` |
 
 fsla is never installed: a run that imports it (the arms registry does, so the launcher, the MQAR runs and the model
@@ -115,7 +115,8 @@ Local numbers are engineering gates. Citable numbers come from rented runs.
 
 ## Results
 
-Every result is stored through `fsla_results`, in the fsla-results repository: the fleet benches at `<bench>/<config>`,
+Every result is stored through `fsla_devtools.results` (fsla-devtools' store), in the data repository fsla-results (the
+checkout the dev config's `store.root` names): the fleet benches at `<bench>/<config>`,
 the local MQAR grid beside the fleet's records at `mqar/<config>` (keyed by its checkouts instead of an image), and the
 measurement suite at `fsla/<instrument>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
 fleet's `store_result` sink and `done_ids`. Each pulled row is a sample of the record keyed by (bench, config, cell,

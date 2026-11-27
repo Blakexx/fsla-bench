@@ -83,8 +83,8 @@ TASKS = {
 
 
 def _load_rows(location: str):
-    """Every completed cell stored at `location` (`fsla_results`), the newest sample per run_id."""
-    from fsla_results import outputs
+    """Every completed cell stored at `location` (`fsla_devtools.results`), the newest sample per run_id."""
+    from fsla_devtools.results import outputs
 
     rows = {}
     for _record, _sample, r in sorted(outputs(location), key=lambda x: x[1]["utc"]):
@@ -297,7 +297,7 @@ def main(argv=None):
                     help="accuracy the collapse threshold is defined at (default: the TASK's own, "
                          "0.5 for graph_recall and 0.75 for presence_recall, which is halfway from "
                          "that task's 0.5 chance line to the ceiling)")
-    ap.add_argument("--location", default=None, help="the fsla_results location (default: mqar/<config>)")
+    ap.add_argument("--location", default=None, help="the fsla_devtools.results location (default: mqar/<config>)")
     ap.add_argument("--json", default=None, help="also write the rows here")
     a = ap.parse_args(argv)
 

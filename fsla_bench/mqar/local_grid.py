@@ -47,13 +47,13 @@ import sys
 import time
 from pathlib import Path
 
-from fsla_results import Store, checkout, key
+from fsla_devtools.results import Store, checkout, key
 
 REPO = Path(__file__).resolve().parents[2]
 
 
 def local_store(config: str):
-    """The local grid's store (`fsla_results` at `mqar/<config>`, beside the fleet's rows) and its semantics: the cell
+    """The local grid's store (`fsla_devtools.results` at `mqar/<config>`, beside the fleet's rows) and its semantics: the cell
     and the code that trains it -- this checkout and the fsla engine's, each commit and tracked diff."""
     import importlib.util
 

@@ -7,7 +7,7 @@ seeds, for error bars. Generic + results-driven (no baked winner list):
 Parameterized by env so it works for any experiment:
   SEED_CONFIRM_BASE     base spec name (default: canonical) or a path to a .yaml
   SEED_CONFIRM_SEEDS    comma list of extra seeds (default: 2024,777)
-The stage-1 results are every sample `fsla_results` holds under mqar/.
+The stage-1 results are every sample `fsla_devtools.results` holds under mqar/.
 
 Run as a module via the runner (`--config seed_confirm`); or `python -m ...seed_confirm` to preview
 the picked winners.
@@ -42,10 +42,10 @@ def pick_winners(valid_ids=None):
     """Best-max_acc run_id per (kernel, nc) across the results (SSE excluded — its faithful impl is
     too slow to seed-confirm). `valid_ids` restricts the search to one spec's own cells, so a
     higher-acc cell from a DIFFERENT experiment can't steal a (kernel, nc) winner slot."""
-    from fsla_results import outputs
+    from fsla_devtools.results import outputs
 
     best = {}
-    for _record, _sample, j in outputs("mqar"):          # every stored MQAR sample (`fsla_results`)
+    for _record, _sample, j in outputs("mqar"):          # every stored MQAR sample (`fsla_devtools.results`)
         if not j.get("ok") or not j.get("run_id"):
             continue
         if valid_ids is not None and j["run_id"] not in valid_ids:

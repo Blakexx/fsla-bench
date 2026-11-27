@@ -9,7 +9,8 @@ version = "0.1.0"
 description = "FSLA's benchmarks on fleet (MQAR) and the local measurement suite"
 requires-python = ">=3.10"
 # The dependency edges: the benches build FSLA through fla (our fork's FSLA layer wraps fsla), MQAR's model and
-# baselines come from zoology, dispatch from fleet, and every result is stored through fsla-results. First-party
+# baselines come from zoology, dispatch from fleet, and every result is stored through fsla-devtools' store
+# (`fsla_devtools.results`, into the data repository fsla-results). First-party
 # packages come from their own repositories (locally the graph's environments pin them by public commit and a run names
 # its fsla checkout, README.md#local-runs; an image installs them from source); they are listed so pip verifies they
 # are present.
@@ -19,7 +20,7 @@ dependencies = [
     "zoology",       # MQAR's model and baselines, the fork's fsla-pins (its FSLAMixer wraps fla's FSLA)
     "chromatic-recall",  # the recall tasks (presence, graph, cue consistency) and the launcher MQAR runs through
     "fleet",         # generic GPU orchestration
-    "fsla-results",  # the result store
+    "fsla-devtools",  # the result store's code (fsla_devtools.results)
     "torch",
     "numpy",
     "pyyaml",

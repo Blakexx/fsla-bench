@@ -57,7 +57,7 @@ one outside their interquartile range, a worker's bias is found, and a ratio acr
 ## Records
 
 Instruments at `fsla/<instrument>`, sessions at `timing/session`, the memory pass at `timing/memory`, the null gate at
-`timing/null`, through `fsla_results`. A store target appends a run-stamped sample to the record its source's semantics
+`timing/null`, through `fsla_devtools.results`. A store target appends a run-stamped sample to the record its source's semantics
 key -- the executor, its parameters, the cells' records and the draw, and every dependency's key and output -- so a
 session of the same
 checkouts' binaries on the same cells adds a sample to one record, and a session run from fsla's own root with the same
