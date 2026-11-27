@@ -98,7 +98,7 @@ def root(g, target: str, references: str = "", rounds: str = "8", reps: str = "1
     ``record`` names the surfaces (comma-separated) whose cross-checkout verdict is RECORDED rather than failing the
     build: an INTENDED change to a surface (an oracle redefinition) is shown -- each cell's worst slot a quantity, and
     the cells one side refuses -- not stopped at its first difference. Every other surface keeps its gate."""
-    from fsla_devtools.cells import central
+    from fsla_devtools.cells import build, central
     from fsla_devtools.diff import diff
 
     checkouts = [checkout(target), *(checkout(spec) for spec in filter(None, references.split(";")))]
@@ -147,7 +147,7 @@ def root(g, target: str, references: str = "", rounds: str = "8", reps: str = "1
             stores.append(kept)
             diffs.append(kept)  #: the group runs the diff AND files its verdict
 
-    qkv = [c for c in names if registry.cell(c)["data"].split(":")[0].rsplit(".", 1)[-1] == "qkv"]
+    qkv = [c for c in names if build(registry.cell(c)).kind == "qkv"]
     if qkv:
         bench = Env(BENCH, checkouts[0]["python"], str(HERE), {"PYTHONPATH": str(HERE)})
         code = {"entry": "fsla_bench/measure/attention.py", "roots": ["."]}

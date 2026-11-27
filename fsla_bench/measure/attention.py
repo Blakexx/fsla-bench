@@ -3,14 +3,14 @@
     flash(cell, params) -> Timed    a timing entry of fsla-devtools' timing system: the call, what it built, its stopwatch
 
 The root (`declare.py`) registers it on every QKV cell of the selected groups. The cell is fsla-devtools'
-(`fsla_devtools.cells.qkv`: tokens, value width, heads, batch, dtype, causal) and its tensors are the central draw
-(`fsla_devtools.cells.qkv.realize`), so every library timed on a QKV cell reads the same queries, keys and values. The
-call runs through Dao's FlashAttention-2 as torch compiles it, or -- parameter `impl` -- FA3 (Hopper) or FA4
-(Blackwell), which torch registers and the entry activates for its process. The backend is forced, so torch refuses a call
-flash cannot take rather than timing its math or memory-efficient backend; building the entry makes one call, so that
-refusal is recorded as the entry's failure before anything is timed. Each sample is one call between two CUDA events; a
-call carries no state, so it needs no reset. What the entry reports records torch's version and the active
-implementation, so a number cites its reference.
+(`fsla_devtools.cells.qkv`, in the one form: tokens, value width, heads `H`, batch `B`, dtype, causal) and its tensors
+are the central draw (`fsla_devtools.cells.qkv.realize`), so every library timed on a QKV cell reads the same queries,
+keys and values. The call runs through Dao's FlashAttention-2 as torch compiles it, or -- parameter `impl` -- FA3
+(Hopper) or FA4 (Blackwell), which torch registers and the entry activates for its process. The backend is forced, so
+torch refuses a call flash cannot take rather than timing its math or memory-efficient backend; building the entry makes
+one call, so that refusal is recorded as the entry's failure before anything is timed. Each sample is one call between
+two CUDA events; a call carries no state, so it needs no reset. What the entry reports records torch's version and the
+active implementation, so a number cites its reference.
 
 THE INCREMENTAL CELL (fsla's docs/measurement.md, ruled 2026-10-18): with parameter `context` = T the cell's tokens are c
 NEW tokens after T already absorbed -- their queries attend over a KV cache of T + c keys, bottom-right causal (each new
@@ -34,7 +34,8 @@ PARAMS = ("context", "hidden", "heads", "impl")
 def flash(cell, params):
     import torch
     import torch.nn.functional as F
-    from fsla_devtools.cells.qkv import QKVCell, realize
+    from fsla_devtools.cells.form import DTYPES
+    from fsla_devtools.cells.qkv import realize
     from fsla_devtools.timing import Timed
     from torch.nn.attention import (
         SDPBackend,
@@ -44,16 +45,16 @@ def flash(cell, params):
         sdpa_kernel,
     )
 
-    if not isinstance(cell, QKVCell):
-        raise TypeError(f"the attention reference takes a QKV cell (fsla_devtools.cells.qkv), got {type(cell).__name__}")
+    if cell.kind != "qkv":
+        raise TypeError(f"the attention reference takes a QKV cell (fsla_devtools.cells.qkv), got a {cell.kind} cell")
     unknown = sorted(set(params) - set(PARAMS))
     if unknown:
         raise ValueError(f"the attention reference reads {PARAMS}, got {unknown}")
     context, hidden = int(params.get("context", 0)), int(params.get("hidden", 0))
-    heads = int(params.get("heads", 0)) or cell.heads
+    heads = int(params.get("heads", 0)) or cell.H
     if context < 0 or hidden < 0 or heads < 1:
         raise ValueError(f"context and hidden are counts, heads at least 1: got {context}, {hidden}, {heads}")
-    if heads != cell.heads and not hidden:
+    if heads != cell.H and not hidden:
         raise ValueError("`heads` sizes a projection: give `hidden` with it")
     #: THE IMPLEMENTATION is the process's: torch dispatches every flash call of this worker to the one activated, and
     #: an entry that names another than the one already active is refused, not silently timed on it
@@ -67,9 +68,9 @@ def flash(cell, params):
             activate_flash_attention_impl(impl)
     elif current_flash_attention_impl() is not None:
         raise ValueError(f"this process dispatches flash to {current_flash_attention_impl()}: name it as `impl`")
-    c, dv, b = cell.tokens, cell.dv, cell.batch
-    dtype = getattr(torch, cell.dtype)
-    q, k, v = realize(cell) if heads == cell.heads else (None, None, None)
+    c, dv, b = cell.tokens, cell.dv, cell.B
+    dtype = cell.torch_dtype
+    q, k, v = realize(cell) if heads == cell.H else (None, None, None)
     generator = torch.Generator(device="cuda").manual_seed(cell.seed + 1)
 
     def draw(*shape, scale=1.0):
@@ -123,7 +124,7 @@ def flash(cell, params):
     built = {"cell": cell.name, "level": "layer", "library": "torch", "torch": torch.__version__, "backend": "flash",
              "implementation": current_flash_attention_impl() or "FA2", "tokens": c, "context": context,
              "hidden": hidden, "projection": "cublas" if hidden else None, "d_v": dv, "heads": heads, "batch": b,
-             "dtype": cell.dtype, "causal": cell.causal, "mask": "bottom-right" if (context or hidden) else "full",
+             "dtype": DTYPES[cell.dtype], "causal": cell.causal, "mask": "bottom-right" if (context or hidden) else "full",
              "device": torch.cuda.get_device_name(0)}
     return Timed(call=call, built=built, instrument="cuda_events")
 

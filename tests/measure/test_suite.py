@@ -124,11 +124,11 @@ class Root(unittest.TestCase):
                          & set(inspect.signature(SUITE["root"]).parameters))
         public, targets = self.root()
         #: a session per group arm set that has a member -- every group, not a gate subset; the double registers
-        #: only `prefill`, fsla-bench `flash` and each group's own attention arms (the incremental cell's), so
-        #: the arm sets naming other arms declare nothing
+        #: only `prefill` and `layer_op`, fsla-bench `flash` and each group's own attention arms (the incremental
+        #: cell's), so the arm sets naming other arms declare nothing
         sessions = {label for label in targets if label.startswith("session/")}
         expected = {f"session/{g.name}/{'+'.join(arms)}" for g in GROUPS["GROUPS"].values() for arms in g.together
-                    if set(arms) & ({"prefill", "flash"} | {a for a, _ in g.flash_arms})}
+                    if set(arms) & ({"prefill", "layer_op", "flash"} | {a for a, _ in g.flash_arms})}
         self.assertEqual(sessions, expected)
         only = select([public["suite"]], only=["tip/clock"])
         self.assertEqual([t.label for t in only], ["timing-server", "tip/clock"])

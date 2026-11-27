@@ -9,9 +9,9 @@ registry. The root (`declare.py`) loads this file by path.
                                                 the attention cell of that length and width; each arm of
                                                 `ATTENTION_ARMS` timed beside `flash` in its own session; `heads` the
                                                 heads every cell draws a call
-    layer(construction, cell)                   a layer input under one of FSLA's constructions; its solve and its
-                                                decode step each timed alone
-    layer_prefill(construction, cell, ...)      THE LAYER-LEVEL PREFILL: FSLA's stateless prefill beside
+    layer(cell)                                 a layer cell (its input, and the routing and gain its layer is built
+                                                with); its solve and its decode step each timed alone
+    layer_prefill(cell, ...)                    THE LAYER-LEVEL PREFILL: FSLA's stateless prefill beside
                                                 FlashAttention with its QKV projection, one session; each of the op's
                                                 stages (`LAYER_STAGES`) in its own
     incremental(chunk, dv, contexts, ...)       THE INCREMENTAL CELL (ruled 2026-10-18): c = `chunk` new tokens after
@@ -24,8 +24,6 @@ docs/measurement.md); a group's claim says whether its FSLA cells' state count e
 """
 from __future__ import annotations
 
-import json
-import math
 from dataclasses import dataclass
 
 
@@ -70,57 +68,58 @@ def incremental(chunk: int, dv: int, contexts: tuple[int, ...], hidden: int = 0,
                  ("tokens", "dv"), (f"qkv-L{chunk}-dv{dv}",), (tuple(a for a, _ in arms),), None, arms)
 
 
-def layer(construction: str, cell: str) -> Group:
-    return Group(f"layer-{construction}", f"the layer input {cell} under FSLA's construction {construction}", (), (cell,),
-                 ((f"entmax_solve@layer={construction}",), (f"decode_step@layer={construction}",)))
+def layer(cell: str) -> Group:
+    return Group(cell, f"the layer cell {cell}: its producer's solve, and its decode step where it takes steps", (),
+                 (cell,), (("entmax_solve",), ("decode_step",)))
 
 
 #: the op's stages a layer-prefill group times on the layer's own bundle, EACH IN ITS OWN SESSION (one FSLA arm a session
 #: bounds the device memory, as `ATTENTION_ARMS`): they split the layer's time by launch
-LAYER_STAGES = ("layer_facts", "layer_op")
+LAYER_STAGES = ("layer_op",)
 
 
-def layer_prefill(construction: str, cell: str, tokens: int, dv: int, hidden: int, heads: int) -> Group:
+def layer_prefill(cell: str, tokens: int, dv: int, hidden: int, heads: int) -> Group:
     flash = f"flash@T=0,h={hidden}x{heads}"
     suffix = "" if heads == 1 else f"-h{heads}"
-    return Group(f"layer-prefill-{construction}",
-                 f"the layer input {cell} under FSLA's construction {construction}: its stateless prefill "
-                 f"beside FlashAttention with its QKV projection from hidden {hidden} for "
-                 f"{heads} heads, the output projection outside both; each of the "
-                 f"op's stages alone on the layer's own bundle",
+    return Group(f"layer-prefill-{cell.removeprefix('layer-')}",
+                 f"the layer cell {cell}: its stateless prefill beside FlashAttention with its QKV projection from "
+                 f"hidden {hidden} for {heads} heads, the output projection outside both; each of the op's stages "
+                 f"alone on the layer's own bundle",
                  ("tokens", "dv"), (cell, f"qkv-L{tokens}-dv{dv}{suffix}"),
-                 ((f"layer_prefill@layer={construction}", flash),
-                  *((f"{stage}@layer={construction}",) for stage in LAYER_STAGES)), None,
+                 (("layer_prefill", flash), *((stage,) for stage in LAYER_STAGES)), None,
                  ((flash, {"hidden": hidden, "heads": heads}),))
 
 
 GROUPS = {g.name: g for g in (
-    attention(16, 256, 64, ("identity-passthrough-dense", "single-deposit")),
-    attention(32, 256, 64, ("one-box-tiny",)),
-    attention(64, 256, 64, ("one-box-short",)),
-    attention(128, 4096, 64, ("flat-small-carried",)),
-    attention(256, 4096, 64, ("flat-small-idle-resident", "flat-small-struct25", "deep3-dense", "deep3-alt-k4")),
-    attention(256, 65536, 64, ("deep4-dense", "deep4-alt-k2")),
-    attention(1024, 65536, 32, ("flagship-dv32-alt-k4",)),
-    attention(1024, 256, 64, ("one-box-multiwindow", "one-box-alt-k4")),
-    attention(1024, 65536, 64, ("flagship-dense", "flagship-alt-k4", "flagship-alt-k16", "flagship-cohort-k4",
-                                "flagship-cohort-k16", "flagship-struct50")),
-    attention(1024, 65536, 128, ("flagship-dv128-alt-k4",)),
-    attention(1792, 65536, 64, ("flagship-partial-window",)),
-    attention(4096, 65536, 64, ("flagship-alt-k4-L4096",)),
-    attention(16384, 16384, 64, ("nl16k-dense", "nl16k-alt-k4")),
-    attention(16384, 65536, 64, ("flagship-dense-L16384", "flagship-alt-k16-L16384", "flagship-alt-k4-L16384",
-                                 "flagship-cohort-k16-L16384")),
-    attention(65536, 65536, 64, ("nl64k-dense", "nl64k-alt-k4")),
-    attention(65536, 65536, 64, ("nl64k-dense-h4", "nl64k-alt-k4-h4"), heads=4),
-    layer("chunk-p73-pinned", "layer-B2-T2048-H8-h512-dv64-bf16-s0"),
-    layer("chunk-dense-D2", "layer-B2-T512-H8-h512-dv64-bf16-s2"),
-    layer("chunk-dense-NL4096", "layer-B2-T4096-H8-h512-dv64-bf16-s6"),
-    layer("chunk-deep-D4-w8", "layer-B2-T512-H8-h512-dv64-bf16-s3"),
-    layer("chunk-decode-w16", "layer-B2-T128-H2-h128-dv64-fp32-s4-dec8"),
-    layer("chunk-decode-la-w256", "layer-B2-T128-H2-h128-dv64-fp32-s10-dec8"),
-    *(layer_prefill(c, "layer-B1-T65536-H4-h256-dv64-bf16-s11", 65536, 64, 256, 4)
-      for c in ("nl64k-alt-h4", "nl64k-alt-h4-g4", "nl64k-alt-h4-g16")),
+    attention(16, 256, 64, ("carry-dead-16x16-T16-carried", "carry-deposit-16x16-T16")),
+    attention(32, 256, 64, ("carry-dense-16x16-T32",)),
+    attention(64, 256, 64, ("carry-alt-k4-16x16-T64",)),
+    attention(128, 4096, 64, ("carry-dense-64x64-T128-carried",)),
+    attention(256, 4096, 64, ("carry-dense-64x64-T256-sup0.25-carried", "carry-dense-64x64-T256-sup0.25",
+                              "carry-dense-16x16x16-T256", "carry-alt-k4-16x16x16-T256")),
+    attention(256, 65536, 64, ("carry-dense-16x16x16x16-T256", "carry-alt-k2-16x16x16x16-T256")),
+    attention(1024, 65536, 32, ("carry-alt-k4-256x256-T1024-dv32",)),
+    attention(1024, 256, 64, ("carry-dense-16x16-T1024", "carry-alt-k4-16x16-T1024")),
+    attention(1024, 65536, 64, ("carry-dense-256x256-T1024", "carry-alt-k4-256x256-T1024", "carry-alt-k16-256x256-T1024",
+                                "carry-cohort-k4-c64-256x256-T1024", "carry-cohort-k16-c64-256x256-T1024",
+                                "carry-dense-256x256-T1024-sup0.5")),
+    attention(1024, 65536, 128, ("carry-alt-k4-256x256-T1024-dv128",)),
+    attention(1792, 65536, 64, ("carry-alt-k4-256x256-T1792",)),
+    attention(4096, 65536, 64, ("carry-alt-k4-256x256-T4096",)),
+    attention(16384, 16384, 64, ("carry-dense-128x128-T16384", "carry-alt-k4-128x128-T16384")),
+    attention(16384, 65536, 64, ("carry-dense-256x256-T16384", "carry-alt-k16-256x256-T16384",
+                                 "carry-alt-k4-256x256-T16384", "carry-cohort-k16-c64-256x256-T16384")),
+    attention(65536, 65536, 64, ("carry-dense-256x256-T65536", "carry-alt-k4-256x256-T65536")),
+    attention(65536, 65536, 64, ("carry-dense-256x256-T65536-h4", "carry-alt-k4-256x256-T65536-h4"), heads=4),
+    layer("layer-alt-entmax1.5-64x64-T2048"),
+    layer("layer-dense-softmax-64x64-T512"),
+    layer("layer-dense-softmax-64x64-T4096"),
+    layer("layer-alt-entmax1.5-8x8x8x8-T512-g8"),
+    layer("layer-alt-entmax1.5-16x16-T128-h2-dec8-fp32"),
+    layer("layer-dense-softmax-256-T128-h2-dec8-fp32"),
+    *(layer_prefill(c, 65536, 64, 256, 4) for c in ("layer-alt-entmax1.5-256x256-T65536-h4",
+                                                   "layer-alt-entmax1.5-256x256-T65536-h4-g4",
+                                                   "layer-alt-entmax1.5-256x256-T65536-h4-g16")),
     *(incremental(c, 64, (0, 4096, 16384, 65536, 262144, 1048576)) for c in (1024, 4096, 16384)),
     *(incremental(c, 64, (0, 4096, 16384, 65536, 262144), hidden=2048, heads=16) for c in (1024, 4096)),
 )}
@@ -128,26 +127,28 @@ GATE = ("L65536-N65536-dv64", "L1024-N65536-dv64")
 
 
 def check(group: Group, registry) -> None:
-    """Refuses a group whose cells the registry lacks or whose cells break its claim: an `equal` parameter with two
-    values, an FSLA cell whose state count is not the group's N, a cell drawing other than the group's heads, an
-    attention cell that is not bf16."""
+    """Refuses a group whose cells the registry lacks or whose cells break its claim, read off the cells' own fields
+    (`fsla_devtools.cells.form.Cell`): an `equal` field with two values, an FSLA cell whose state count is not the
+    group's N, a cell drawing other than the group's heads, an attention cell that is not bf16."""
+    from fsla_devtools.cells import build
+
     missing = sorted(set(group.cells) - set(registry.cells))
     if missing:
         raise KeyError(f"group {group.name} names cells the central registry does not hold: {missing}")
-    params = {c: registry.cell(c)["params"] for c in group.cells}
+    cells = {c: build(registry.cell(c)) for c in group.cells}
     for field in group.equal:
-        values = {c: p.get(field) for c, p in params.items()}
-        if None in values.values() or len({json.dumps(v, sort_keys=True) for v in values.values()}) != 1:
+        values = {c: getattr(cell, field) for c, cell in cells.items()}
+        if len(set(values.values())) != 1:
             raise ValueError(f"group {group.name} holds {field} equal, but its cells carry {values}")
     if group.states is None:
         return
-    for c, p in params.items():
-        if "widths" in p and math.prod(p["widths"]) != group.states:
-            raise ValueError(f"group {group.name} claims N = {group.states}, but {c} has {math.prod(p['widths'])} states")
-        if p.get("heads", 1) != group.heads:
-            raise ValueError(f"group {group.name} claims {group.heads} head(s) a call, but {c} draws {p.get('heads', 1)}")
-        if "dtype" in p and p["dtype"] != "bfloat16":
-            raise ValueError(f"group {group.name} claims bf16 attention, but {c} is {p['dtype']}")
+    for c, cell in cells.items():
+        if cell.kind == "carry" and group.states != cell.routing.N:
+            raise ValueError(f"group {group.name} claims N = {group.states}, but {c} has {cell.routing.N} states")
+        if group.heads != cell.H:
+            raise ValueError(f"group {group.name} claims {group.heads} head(s) a call, but {c} draws {cell.H}")
+        if cell.kind == "qkv" and cell.dtype != "bf16":
+            raise ValueError(f"group {group.name} claims bf16 attention, but {c} is {cell.dtype}")
 
 
 def select(names: str) -> list[Group]:

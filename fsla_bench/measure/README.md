@@ -24,8 +24,9 @@ knows nothing of cells, groups or parts -- `--only 'tip/side/oracle'` runs that 
 A checkout is a fsla worktree and the venv that runs it (`venv-<name>` beside it unless `venv:` names one); its label
 scopes its targets (`tip/binary`) and defaults to its directory's name. The `target` is the first checkout, the
 `references` the others. Each checkout's `declare.py` declares, in that checkout's venv and directory: its build
-(cached while its binary stands), its machine facts, its timing registrations on the layer cells under each construction
-(`entmax_solve@layer=C`, `layer_prefill@layer=C`, `decode_step@layer=C` and the op `layer_op@layer=C`), its clock reader and its DIFF SIDES (`SURFACES`: the fp64 oracle, the producer reference, the carry kernel, each over
+(cached while its binary stands), its machine facts, its timing registrations on the central layer cells, each arm once
+on every layer cell it takes (`entmax_solve`, `layer_prefill`, `decode_step` and the op `layer_op`), its clock reader
+and its DIFF SIDES (`SURFACES`: the fp64 oracle, the producer reference, the carry kernel, each over
 the cells of its kind and tier) and its own kernel-vs-oracle diff. A checkout's instruments are its own Bazel targets, which this suite does not run. For each surface and each
 reference, the root declares ONE DIFF (`fsla_devtools.diff`) of the two checkouts' sides under THIS ROOT'S rule for
 that surface (`RULES`: the oracle bit-identical, the producer support-equal, a kernel per slot at twice the
