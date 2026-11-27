@@ -1,9 +1,20 @@
-"""fsla-bench's rules: fsla-devtools' generic rules, each handed this workspace's environment (`bench_env`) and tracked
-tree, the doc references (`docrefs_test`), and the runs on its two environments (`bench_python`, `research_python`)."""
+"""fsla-bench's rules: fsla-devtools' generic and measurement rules, each handed this workspace's environment
+(`bench_env`) and tracked tree, the doc references (`docrefs_test`), and the runs on its two environments
+(`bench_python`, `research_python`)."""
 
 load("@bazel_skylib//lib:shell.bzl", "shell")
 load("@bench_env//:flags.bzl", "VENV")
 load("@bench_tree//:tree.bzl", "TRACKED")
+load(
+    "@fsla_devtools//bazel:measure.bzl",
+    _diff_test = "diff_test",
+    _diff_verdict = "diff_verdict",
+    _interleaved_timing = "interleaved_timing",
+    _measure_memory = "measure_memory",
+    _results_store = "results_store",
+    _timing_bundle = "timing_bundle",
+    _timing_entry = "timing_entry",
+)
 load("@fsla_devtools//bazel:rules.bzl", _docrefs_test = "docrefs_test", _tree_part = "tree_part", _tree_test = "tree_test")
 load("@research_env//:flags.bzl", RESEARCH_VENV = "VENV")
 
@@ -20,6 +31,38 @@ def docrefs_test(**kwargs):
     checkout."""
     _docrefs_test(python = Label("@bench_env//:python"), tool = Label("@docrefs//:docrefs.py"),
                   anchor = Label("//:MODULE.bazel"), **kwargs)
+
+#: THE MEASUREMENT RULES (fsla-devtools' `bazel/measure.bzl`) on the bench environment: the bench's own bundle (the
+#: attention reference), its entries, the sessions over its and the fsla bundles' entries, the diffs across commits
+
+def timing_bundle(name, **kwargs):
+    """A bundle of this tree, on the bench environment's store venv."""
+    _timing_bundle(name = name, venv = VENV, python = Label("@bench_env//:python"), **kwargs)
+
+def timing_entry(name, **kwargs):
+    """A timing entry of this tree, in its bundle (`//measure:bundle`)."""
+    _timing_entry(name = name, bundle = Label("//measure:bundle"), **kwargs)
+
+def interleaved_timing(name, **kwargs):
+    """An interleaved session, or its null gate, the session program on the bench environment, stored at its own label."""
+    _interleaved_timing(name = name, workspace = native.module_name(), venv = VENV, **kwargs)
+
+def measure_memory(name, **kwargs):
+    """A memory pass, the session program on the bench environment, stored at its own label."""
+    _measure_memory(name = name, workspace = native.module_name(), venv = VENV, **kwargs)
+
+def diff_verdict(name, **kwargs):
+    """Two diff sides compared on the bench environment."""
+    _diff_verdict(name = name, venv = VENV, **kwargs)
+
+def diff_test(name, **kwargs):
+    """A diff verdict's gate."""
+    _diff_test(name = name, venv = VENV, **kwargs)
+
+def results_store(name, **kwargs):
+    """A build output's record, on the bench environment, stored at this target's label."""
+    _results_store(name = name, workspace = native.module_name(), venv = VENV, python = Label("@bench_env//:python"),
+                   **kwargs)
 
 _PYTHON_RUN = """\
 #!/bin/bash

@@ -4,9 +4,10 @@ A fleet `Job` is almost entirely boilerplate; the only real per-experiment knobs
 (run_ids), the box-side run command, and a few fleet settings. This assembles the Job from those,
 so benchmarks don't each hand-roll a `*_job.py`.
 
-Results are stored through `fsla_devtools.results` at `<bench>/<config>`: each row the dispatcher pulls is a sample of the
-record keyed by (bench, config, cell, image), stored once however often it is re-pulled, and a cell is done when the
-CURRENT image's record has an ok sample -- an image bump runs the grid again (`fleet_store`).
+Results are stored through `fsla_devtools.results` at the label of the target that runs the jobs, `@fsla_bench//:fleet`
+(`fsla_bench.results.FLEET`): each row the dispatcher pulls is a sample whose semantics are (bench, config, cell, image),
+stored once however often it is re-pulled, and a cell is done when the CURRENT image's semantics have a sample with no
+error -- an image bump runs the grid again (`fleet_store`).
 
 `fleet` (a dict, usually a spec's `fleet:` block) supplies simple knobs: image / offer_query / batch
 / per_batch_timeout / idle_timeout / env, plus any other plain fleet.Job field (no_kill,
@@ -27,6 +28,8 @@ import os
 
 from fleet import Job, provider, semantics_of
 from fsla_devtools.results import Store, key
+
+from fsla_bench.results import FLEET
 
 
 def runtime_root():
@@ -82,9 +85,10 @@ def offer_query_for(spec_query, dialect):
                          f"set one in fsla_bench.fleet.jobs.DEFAULT_OFFER or in the spec") from None
 
 
-def fleet_store(bench, config, image, job):
-    """The job's result sink and completion reader over `fsla_devtools.results` at `<bench>/<config>`."""
-    store = Store(f"{bench}/{config}")
+def fleet_store(bench, config, image, job, root=None):
+    """The job's result sink and completion reader over `fsla_devtools.results` at `@fsla_bench//:fleet` (`root`: the
+    records directory, the machine's store by default)."""
+    store = Store(FLEET, root)
 
     def semantics(cell):
         return {"bench": bench, "config": config, "cell": cell, "image": image}
@@ -92,8 +96,7 @@ def fleet_store(bench, config, image, job):
     def store_result(row):
         sem = semantics(row["run_id"])
         digest = hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
-        record = store.get(key(sem))
-        if record and any(s.get("row_sha256") == digest for s in record["samples"]):
+        if any(s.get("row_sha256") == digest for s in store.samples(key(sem))):
             return
         if row.get("ok"):
             store.put(sem, output=row, provenance={"job": job}, row_sha256=digest)
@@ -102,7 +105,9 @@ def fleet_store(bench, config, image, job):
                       row=row, row_sha256=digest)
 
     def done_ids():
-        return {r["semantics"]["cell"] for r in store.records() if r["semantics"]["image"] == image and Store.complete(r)}
+        current = {"bench": bench, "config": config, "image": image}
+        return {s["semantics"]["cell"] for s in store.samples()
+                if s["ok"] and all(s["semantics"][k] == v for k, v in current.items())}
 
     return store_result, done_ids
 

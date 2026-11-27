@@ -2,15 +2,15 @@
 
     flash(cell, params) -> Timed    a timing entry of fsla-devtools' timing system: the call, what it built, its stopwatch
 
-The root (`declare.py`) registers it on every QKV cell of the selected groups. The cell is fsla-devtools'
-(`fsla_devtools.cells.qkv`, in the one form: tokens, value width, heads `H`, batch `B`, dtype, causal) and its tensors
-are the central draw (`fsla_devtools.cells.qkv.realize`), so every library timed on a QKV cell reads the same queries,
-keys and values. The call runs through Dao's FlashAttention-2 as torch compiles it, or -- parameter `impl` -- FA3
-(Hopper) or FA4 (Blackwell), which torch registers and the entry activates for its process. The backend is forced, so
-torch refuses a call flash cannot take rather than timing its math or memory-efficient backend; building the entry makes
-one call, so that refusal is recorded as the entry's failure before anything is timed. Each sample is one call between
-two CUDA events; a call carries no state, so it needs no reset. What the entry reports records torch's version and the
-active implementation, so a number cites its reference.
+`measure/sessions.bzl` declares it a timing entry on every QKV cell a group names, in the bench's bundle. The cell is
+fsla-devtools' (`fsla_devtools.cells.qkv`, in the one form: tokens, value width, heads `H`, batch `B`, dtype, causal)
+and its tensors are the central draw (`fsla_devtools.cells.qkv.realize`), so every library timed on a QKV cell reads
+the same queries, keys and values. The call runs through Dao's FlashAttention-2 as torch compiles it, or -- parameter
+`impl` -- FA3 (Hopper) or FA4 (Blackwell), which torch registers and the entry activates for its process. The backend
+is forced, so torch refuses a call flash cannot take rather than timing its math or memory-efficient backend; building
+the entry makes one call, so that refusal is recorded as the entry's failure before anything is timed. Each sample is
+one call between two CUDA events; a call carries no state, so it needs no reset. What the entry reports records torch's
+version and the active implementation, so a number cites its reference.
 
 THE INCREMENTAL CELL (fsla's docs/measurement.md, ruled 2026-10-18): with parameter `context` = T the cell's tokens are c
 NEW tokens after T already absorbed -- their queries attend over a KV cache of T + c keys, bottom-right causal (each new

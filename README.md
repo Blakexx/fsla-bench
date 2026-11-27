@@ -1,7 +1,7 @@
 # fsla-bench
 
 FSLA's benchmarks and its local measurement suite. The benchmark (MQAR recall) is a declarative spec that the generic
-[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite times fsla checkouts
+[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite times two fsla commits
 against each other and the attention reference, and diffs their surfaces, on this machine. Every result goes through fsla-devtools' store, `fsla_devtools.results`.
 
 The language-modeling, layer-performance and similarity benchmarks are archived at the tag
@@ -17,7 +17,7 @@ fsla-bench ──▶ fla           the fork's fsla branch: the FSLA layer and HF
            ──▶ chromatic-recall  the recall tasks (presence, graph, cue consistency) and the launcher MQAR runs through
            ──▶ fleet         GPU orchestration
            ──▶ fsla-devtools the result store's code (`fsla_devtools.results`), writing into fsla-results, the data
-           ──▶ fsla          (through fla; the measurement suite measures fsla checkouts directly)
+           ──▶ fsla          (through fla; the measurement suite measures fsla commits as bundles, each built by its own pins)
 ```
 
 ## Layout
@@ -30,6 +30,7 @@ fsla_bench/
   mqar/                 job.py, run.py (box side), smoke.py, build_configs.py, local_grid.py (this machine's card),
                         realized_state.py, analysis/graph.py, experiments/*.yaml
   measure/              the measurement suite's groups and attention reference (measure/README.md)
+measure/                the measurement suite's targets: sessions, null gates, memory passes and diffs over the bundles
 tests/<area>/           one directory per area above
 docker/                 the fleet images
 ```
@@ -100,15 +101,15 @@ GRID_TIERS=decoupling bazel run //:mqar_local_grid -- <fsla checkout> --config g
 bazel run //:bench_python -- -m fsla_bench.mqar.analysis.graph --config graph_grid
 ```
 
-The measurement suite is a declared build (`declare.py`, over fsla-devtools' `fsla_devtools.build`): each fsla
-checkout's own declarations (its build, SASS gate, realized support, timing entries) composed
-with fsla-bench's attention reference, one interleaved timing session per group of central cells, a memory pass, and
-every result stored. Each checkout runs in its own venv (fsla's `bazel run //:dev_env` writes it beside the checkout).
-See [`fsla_bench/measure/README.md`](fsla_bench/measure/README.md):
+The measurement suite is Bazel targets (`measure/`, over fsla-devtools' measurement rules): two fsla BUNDLES -- the
+`candidate`, the fsla checkout a run names, and the `reference`, a commit `MODULE.bazel` pins -- each built in its own
+workspace by its own pins (fsla-devtools' `bundle` tag), their timing entries beside fsla-bench's attention reference in
+one interleaved session per group of central cells and arm set, each with its null gate, a memory pass a group, and the
+diffs of the surfaces both commits export; every result stored. See
+[`fsla_bench/measure/README.md`](fsla_bench/measure/README.md):
 
 ```bash
-bazel run //:suite -- run declare.py:suite --arg target=worktree:<fsla checkout> \
-    --arg references='worktree:<baseline>,label:master'
+bazel run //measure:session_layer-alt-entmax1.5-64x64-T2048_entmax_solve --repo_env=FSLA_CANDIDATE=<fsla checkout>
 ```
 
 Local numbers are engineering gates. Citable numbers come from rented runs.
@@ -116,12 +117,15 @@ Local numbers are engineering gates. Citable numbers come from rented runs.
 ## Results
 
 Every result is stored through `fsla_devtools.results` (fsla-devtools' store), in the data repository fsla-results (the
-checkout the dev config's `store.root` names): the fleet benches at `<bench>/<config>`,
-the local MQAR grid beside the fleet's records at `mqar/<config>` (keyed by its checkouts instead of an image), and the
-measurement suite at `fsla/<diff>`, `diff/<surface>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
-fleet's `store_result` sink and `done_ids`. Each pulled row is a sample of the record keyed by (bench, config, cell,
-image), stored once however often it is pulled again. A cell is done when the current image has an ok sample, so an
-image bump runs the grid again. Failures are samples too.
+checkout the dev config's `store.root` names), at the label of the target that produced it (`fsla_bench/results.py`):
+the fleet's rows at `@fsla_bench//:fleet`, the local MQAR grid's beside them at `@fsla_bench//:mqar_local_grid`, and the
+measurement suite at each storing target's own label (`@fsla_bench//measure:session_<group>_<arms>`, `null_...`,
+`memory_<group>`, `store_diff_<surface>`). A fleet job plugs the store into fleet's `store_result` sink and `done_ids`:
+each pulled row is a sample whose semantics are (bench, config, cell, image), stored once however often it is pulled
+again, and a cell is done when the current image's semantics have a sample with no error, so an image bump runs the
+grid again; the local grid's semantics name its checkouts instead of an image. Failures are samples too. The readers
+(`fsla_bench.mqar.analysis.graph`, the seed confirmation's winners) take both labels' samples of one bench and config,
+the newest per run id.
 
 ## Tests and the gate
 
@@ -130,11 +134,11 @@ Tests run per area. The GPU-heavy suites are never run unscoped:
 ```bash
 bazel run //:pytest -- <fsla checkout> tests/models
 bazel run //:pytest -- <fsla checkout> tests/mqar
-bazel run //:bench_python -- -m unittest tests.measure.test_compose
 ```
 
-The gate is `bazel test //:gate`: ruff with fsla's rule set and its E30x spacing family over `fsla_bench`, `tests` and
-`declare.py`, the measurement composer's contract tests, the declaration check, and the doc references (`//:docrefs`,
+The gate is `bazel test //:gate`: ruff with fsla's rule set and its E30x spacing family over `fsla_bench` and `tests`,
+the records' writers and readers on a temporary store (`tests.results.test_records`), the declaration check, and the doc
+references (`//:docrefs`,
 fsla-devtools' `fsla_devtools.docrefs`: every citation these docs make of the tree pinned in `references.lock.json` and
 read against its target), on the bench environment. The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, fsla-devtools' commit gate) runs
 it on the commit as git will write it.

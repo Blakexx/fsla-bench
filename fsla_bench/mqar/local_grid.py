@@ -47,25 +47,33 @@ import sys
 import time
 from pathlib import Path
 
-from fsla_devtools.results import Store, checkout, key
+from fsla_devtools.results import Store, checkout
+
+from fsla_bench.results import LOCAL_GRID, completed
 
 REPO = Path(__file__).resolve().parents[2]
 
 
 def local_store(config: str):
-    """The local grid's store (`fsla_devtools.results` at `mqar/<config>`, beside the fleet's rows) and its semantics: the cell
-    and the code that trains it -- this checkout and the fsla engine's, each commit and tracked diff."""
+    """The local grid's store and its semantics over the code that trains it -- this checkout and the fsla engine's,
+    each commit and tracked diff (`grid_store`)."""
     import importlib.util
 
     code = {}
     for name, path in (("fsla_bench", REPO), ("fsla", Path(importlib.util.find_spec("fsla").origin).resolve().parents[1])):
         here = checkout(path)
         code[name] = {"git_sha": here["git_sha"], "diff_sha256": here["diff_sha256"]}
+    return grid_store(config, code)
+
+
+def grid_store(config: str, code: dict, root=None):
+    """The local grid's store (`fsla_devtools.results` at `@fsla_bench//:mqar_local_grid`, the target that runs it,
+    beside the fleet's rows) and its semantics: the bench, the config, the cell and the code that trains it."""
 
     def semantics(cell: str) -> dict:
         return {"bench": "mqar", "config": config, "cell": cell, "local": code}
 
-    return Store(f"mqar/{config}"), semantics
+    return Store(LOCAL_GRID, root), semantics
 
 
 GPU_LOCK = "/tmp/fsla_gpu.lock"
@@ -213,7 +221,7 @@ def main(argv=None):
     store, semantics = local_store(a.config)
     #: DONE FOR THIS CODE: a cell is complete when the current checkouts (this repository and the fsla engine it
     #: trains) have an ok sample, the local counterpart of the fleet's current image (`fsla_bench.fleet.jobs`).
-    done = {c.run_id for c in configs if Store.complete(store.get(key(semantics(c.run_id))))}
+    done = {c.run_id for c in configs if completed(store, semantics(c.run_id))}
 
     pending = [(i, c, e) for i, (c, e) in enumerate(zip(configs, envs, strict=True)) if c.run_id not in done]
     if a.limit:
@@ -221,7 +229,7 @@ def main(argv=None):
 
     sec_per_step = a.sec_per_step if a.sec_per_step is not None else SEC_PER_STEP_L128
     print(f"spec={a.config} tier={tier}: {len(configs)} cells, {len(done)} done, "
-          f"{len(pending)} to run -> {store.location}", flush=True)
+          f"{len(pending)} to run -> {store.label}", flush=True)
     total_bytes, total_sec = 0, 0.0
     plan = []
     for i, cfg, _env in pending:

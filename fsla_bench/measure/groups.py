@@ -3,7 +3,9 @@
 A GROUP is a selection of central cells (`fsla_devtools.cells`) and its relation: `holds`, the claim in words; `equal`,
 the parameters every cell of the group carries with one value; and `together`, the arm sets each timed in one session
 over the group's cells, in every checkout a run measures. `check` holds a group to its claim against the central
-registry. The root (`declare.py`) loads this file by path.
+registry. Bazel reads this file: the bench's `groups` extension (`bazel/groups.bzl`) runs `described()` and writes the
+groups as Starlark (`@bench_groups//:groups.bzl`), which the sessions' macro (`measure/sessions.bzl`) declares targets
+over -- a group that breaks its claim fails the fetch.
 
     attention(tokens, states, dv, cells, heads) FSLA's carry cells of one length, state count N and value width beside
                                                 the attention cell of that length and width; each arm of
@@ -151,11 +153,13 @@ def check(group: Group, registry) -> None:
             raise ValueError(f"group {group.name} claims bf16 attention, but {c} is {cell.dtype}")
 
 
-def select(names: str) -> list[Group]:
-    """A comma list of group names, `gate` (the groups of `GATE`) and `all`."""
-    wanted = list(dict.fromkeys(n for name in names.split(",") for n in
-                                (GROUPS if name == "all" else GATE if name == "gate" else (name,))))
-    unknown = sorted(set(wanted) - set(GROUPS))
-    if unknown:
-        raise SystemExit(f"no group {unknown}; the groups are {sorted(GROUPS)}")
-    return [GROUPS[name] for name in wanted]
+def described() -> dict:
+    """Every group, checked against the central registry, as plain data: what the sessions' macro reads (`GROUPS`, by
+    name, each its fields; `GATE`)."""
+    import dataclasses
+
+    from fsla_devtools.cells import central
+
+    for group in GROUPS.values():
+        check(group, central())
+    return {"GROUPS": {name: dataclasses.asdict(group) for name, group in GROUPS.items()}, "GATE": list(GATE)}

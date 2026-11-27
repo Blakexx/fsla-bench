@@ -1,5 +1,5 @@
-"""fsla-bench's root package: its checks and gate (the tracked tree beside them: fsla_bench/, tests/, declare.py hold no
-BUILD file, so their files are this package's)."""
+"""fsla-bench's root package: its checks and gate (the tracked tree beside them: fsla_bench/ and tests/ hold no BUILD
+file, so their files are this package's)."""
 
 load("@fsla_devtools//bazel:rules.bzl", "bazel_version_test")
 load("//bazel:defs.bzl", "bench_python", "docrefs_test", "research_python", "tree_part", "tree_test")
@@ -17,7 +17,19 @@ filegroup(
     srcs = [
         ":tracked",
         "//bazel:tracked",
+        "//measure:tracked",
     ],
+)
+
+#: the attention reference and its package, which the bench's bundle carries (`//measure:bundle`)
+filegroup(
+    name = "measure_bundle",
+    srcs = [
+        "fsla_bench/__init__.py",
+        "fsla_bench/measure/__init__.py",
+        "fsla_bench/measure/attention.py",
+    ],
+    visibility = ["//measure:__pkg__"],
 )
 
 #: fsla's rule set, over the bench package and its tests
@@ -25,7 +37,7 @@ tree_test(
     name = "ruff",
     size = "small",
     cmd = ["ruff", "check", "--select", "E,F,UP,B,SIM,I,C4", "--line-length", "127", "--target-version", "py310",
-           "fsla_bench", "tests", "declare.py"],
+           "fsla_bench", "tests"],
     data = [":tree"],
 )
 
@@ -34,15 +46,16 @@ tree_test(
     size = "small",
     #: ruff's blank-line family is preview-gated, so its own invocation
     cmd = ["ruff", "check", "--preview", "--select", "E3", "--line-length", "127", "--target-version", "py310",
-           "fsla_bench", "tests", "declare.py"],
+           "fsla_bench", "tests"],
     data = [":tree"],
 )
 
-#: the measurement composer's contract: the suite composes each fsla checkout's declarations as declared
+#: the bench's own records: its programs' store writers and readers at their targets' labels (`fsla_bench.results`), on a
+#: temporary store root
 tree_test(
-    name = "suite_contract",
+    name = "records",
     size = "small",
-    cmd = ["python3", "-m", "unittest", "tests.measure.test_suite"],
+    cmd = ["python3", "-m", "unittest", "tests.results.test_records"],
     data = [":tree"],
 )
 
@@ -79,9 +92,9 @@ test_suite(
         ":bazelversion",
         ":declarations",
         ":docrefs",
+        ":records",
         ":ruff",
         ":ruff_e3",
-        ":suite_contract",
     ],
 )
 
@@ -115,10 +128,4 @@ bench_python(
     name = "fleet",
     module = "fsla_bench.fleet",
     fsla = True,
-)
-
-#: the measurement suite, a declared build over fsla-devtools' build system (declare.py)
-bench_python(
-    name = "suite",
-    module = "fsla_devtools.build",
 )

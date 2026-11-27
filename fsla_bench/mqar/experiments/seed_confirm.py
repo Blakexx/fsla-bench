@@ -7,7 +7,7 @@ seeds, for error bars. Generic + results-driven (no baked winner list):
 Parameterized by env so it works for any experiment:
   SEED_CONFIRM_BASE     base spec name (default: canonical) or a path to a .yaml
   SEED_CONFIRM_SEEDS    comma list of extra seeds (default: 2024,777)
-The stage-1 results are every sample `fsla_devtools.results` holds under mqar/.
+The stage-1 results are every MQAR cell the fleet and the local grid stored (`fsla_bench.results.rows`).
 
 Run as a module via the runner (`--config seed_confirm`); or `python -m ...seed_confirm` to preview
 the picked winners.
@@ -18,6 +18,7 @@ import re
 import sys
 
 from fsla_bench.mqar.build_configs import build_configs, load_spec
+from fsla_bench.mqar.winners import pick_winners
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,39 +27,6 @@ SEEDS = [int(s) for s in os.environ.get("SEED_CONFIRM_SEEDS", "2024,777").split(
 
 # Launch knobs (module-config, so they live here rather than a yaml `fleet:` block).
 FLEET = {"batch": 1, "per_batch_timeout": 18000, "env": {"SEED_CONFIRM_SEEDS": "2024,777"}}
-
-
-def _kernel(rid):
-    if rid.startswith("grid-routed-"):
-        return "routed-" + rid.split("-")[2]
-    if rid.startswith("grid-mha"):
-        return "mha"
-    if rid.startswith("grid-sse"):
-        return "sse"
-    return rid.split("-")[1]
-
-
-def pick_winners(valid_ids=None):
-    """Best-max_acc run_id per (kernel, nc) across the results (SSE excluded — its faithful impl is
-    too slow to seed-confirm). `valid_ids` restricts the search to one spec's own cells, so a
-    higher-acc cell from a DIFFERENT experiment can't steal a (kernel, nc) winner slot."""
-    from fsla_devtools.results import outputs
-
-    best = {}
-    for _record, _sample, j in outputs("mqar"):          # every stored MQAR sample (`fsla_devtools.results`)
-        if not j.get("ok") or not j.get("run_id"):
-            continue
-        if valid_ids is not None and j["run_id"] not in valid_ids:
-            continue
-        k = _kernel(j["run_id"])
-        if k == "sse":
-            continue
-        ncm = re.search(r"nc(\d+)", j["run_id"])
-        nc = int(ncm.group(1)) if ncm else -1
-        acc = j.get("max_acc") or 0.0
-        if acc > best.get((k, nc), (-1.0, None))[0]:
-            best[(k, nc)] = (acc, j["run_id"])
-    return {rid for _, rid in best.values()}
 
 
 def build():

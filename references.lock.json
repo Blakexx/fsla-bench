@@ -5,6 +5,11 @@
   {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "daa5c5fc66806a7e", "target": "fsla_bench/fleet/jobs.py::make_job"},
   {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/measure/README.md"},
   {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/models/fsla.py"},
-  {"doc": "fsla_bench/measure/README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/measure/__init__.py"}
+  {"doc": "README.md", "pinned_at": "2647da1ada81", "reviewed": true, "sha256": "", "target": "fsla_bench/mqar/analysis/graph.py"},
+  {"doc": "README.md", "pinned_at": "2647da1ada81", "reviewed": true, "sha256": "", "target": "fsla_bench/results.py"},
+  {"doc": "README.md", "pinned_at": "2647da1ada81", "reviewed": true, "sha256": "", "target": "measure"},
+  {"doc": "README.md", "pinned_at": "2647da1ada81", "reviewed": true, "sha256": "", "target": "tests/results/test_records.py"},
+  {"doc": "fsla_bench/measure/README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/measure/__init__.py"},
+  {"doc": "fsla_bench/measure/README.md", "pinned_at": "2647da1ada81", "reviewed": true, "sha256": "", "target": "measure"}
  ]
 }

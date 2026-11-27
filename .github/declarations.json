@@ -12,7 +12,6 @@
     "MODULE.bazel.lock",
     "README.md",
     "bazel",
-    "declare.py",
     "docker",
     "pyproject.toml",
     "references.lock.json",
@@ -21,6 +20,7 @@
     "research.in",
     "research.lock",
     "fsla_bench",
+    "measure",
     "tests"
   ],
   "allow": {}

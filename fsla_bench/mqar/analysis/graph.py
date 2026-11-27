@@ -82,15 +82,12 @@ TASKS = {
 }
 
 
-def _load_rows(location: str):
-    """Every completed cell stored at `location` (`fsla_devtools.results`), the newest sample per run_id."""
-    from fsla_devtools.results import outputs
+def _load_rows(config: str, root=None):
+    """Every completed cell of the MQAR config the fleet and the local grid stored (`fsla_bench.results.rows`), the
+    newest sample per run_id."""
+    from fsla_bench.results import rows
 
-    rows = {}
-    for _record, _sample, r in sorted(outputs(location), key=lambda x: x[1]["utc"]):
-        if r.get("ok") and r.get("run_id"):
-            rows[r["run_id"]] = r
-    return list(rows.values())
+    return rows("mqar", config, root)
 
 
 _RUNID = re.compile(r"grid-routed-(?P<tag>[^-]+(?:-mass)?)-nc(?P<nc>\d+)_L(?P<L>\d+)_"
@@ -168,7 +165,7 @@ def crossing(points, criterion):
     return None, "below"
 
 
-def analyse(config: str, criterion: float | None = None, location: str | None = None):
+def analyse(config: str, criterion: float | None = None):
     from fsla_bench.mqar.build_configs import load_spec
 
     spec = load_spec(str(_EXP_DIR / f"{config}.yaml"))
@@ -178,7 +175,7 @@ def analyse(config: str, criterion: float | None = None, location: str | None = 
         raise ValueError(
             f"criterion {criterion} is at or below this task's chance line ({task.chance}): the "
             "crossing would be the threshold of GUESSING, not of recall. Raise the criterion.")
-    rows = _load_rows(location or f"mqar/{config}")
+    rows = _load_rows(config)
     conds = {c["tag"]: c for c in spec.get("conditions", [])}
     proto = spec["data"]["protocol"]
 
@@ -297,11 +294,10 @@ def main(argv=None):
                     help="accuracy the collapse threshold is defined at (default: the TASK's own, "
                          "0.5 for graph_recall and 0.75 for presence_recall, which is halfway from "
                          "that task's 0.5 chance line to the ceiling)")
-    ap.add_argument("--location", default=None, help="the fsla_devtools.results location (default: mqar/<config>)")
     ap.add_argument("--json", default=None, help="also write the rows here")
     a = ap.parse_args(argv)
 
-    spec, rows, floor, attn_rows = analyse(a.config, a.criterion, a.location)
+    spec, rows, floor, attn_rows = analyse(a.config, a.criterion)
     task = task_of(spec)
     crit = task.criterion if a.criterion is None else a.criterion
     if not rows and not floor:

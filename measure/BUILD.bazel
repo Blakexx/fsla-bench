@@ -1,0 +1,26 @@
+"""THE BENCH'S MEASUREMENTS (fsla_bench/measure/README.md): its groups' sessions, null gates and memory passes over the
+fsla bundles and the attention reference, and the diffs across the two commits (`sessions.bzl`).
+
+    bazel run //measure:session_<group>_<arms> --repo_env=FSLA_CANDIDATE=PATH     # measure and store, at its label
+    bazel run //measure:null_<group>_<arms> --repo_env=FSLA_CANDIDATE=PATH        # its null gate, at its label
+    bazel run //measure:memory_<group> --repo_env=FSLA_CANDIDATE=PATH             # each member alone, at its label
+    bazel test //measure:diffs --repo_env=FSLA_CANDIDATE=PATH                     # the verdicts across the commits
+"""
+
+load("//bazel:defs.bzl", "timing_bundle", "tree_part")
+load(":sessions.bzl", "diffs", "flash_entries", "sessions")
+
+#: THE BENCH'S BUNDLE: the attention reference (`fsla_bench/measure/attention.py`), which must load from inside it
+timing_bundle(
+    name = "bundle",
+    binds = ["fsla_bench.measure.attention"],
+    data = ["//:measure_bundle"],
+)
+
+flash_entries()
+
+sessions()
+
+diffs()
+
+tree_part()

@@ -197,10 +197,23 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//bazel:groups.bzl%groups": {
+      "general": {
+        "bzlTransitiveDigest": "VPzowrchxpb/Cu8Vpj2kdEUfCiAPpn4r/9mxCsfTxDc=",
+        "usagesDigest": "hKyTPYAv+N3Oj3KkDqw+khGHWXsiCqFobjKPK8lT9LI=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "bench_groups": {
+            "repoRuleId": "@@//bazel:groups.bzl%_groups_repo",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "@@fsla_devtools+//bazel:environment.bzl%environment": {
       "general": {
-        "bzlTransitiveDigest": "T65V9nRbsinw49wPykFUiNcZYp98kY4S1NoW1b+uVHo=",
-        "usagesDigest": "v5q014pXoCYINaq3iIpUAxxOfxjPJBb1VwiWw/1BZuQ=",
+        "bzlTransitiveDigest": "VuMCgL/gWMA327qlh8oGiQAnmTxdUxedMaMWvGrAFoc=",
+        "usagesDigest": "zMcbjePZGyXXjSY1Ck+GaPJj0vhqhk01B8PDnpMaWd8=",
         "recordedInputs": [
           "REPO_MAPPING:,fsla_devtools fsla_devtools+",
           "REPO_MAPPING:,uv fsla_devtools++environment+uv"
@@ -262,9 +275,35 @@
             "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_tree_repo",
             "attributes": {}
           },
+          "fsla_cells": {
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_cells_repo",
+            "attributes": {}
+          },
           "docrefs": {
             "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_docrefs_repo",
             "attributes": {}
+          },
+          "candidate": {
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_bundle_worktree_repo",
+            "attributes": {
+              "commit": "",
+              "remote": "",
+              "worktree_env": "FSLA_CANDIDATE",
+              "packages": [
+                "//measure:all"
+              ]
+            }
+          },
+          "reference": {
+            "repoRuleId": "@@fsla_devtools+//bazel:environment.bzl%_bundle_commit_repo",
+            "attributes": {
+              "commit": "14daa4d062a3348c12fbbe6dba03ebc210ca2d46",
+              "remote": "https://github.com/Blakexx/fsla.git",
+              "worktree_env": "",
+              "packages": [
+                "//measure:all"
+              ]
+            }
           }
         }
       }
