@@ -67,5 +67,5 @@ ratio is chosen when the records are read, within a session.
 ## Tests
 
 `bazel test //:suite_contract` (`python -m unittest tests.measure.test_suite`, in the gate) checks the groups against the central cells and the root's declarations
-on fake checkouts, with no GPU; fsla-devtools' `tests/test_declared_build.py` and `tests/test_timing.py` check the build
+on fake checkouts, with no GPU; fsla-devtools' own tests (its `test_declared_build` and `test_timing`) check the build
 and timing systems.

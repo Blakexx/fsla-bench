@@ -1,5 +1,4 @@
 {
-  "public": "Blakexx/fsla-bench",
   "ships": [
     ".bazeliskrc",
     ".bazelrc",
@@ -16,6 +15,7 @@
     "declare.py",
     "docker",
     "pyproject.toml",
+    "references.lock.json",
     "requirements.in",
     "requirements.lock",
     "research.in",
@@ -23,6 +23,5 @@
     "fsla_bench",
     "tests"
   ],
-  "private": [],
   "allow": {}
 }

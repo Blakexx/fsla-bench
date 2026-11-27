@@ -1,0 +1,10 @@
+{
+ "python": "3.11",
+ "references": [
+  {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": ".github/declarations.json"},
+  {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "daa5c5fc66806a7e", "target": "fsla_bench/fleet/jobs.py::make_job"},
+  {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/measure/README.md"},
+  {"doc": "README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/models/fsla.py"},
+  {"doc": "fsla_bench/measure/README.md", "pinned_at": "fbdaf8342baa", "reviewed": true, "sha256": "", "target": "fsla_bench/measure/__init__.py"}
+ ]
+}

@@ -1,10 +1,10 @@
 """fsla-bench's rules: fsla-devtools' generic rules, each handed this workspace's environment (`bench_env`) and tracked
-tree, and the runs on its two environments (`bench_python`, `research_python`)."""
+tree, the doc references (`docrefs_test`), and the runs on its two environments (`bench_python`, `research_python`)."""
 
 load("@bazel_skylib//lib:shell.bzl", "shell")
 load("@bench_env//:flags.bzl", "VENV")
 load("@bench_tree//:tree.bzl", "TRACKED")
-load("@fsla_devtools//bazel:rules.bzl", _tree_part = "tree_part", _tree_test = "tree_test")
+load("@fsla_devtools//bazel:rules.bzl", _docrefs_test = "docrefs_test", _tree_part = "tree_part", _tree_test = "tree_test")
 load("@research_env//:flags.bzl", RESEARCH_VENV = "VENV")
 
 def tree_test(**kwargs):
@@ -14,6 +14,12 @@ def tree_test(**kwargs):
 def tree_part(parts = {}):
     """This package's part of the tree: `tracked` and `tracked_python`."""
     _tree_part(TRACKED, parts)
+
+def docrefs_test(**kwargs):
+    """The doc references (fsla-devtools' `fsla_devtools.docrefs`), on the bench environment's interpreter, in the
+    checkout."""
+    _docrefs_test(python = Label("@bench_env//:python"), tool = Label("@docrefs//:docrefs.py"),
+                  anchor = Label("//:MODULE.bazel"), **kwargs)
 
 _PYTHON_RUN = """\
 #!/bin/bash
