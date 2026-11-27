@@ -1,8 +1,8 @@
 # fsla-bench
 
 FSLA's benchmarks and its local measurement suite. The benchmark (MQAR recall) is a declarative spec that the generic
-[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite measures fsla checkouts
-with their own instruments on this machine. Every result goes through fsla-devtools' store, `fsla_devtools.results`.
+[`fleet`](https://github.com/Blakexx/fleet) package runs on rented GPUs. The measurement suite times fsla checkouts
+against each other and the attention reference, and diffs their surfaces, on this machine. Every result goes through fsla-devtools' store, `fsla_devtools.results`.
 
 The language-modeling, layer-performance and similarity benchmarks are archived at the tag
 `archive/pre-rebuild-2026-09-14`: layer performance is rebuilt on the measurement suite's timing sessions, and
@@ -118,7 +118,7 @@ Local numbers are engineering gates. Citable numbers come from rented runs.
 Every result is stored through `fsla_devtools.results` (fsla-devtools' store), in the data repository fsla-results (the
 checkout the dev config's `store.root` names): the fleet benches at `<bench>/<config>`,
 the local MQAR grid beside the fleet's records at `mqar/<config>` (keyed by its checkouts instead of an image), and the
-measurement suite at `fsla/<instrument>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
+measurement suite at `fsla/<diff>`, `diff/<surface>`, `timing/session` and `timing/memory`. A fleet job plugs the store into
 fleet's `store_result` sink and `done_ids`. Each pulled row is a sample of the record keyed by (bench, config, cell,
 image), stored once however often it is pulled again. A cell is done when the current image has an ok sample, so an
 image bump runs the grid again. Failures are samples too.

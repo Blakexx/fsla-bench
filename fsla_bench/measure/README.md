@@ -13,8 +13,8 @@ memory pass and the stores. This package defines no measurement of fsla's.
     bazel run //:suite -- run  declare.py:diffs --arg target=... --arg references=...   # the dual run
 
 THE ROOT DECLARES EVERYTHING and takes no selector: which of it a build runs is pruned by LABEL at the CLI, which
-knows nothing of cells, groups or parts -- `--only 'tip/sass'` runs that instrument and what it needs;
-`--skip '*/support'` drops that instrument and everything that reads it; `--only 'session/*'` runs every session.
+knows nothing of cells, groups or parts -- `--only 'tip/side/oracle'` runs that side and what it needs;
+`--skip '*/side/*'` drops the sides and everything that reads them; `--only 'session/*'` runs every session.
 
 `//:suite` runs the build system on the bench environment, in this checkout; each fsla checkout runs in its own venv
 (`venv:PATH`, by default the `venv-<checkout>` fsla's `bazel run //:dev_env` writes beside it).
@@ -26,7 +26,7 @@ scopes its targets (`tip/binary`) and defaults to its directory's name. The `tar
 `references` the others. Each checkout's `declare.py` declares, in that checkout's venv and directory: its build
 (cached while its binary stands), its machine facts, its timing registrations on the layer cells under each construction
 (`entmax_solve@layer=C`, `layer_prefill@layer=C`, `decode_step@layer=C` and the op `layer_op@layer=C`), its clock reader and its DIFF SIDES (`SURFACES`: the fp64 oracle, the producer reference, the carry kernel, each over
-the cells of its kind and tier); the target alone also declares its instruments (`sass`, `support`) and its own kernel-vs-oracle diff. For each surface and each
+the cells of its kind and tier) and its own kernel-vs-oracle diff. A checkout's instruments are its own Bazel targets, which this suite does not run. For each surface and each
 reference, the root declares ONE DIFF (`fsla_devtools.diff`) of the two checkouts' sides under THIS ROOT'S rule for
 that surface (`RULES`: the oracle bit-identical, the producer support-equal, a kernel per slot at twice the
 reassociation its checkout states in `NUMERICS`, exact quantities exact) -- the oracle pair's dual run, and kernel-vs-kernel conformance -- stored at `diff/<surface>`;
@@ -56,7 +56,7 @@ one outside their interquartile range, a worker's bias is found, and a ratio acr
 
 ## Records
 
-Instruments at `fsla/<instrument>`, sessions at `timing/session`, the memory pass at `timing/memory`, the null gate at
+A checkout's own diff at `fsla/<diff>`, the cross-checkout diffs at `diff/<surface>`, sessions at `timing/session`, the memory pass at `timing/memory`, the null gate at
 `timing/null`, through `fsla_devtools.results`. A store target appends a run-stamped sample to the record its source's semantics
 key -- the executor, its parameters, the cells' records and the draw, and every dependency's key and output -- so a
 session of the same

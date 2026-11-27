@@ -1,5 +1,5 @@
 """The suite's root (`declare.py`) and groups: every group holds its claim against the central cells and a group breaking
-it is refused; the root loads each checkout's own declarations, gives the target alone its instruments, and declares one
+it is refused; the root loads each checkout's own declarations and declares one
 session per group and arm set over every checkout's registration on the group's cells beside the attention reference,
 one memory pass, a null gate on the target's layer op, a store for each result and a server stop that runs after
 everything; a checkout without declarations is not compared. No GPU: nothing is built.
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 GROUPS = load(ROOT / "fsla_bench" / "measure" / "groups.py")
 SUITE = load(ROOT / "declare.py")
 
-#: a checkout's declarations as fsla's `declare.py` shapes them: a build, its instruments, and on the carry cells a
+#: a checkout's declarations as fsla's `declare.py` shapes them: a build, and on the carry cells a
 #: `prefill` registration, on the layer cells the `layer_op` one the root's null gate takes, and a clock reader
 FAKE = textwrap.dedent('''
     from fsla_devtools.build.declare import Env
@@ -35,7 +35,7 @@ FAKE = textwrap.dedent('''
     SURFACES = {"oracle": ("fake:side", "carry", "oracle", {"host_cpu": "all"})}
 
 
-    def declare(g, env, *, timing=None, instruments=("sass", "phases")):
+    def declare(g, env, *, timing):
         from fsla_devtools.cells import central
         from fsla_devtools.diff import side
 
@@ -44,11 +44,8 @@ FAKE = textwrap.dedent('''
         binary = g.node("binary", executor="fake:build", env=env)
         oracle = [c for c in carry if central().cell(c)["params"].get("tier") == "oracle"]
         out = {"binary": binary, "entries": {}, "clock": None,
-               "instruments": {n: g.node(n, executor="fake:tool", env=env, deps={"binary": binary}) for n in instruments},
                "sides": {"oracle": side(g, "side/oracle", env=env, executor="fake:side", cells=cell_nodes(g, oracle))},
                "diffs": {}}
-        if timing is None:
-            return out
         layer = [c for c in cells if c.startswith("layer-")]
         for arm, on in (("prefill", carry), ("layer_op", layer)):
             out["entries"][arm] = register_timing(g, arm, server=timing, env=env, executor="fake:timed",
@@ -104,11 +101,8 @@ class Root(unittest.TestCase):
         self.assertEqual(session.params["cells"], list(flagship.cells))
         self.assertEqual(session.deps["clock"].label, "tip/clock")
         self.assertEqual(session.holds, {"gpu": "all", "clock": 1})
-        self.assertIn("tip/phases", targets)
-        self.assertNotIn("master/phases", targets)
         stored = {t.label: t.deps["source"].label for t in targets.values() if (t.executor or "").endswith("store:put")}
-        self.assertEqual({k: stored[k] for k in ("tip/store/phases", "store/memory")},
-                         {"tip/store/phases": "tip/phases", "store/memory": "memory"})
+        self.assertEqual(stored["store/memory"], "memory")
         gate = targets["null"]
         #: the null gate takes the FIRST layer cell of every group the target's layer_op registers on: one
         #: cell a group, so a worker's bias is read once per group's shape and never per cell
@@ -126,7 +120,7 @@ class Root(unittest.TestCase):
 
         from fsla_devtools.build.scheduler import select
 
-        self.assertFalse({"cells", "skip_cells", "parts", "groups", "instruments"}
+        self.assertFalse({"cells", "skip_cells", "parts", "groups"}
                          & set(inspect.signature(SUITE["root"]).parameters))
         public, targets = self.root()
         #: a session per group arm set that has a member -- every group, not a gate subset; the double registers
@@ -136,8 +130,8 @@ class Root(unittest.TestCase):
         expected = {f"session/{g.name}/{'+'.join(arms)}" for g in GROUPS["GROUPS"].values() for arms in g.together
                     if set(arms) & ({"prefill", "flash"} | {a for a, _ in g.flash_arms})}
         self.assertEqual(sessions, expected)
-        only = select([public["suite"]], only=["tip/phases"])
-        self.assertEqual([t.label for t in only], ["tip/binary", "tip/phases"])
+        only = select([public["suite"]], only=["tip/clock"])
+        self.assertEqual([t.label for t in only], ["timing-server", "tip/clock"])
 
     def test_each_surface_the_target_exposes_is_diffed_against_each_reference_under_its_own_rule(self):
         public, targets = self.root(references=f"worktree:{self.base / 'base'},label:master")

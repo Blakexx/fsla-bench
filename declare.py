@@ -10,7 +10,7 @@
 `//:suite` runs fsla-devtools' build system on the bench environment, in this checkout. A TARGET is a fsla checkout and
 the venv that runs it; `references` adds others, `;`-separated. Each checkout's own `declare.py` is loaded by path and
 called under its label's scope with one shared timing server: its build, machine facts, timing registrations and its
-diff SIDES, and for the target alone its instruments and its own kernel-vs-oracle diff. THE ROOT DECLARES EVERYTHING
+diff SIDES and its own kernel-vs-oracle diff. THE ROOT DECLARES EVERYTHING
 and takes no selector: which of it a build runs is pruned by label at the CLI (`--only`, `--skip`), which knows nothing
 of cells, groups or parts. A checkout without a
 `declare.py` predates the declaration API and is not compared. Every central cell is a NODE the checkouts share
@@ -24,8 +24,8 @@ rule the target states for that surface -- the oracle pair's dual run and kernel
 (`measure_timing`) over every checkout's registration of those arms on the group's cells, the target's clock reader
 proving the clock; one MEMORY pass over every registration on every selected cell; a NULL GATE over the target's
 `layer_op` on each layer group's cell, its entries timed against copies of themselves in second workers, so a
-comparison across checkouts' workers is read beside what the gate found; a store for each instrument
-(`fsla/<instrument>`), each session (`timing/session`), the memory pass (`timing/memory`) and the null gate
+comparison across checkouts' workers is read beside what the gate found; a store for each checkout's own diff
+(`fsla/<diff>`), each session (`timing/session`), the memory pass (`timing/memory`) and the null gate
 (`timing/null`); and the server's stop, which runs whatever failed. Which checkout is the reference for a ratio is
 chosen when the records are read (`fsla_devtools.results`), never here.
 """
@@ -117,19 +117,13 @@ def root(g, target: str, references: str = "", rounds: str = "8", reps: str = "1
     root_dir = store_root or None
     entries: dict[str, list] = {}
     stores, clock, null_entry, declared_by = [], None, None, {}
-    for i, c in enumerate(checkouts):
+    for c in checkouts:
         declared = load(c["worktree"] / "declare.py")
-        #: the TARGET declares its instruments and its own kernel-vs-oracle diff; a reference is what it is compared
-        #: against, so it declares its sides and its timing arms and nothing it would measure about itself
-        which = {} if i == 0 else {"instruments": ()}
         out = declared["declare"](g.scoped(c["label"]), declared["checkout"](c["worktree"], python=c["python"],
-                                                                             label=c["label"]), timing=server, **which)
+                                                                             label=c["label"]), timing=server)
         declared_by[c["label"]] = (declared, out)
         for arm, registration in out["entries"].items():
             entries.setdefault(arm, []).append(registration)
-        for name, instrument in out["instruments"].items():
-            stores.append(store(g, f"{c['label']}/store/{name}", source=instrument, location=f"fsla/{name}",
-                                cache=instrument.cache, root=root_dir))
         for name, verdict in out["diffs"].items():
             stores.append(store(g, f"{c['label']}/store/{name}", source=verdict, location=f"fsla/{name}", root=root_dir))
         clock = clock or out["clock"]
