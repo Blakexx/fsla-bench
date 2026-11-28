@@ -10,6 +10,9 @@ fsla bundles and the attention reference, and the diffs across the two commits (
 load("//bazel:defs.bzl", "timing_bundle", "tree_part")
 load(":sessions.bzl", "diffs", "flash_entries", "sessions")
 
+#: the root's hermetic check reads the bundle and the gate's sessions
+package(default_visibility = ["//:__pkg__"])
+
 #: THE BENCH'S BUNDLE: the attention reference (`fsla_bench/measure/attention.py`), which must load from inside it
 timing_bundle(
     name = "bundle",

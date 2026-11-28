@@ -10,7 +10,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "fsla_devtools", version = "0.1.0")
 git_override(
     module_name = "fsla_devtools",
-    commit = "79a11878980f25bcf06b1c0b5ec00a1746b7a655",
+    commit = "6781f2a752a4a95ce7566fd2b05942e0c27ffcb1",
     remote = "https://github.com/Blakexx/fsla-devtools.git",
 )
 
@@ -54,7 +54,11 @@ environment.python(
 environment.tree(name = "bench_tree")
 environment.docrefs(name = "docrefs")
 #: THE CELLS every session runs on, the central registry's (`@fsla_cells//:<cell>`, `@fsla_cells//:cells.bzl`)
-environment.cells(name = "fsla_cells")
+environment.cells(
+    name = "fsla_cells",
+    uv = "@uv//:uv",
+    uv_pin = "@fsla_devtools//pins:uv_pin.json",
+)
 
 #: THE BUNDLES (fsla-devtools' `bundle` tag): fsla's timing entries, clock reader and diff sides, each built in its own
 #: workspace by its own pins and consumed here, so two commits are entries of ONE session. The CANDIDATE is the fsla
@@ -62,12 +66,16 @@ environment.cells(name = "fsla_cells")
 #: REFERENCE is a commit of fsla, moved like a pin.
 environment.bundle(
     name = "candidate",
+    uv = "@uv//:uv",
+    uv_pin = "@fsla_devtools//pins:uv_pin.json",
     worktree_env = "FSLA_CANDIDATE",
 )
 environment.bundle(
     name = "reference",
     commit = "14daa4d062a3348c12fbbe6dba03ebc210ca2d46",
     remote = "https://github.com/Blakexx/fsla.git",
+    uv = "@uv//:uv",
+    uv_pin = "@fsla_devtools//pins:uv_pin.json",
 )
 use_repo(environment, "bench_env", "bench_tree", "candidate", "docrefs", "fsla_cells", "reference", "research_env", "uv")
 

@@ -15,7 +15,15 @@ load(
     _timing_bundle = "timing_bundle",
     _timing_entry = "timing_entry",
 )
-load("@fsla_devtools//bazel:rules.bzl", _docrefs_test = "docrefs_test", _tree_part = "tree_part", _tree_test = "tree_test")
+load(
+    "@fsla_devtools//bazel:rules.bzl",
+    "VENV_ATTR",
+    "environment",
+    "venv_line",
+    _docrefs_test = "docrefs_test",
+    _tree_part = "tree_part",
+    _tree_test = "tree_test",
+)
 load("@research_env//:flags.bzl", RESEARCH_VENV = "VENV")
 
 def tree_test(**kwargs):
@@ -69,9 +77,9 @@ _PYTHON_RUN = """\
 # an environment's interpreter, in the checkout (fsla-bench's python_run){fsla_note}
 set -euo pipefail
 checkout="${{BUILD_WORKSPACE_DIRECTORY:?run through bazel run}}"
-{fsla}cd "$checkout"
+{venv}{fsla}cd "$checkout"
 export PYTHONPATH="$checkout{pythonpath}"
-exec {venv}/bin/python {module} "$@"
+exec "$venv/bin/python" {module} "$@"
 """
 
 #: the run's first argument: the fsla checkout it imports, its library built (`bazel run //:library` there)
@@ -82,20 +90,21 @@ fsla="$(cd "${BUILD_WORKING_DIRECTORY:-.}" && cd "$fsla" && pwd)"
 
 def _python_run_impl(ctx):
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    mark, env = environment(ctx)
     ctx.actions.write(script, _PYTHON_RUN.format(
         fsla_note = ": its first argument the fsla checkout it imports" if ctx.attr.fsla else "",
         fsla = _FSLA if ctx.attr.fsla else "",
         pythonpath = ":$fsla" if ctx.attr.fsla else "",
-        venv = shell.quote(ctx.attr.venv),
+        venv = venv_line(mark),
         module = ("-m " + shell.quote(ctx.attr.module)) if ctx.attr.module else "",
     ), is_executable = True)
-    return [DefaultInfo(executable = script)]
+    return [DefaultInfo(executable = script, runfiles = ctx.runfiles(files = env))]
 
 python_run = rule(
     implementation = _python_run_impl,
     executable = True,
     attrs = {
-        "venv": attr.string(mandatory = True, doc = "the environment's store venv"),
+        "venv": VENV_ATTR,
         "module": attr.string(doc = "the module it runs; none runs the interpreter on the run's arguments"),
         "fsla": attr.bool(doc = "the run imports fsla: its first argument is the fsla checkout, on the path after this " +
                                 "one (both hold a `declare.py`)"),

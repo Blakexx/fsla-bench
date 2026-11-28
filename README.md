@@ -140,7 +140,9 @@ The gate is `bazel test //:gate`: ruff with fsla's rule set and its E30x spacing
 the records' writers and readers on a temporary store (`tests.results.test_records`), the declaration check, and the doc
 references (`//:docrefs`,
 fsla-devtools' `fsla_devtools.docrefs`: every citation these docs make of the tree pinned in `references.lock.json` and
-read against its target), on the bench environment. The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, fsla-devtools' commit gate) runs
+read against its target), on the bench environment, and the hermetic check (`//:hermetic`, fsla-devtools'
+`hermetic_test`: no machine path or machine tool in any action of the gate's checks, the runs, the bench's bundle or the
+gate's sessions, beyond fsla-devtools' allowlist). The commit hook (`.githooks/pre-commit` -> `bazel/bazel --commit-gate`, fsla-devtools' commit gate) runs
 it on the commit as git will write it.
 
 Bazel is fsla's pinned bazelisk (a fsla checkout's `python3 tools/bootstrap.py` links it), and it runs through this

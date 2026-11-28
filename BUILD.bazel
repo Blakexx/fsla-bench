@@ -1,6 +1,8 @@
 """fsla-bench's root package: its checks and gate (the tracked tree beside them: fsla_bench/ and tests/ hold no BUILD
 file, so their files are this package's)."""
 
+load("@bench_env//:flags.bzl", "VENV")
+load("@fsla_devtools//bazel:hermetic.bzl", "hermetic_test")
 load("@fsla_devtools//bazel:rules.bzl", "bazel_version_test")
 load("//bazel:defs.bzl", "bench_python", "docrefs_test", "research_python", "tree_part", "tree_test")
 
@@ -85,6 +87,33 @@ bazel_version_test(
     version = ".bazelversion",
 )
 
+#: THE HERMETIC CHECK (fsla-devtools' `hermetic_test`): the gate's checks and the runs read whole -- no machine path, no
+#: machine tool but fsla-devtools' default allowlist's -- with the lockfile, `.bazelrc` and the repository rules'
+#: Starlark (`bazel/groups.bzl` among them); the measurements by the bench's bundle and the gate's sessions (their members:
+#: the attention reference's entries and the fsla bundles' exported ones). The diffs are not among them: a device side's
+#: verdict needs the devices' identity, which a gate on a host without a device cannot fetch
+hermetic_test(
+    name = "hermetic",
+    size = "small",
+    targets = [
+        ":bazelversion",
+        ":bench_python",
+        ":declarations",
+        ":docrefs",
+        ":fleet",
+        ":mqar_local_grid",
+        ":mqar_smoke",
+        ":pytest",
+        ":records",
+        ":research_python",
+        ":ruff",
+        ":ruff_e3",
+        "//measure:bundle",
+        "//measure:gate",
+    ],
+    venv = VENV,
+)
+
 #: THE GATE: every check this workspace holds; the commit hook runs it (.githooks/pre-commit)
 test_suite(
     name = "gate",
@@ -92,6 +121,7 @@ test_suite(
         ":bazelversion",
         ":declarations",
         ":docrefs",
+        ":hermetic",
         ":records",
         ":ruff",
         ":ruff_e3",
